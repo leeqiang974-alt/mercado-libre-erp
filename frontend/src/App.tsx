@@ -8,6 +8,7 @@ import { StoresPage } from "./pages/StoresPage";
 
 export function App() {
   const [draft, setDraft] = useState<ProductDraft | null>(null);
+  const [draftId, setDraftId] = useState<number | null>(null);
   const [review, setReview] = useState<Record<string, unknown> | null>(null);
   const [page, setPage] = useState("import");
   const [status, setStatus] = useState("");
@@ -16,9 +17,11 @@ export function App() {
     setStatus("Importing Amazon page snapshot");
     const importResult = await importAmazonHtml(sourceUrl, html, targetSiteId, persist);
     const nextDraft = "draft" in importResult ? importResult.draft : importResult;
+    const nextDraftId = "draft" in importResult ? importResult.id : null;
     setDraft(nextDraft);
+    setDraftId(nextDraftId);
     setStatus("Running local review");
-    const nextReview = await reviewDraft(nextDraft);
+    const nextReview = await reviewDraft(nextDraft, nextDraftId);
     setReview(nextReview);
     setStatus(`Review complete: ${nextReview.decision}`);
     setPage("drafts");
@@ -34,8 +37,9 @@ export function App() {
       return;
     }
     setDraft(result.draft);
+    setDraftId(result.draft_id);
     setStatus("Running local review");
-    const nextReview = await reviewDraft(result.draft);
+    const nextReview = await reviewDraft(result.draft, result.draft_id);
     setReview(nextReview);
     setStatus(`Review complete: ${nextReview.decision}`);
     setPage("drafts");
@@ -50,7 +54,7 @@ export function App() {
           status={status}
         />
       )}
-      {page === "drafts" && <DraftsPage draft={draft} review={review} />}
+      {page === "drafts" && <DraftsPage draft={draft} draftId={draftId} review={review} />}
       {page === "publishing" && <PublishingPage draft={draft} review={review} />}
       {page === "stores" && <StoresPage />}
     </Layout>

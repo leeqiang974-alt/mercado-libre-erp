@@ -22,6 +22,6 @@ class ReviewResult(Base):
     model: Mapped[str] = mapped_column(String(120), default="")
     risk_level: Mapped[str] = mapped_column(String(40))
     decision: Mapped[ReviewDecision] = mapped_column()
-    reasons_json: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    reasons_json: Mapped[dict] = mapped_column(JSON, default=dict)
     suggested_changes_json: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))

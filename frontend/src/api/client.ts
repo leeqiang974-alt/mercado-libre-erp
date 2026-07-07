@@ -25,6 +25,18 @@ export type PersistedDraftResponse = {
   draft: ProductDraft;
 };
 
+export type ReviewResult = {
+  id: number;
+  product_draft_id: number;
+  provider: string;
+  model: string;
+  decision: string;
+  risk_level: string;
+  reason_codes: string[];
+  reasons: string[];
+  suggested_changes: Record<string, unknown>;
+};
+
 export type StoreRecord = {
   id: string;
   site_id: string;
@@ -64,6 +76,7 @@ export type CollectionResult = {
   source_url: string;
   message: string;
   draft: ProductDraft | null;
+  draft_id: number | null;
 };
 
 export async function importAmazonUrl(sourceUrl: string, targetSiteId: string) {
@@ -76,8 +89,9 @@ export async function importAmazonUrl(sourceUrl: string, targetSiteId: string) {
   return response.json() as Promise<CollectionResult>;
 }
 
-export async function reviewDraft(draft: ProductDraft) {
-  const response = await fetch(`${API_BASE}/api/reviews/local`, {
+export async function reviewDraft(draft: ProductDraft, productDraftId?: number | null) {
+  const url = reviewUrl("local", productDraftId);
+  const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(draft),
@@ -86,8 +100,12 @@ export async function reviewDraft(draft: ProductDraft) {
   return response.json();
 }
 
-export async function reviewDraftWithProvider(draft: ProductDraft, provider: "claude" | "nvidia") {
-  const response = await fetch(`${API_BASE}/api/reviews/${provider}`, {
+export async function reviewDraftWithProvider(
+  draft: ProductDraft,
+  provider: "claude" | "nvidia",
+  productDraftId?: number | null,
+) {
+  const response = await fetch(reviewUrl(provider, productDraftId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(draft),
@@ -106,6 +124,12 @@ export async function listDrafts() {
   const response = await fetch(`${API_BASE}/api/drafts`);
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<ProductDraftRead[]>;
+}
+
+export async function listReviewHistory(productDraftId: number) {
+  const response = await fetch(`${API_BASE}/api/reviews/drafts/${productDraftId}`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<ReviewResult[]>;
 }
 
 export async function listStores() {
@@ -138,4 +162,9 @@ export async function listPublishJobs() {
   const response = await fetch(`${API_BASE}/api/publishing/jobs`);
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<PublishJobRecord[]>;
+}
+
+function reviewUrl(provider: "local" | "claude" | "nvidia", productDraftId?: number | null) {
+  const query = productDraftId ? `?product_draft_id=${productDraftId}` : "";
+  return `${API_BASE}/api/reviews/${provider}${query}`;
 }

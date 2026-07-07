@@ -1,16 +1,25 @@
 import { useEffect, useState } from "react";
-import { listDrafts, reviewDraftWithProvider, type ProductDraftRead } from "../api/client";
+import {
+  listDrafts,
+  listReviewHistory,
+  reviewDraftWithProvider,
+  type ProductDraftRead,
+  type ReviewResult,
+} from "../api/client";
 import type { ProductDraft } from "../api/client";
 
 export function DraftsPage({
   draft,
+  draftId,
   review,
 }: {
   draft: ProductDraft | null;
+  draftId: number | null;
   review: Record<string, unknown> | null;
 }) {
   const [savedDrafts, setSavedDrafts] = useState<ProductDraftRead[]>([]);
   const [providerReview, setProviderReview] = useState<Record<string, unknown> | null>(null);
+  const [reviewHistory, setReviewHistory] = useState<ReviewResult[]>([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -25,9 +34,23 @@ export function DraftsPage({
     if (!draft) return;
     setError("");
     try {
-      setProviderReview(await reviewDraftWithProvider(draft, provider));
+      const nextReview = await reviewDraftWithProvider(draft, provider, draftId);
+      setProviderReview(nextReview);
+      if (draftId) {
+        setReviewHistory(await listReviewHistory(draftId));
+      }
     } catch (reviewError) {
       setError(reviewError instanceof Error ? reviewError.message : "Provider review failed");
+    }
+  }
+
+  async function refreshReviewHistory() {
+    if (!draftId) return;
+    setError("");
+    try {
+      setReviewHistory(await listReviewHistory(draftId));
+    } catch (historyError) {
+      setError(historyError instanceof Error ? historyError.message : "Failed to load review history");
     }
   }
 
@@ -35,6 +58,7 @@ export function DraftsPage({
     <section className="panel">
       <h2>Draft Review</h2>
       {!draft && <p>No draft imported yet.</p>}
+      {draftId && <p>Current draft ID: {draftId}</p>}
       {draft && <pre>{JSON.stringify({ draft, review }, null, 2)}</pre>}
       <div className="button-row">
         <button disabled={!draft} onClick={() => runProviderReview("claude")}>
@@ -43,11 +67,20 @@ export function DraftsPage({
         <button disabled={!draft} onClick={() => runProviderReview("nvidia")}>
           NVIDIA Review
         </button>
+        <button disabled={!draftId} onClick={refreshReviewHistory}>
+          Refresh Review History
+        </button>
       </div>
       {providerReview && (
         <>
           <h3>Provider Review</h3>
           <pre>{JSON.stringify(providerReview, null, 2)}</pre>
+        </>
+      )}
+      {reviewHistory.length > 0 && (
+        <>
+          <h3>Review History</h3>
+          <pre>{JSON.stringify(reviewHistory, null, 2)}</pre>
         </>
       )}
       <h3>Saved Drafts</h3>

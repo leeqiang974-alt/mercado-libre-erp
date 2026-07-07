@@ -54,4 +54,6 @@ docker compose up -d
 - Persist publish attempts as jobs with blocked/published/failed status, errors, item id, and permalink.
 - List publish jobs from the frontend.
 - Run local, Claude, or NVIDIA review from the backend review API.
+- Persist local, Claude, and NVIDIA review results against saved product drafts.
+- List review history for a saved product draft from the frontend.
 - Use Claude/NVIDIA provider adapters when `CLAUDE_API_KEY` or `NVIDIA_API_KEY` is configured; otherwise they safely fall back to local policy.

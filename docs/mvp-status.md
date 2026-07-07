@@ -22,6 +22,8 @@ Implemented:
 - Guarded publish execution API now uses `store_id` rather than accepting access tokens from the frontend.
 - Persisted publish jobs for blocked, failed, and published execution attempts.
 - Publish job list API for reviewing status, errors, item IDs, and permalinks.
+- Persisted local, Claude, and NVIDIA review results for saved drafts.
+- Review history API and frontend refresh control for saved draft audit trails.
 - API flow for URL/HTML import, persisted source products, persisted drafts, persisted stores, review, metadata, publish preview, and guarded publish execution.
 - React MVP shell for import, saved draft list, Claude/NVIDIA review buttons, publishing metadata lookup, publish job list, publishing readiness, connected store list, and store authorization link startup.
 - Docker Compose services for PostgreSQL and Redis.
@@ -34,9 +36,7 @@ Not connected yet:
 
 Next production phase:
 
-- Add persisted drafts and publish jobs.
 - Add Mercado Libre metadata refresh for categories, attributes, listing types, and shipping options.
 - Add publish job retry controls and worker-backed asynchronous execution.
-- Replace AI stubs with real provider clients behind the same interfaces.
-- Add provider prompt versioning and persisted AI review records.
+- Add provider prompt versioning and review-model version analytics.
 - Replace token-reference placeholder with encrypted token storage and refresh-token rotation.
