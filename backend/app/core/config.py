@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     nvidia_api_key: str = ""
     default_site_id: str = "MLM"
     allow_live_publish: bool = False
+    token_encryption_key: str = "local-dev-token-key-change-me"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

@@ -37,7 +37,7 @@ docker compose up -d
 - Mercado Libre FULL fulfillment is excluded.
 - AI providers never receive Mercado Libre tokens.
 - No publish request is sent unless a human approval flag is present.
-- Publish execution uses an authorized store id and backend token reference, not a frontend-provided access token.
+- Publish execution uses an authorized store id and backend-encrypted Mercado Libre token, not a frontend-provided access token.
 
 ## Current MVP Capabilities
 
@@ -47,10 +47,12 @@ docker compose up -d
 - Persist failed/manual-action URL collections as source products for later handling.
 - List saved drafts.
 - Generate a Mercado Libre OAuth authorization URL and persist the connected store callback as a token reference.
+- Store Mercado Libre access/refresh tokens encrypted in the backend token vault.
 - List connected stores.
 - Fetch Mercado Libre listing types, category predictions, and category attributes through backend metadata routes.
 - Build and validate non-FULL Mercado Libre item payloads.
 - Execute a guarded publish adapter only when `ALLOW_LIVE_PUBLISH=true`.
+- Resolve encrypted store tokens server-side for guarded publish execution.
 - Persist publish attempts as jobs with blocked/published/failed status, errors, item id, and permalink.
 - List publish jobs from the frontend.
 - Run local, Claude, or NVIDIA review from the backend review API.

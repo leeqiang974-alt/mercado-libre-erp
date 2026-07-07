@@ -6,7 +6,9 @@ from app.db.session import get_db
 from app.main import app
 from app.models.registry import import_all_models
 from app.models.store import Store
+from app.models.token_credential import TokenCredential
 from app.schemas.publishing import PublishExecutionResult
+from app.services.meli.token_vault import encrypt_token_value
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -54,13 +56,21 @@ def make_client(with_store: bool = True):
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     if with_store:
         with testing_session() as db:
+            store = Store(
+                site_id="MLM",
+                seller_id="seller-1",
+                display_name="Demo Store",
+                oauth_status="connected",
+                token_reference="meli:seller-1",
+            )
+            db.add(store)
+            db.flush()
             db.add(
-                Store(
-                    site_id="MLM",
-                    seller_id="seller-1",
-                    display_name="Demo Store",
-                    oauth_status="connected",
+                TokenCredential(
+                    store_id=store.id,
                     token_reference="meli:seller-1",
+                    encrypted_access_token=encrypt_token_value("access-token", "test-secret"),
+                    encrypted_refresh_token=encrypt_token_value("refresh-token", "test-secret"),
                 )
             )
             db.commit()
@@ -80,7 +90,8 @@ def teardown_function():
     app.dependency_overrides.clear()
 
 
-def test_publish_execute_route_blocks_by_default():
+def test_publish_execute_route_blocks_by_default(monkeypatch):
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
     client = make_client()
     response = client.post("/api/publishing/execute", json=payload())
 
@@ -93,7 +104,7 @@ def test_publish_execute_route_blocks_by_default():
 
 def test_publish_execute_route_uses_store_token_reference_without_echoing_it(monkeypatch):
     async def fake_execute_publish(**kwargs):
-        assert kwargs["client"].access_token == "meli:seller-1"
+        assert kwargs["client"].access_token == "access-token"
         return PublishExecutionResult(
             status="published",
             item_id="MLM123",
@@ -101,6 +112,7 @@ def test_publish_execute_route_uses_store_token_reference_without_echoing_it(mon
         )
 
     monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
     monkeypatch.setattr(publishing, "execute_publish", fake_execute_publish)
     client = make_client()
 

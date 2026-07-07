@@ -9,6 +9,7 @@ from app.services.meli.oauth import (
     build_authorization_url,
     create_state_token,
 )
+from app.services.meli.token_vault import upsert_store_token
 
 router = APIRouter(prefix="/api/stores", tags=["stores"])
 settings = get_settings()
@@ -46,7 +47,6 @@ async def meli_callback(
     existing = db.query(Store).filter(Store.seller_id == seller_id).one_or_none()
     if existing:
         existing.oauth_status = "connected"
-        existing.token_reference = f"meli:{seller_id}"
         existing.display_name = f"Mercado Libre {seller_id}"
         store = existing
     else:
@@ -55,15 +55,21 @@ async def meli_callback(
             seller_id=seller_id,
             display_name=f"Mercado Libre {seller_id}",
             oauth_status="connected",
-            token_reference=f"meli:{seller_id}",
         )
         db.add(store)
+        db.flush()
+    token_reference = upsert_store_token(
+        db=db,
+        store=store,
+        token=token,
+        encryption_key=settings.token_encryption_key,
+    )
     db.commit()
     return {
         "status": "authorized",
         "seller_id": seller_id,
         "state": state,
-        "token_reference": f"meli:{seller_id}",
+        "token_reference": token_reference,
     }
 
 

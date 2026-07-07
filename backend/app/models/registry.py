@@ -5,3 +5,4 @@ def import_all_models() -> None:
     import app.models.review_result  # noqa: F401
     import app.models.source_product  # noqa: F401
     import app.models.store  # noqa: F401
+    import app.models.token_credential  # noqa: F401

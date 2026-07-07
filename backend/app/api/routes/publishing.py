@@ -15,6 +15,7 @@ from app.schemas.publishing import (
 from app.schemas.reviews import ReviewResponse
 from app.services.meli.client import MercadoLibreClient
 from app.services.meli.publisher import execute_publish, validate_publish_request
+from app.services.meli.token_vault import resolve_store_access_token
 from app.services.publish_jobs import create_publish_job, complete_publish_job, list_publish_jobs
 
 router = APIRouter(prefix="/api/publishing", tags=["publishing"])
@@ -52,8 +53,9 @@ async def publish_execute(
     store = db.get(Store, payload.store_id)
     if not store:
         raise HTTPException(status_code=404, detail="Store not found.")
-    if not store.token_reference:
-        return PublishExecutionResult(status="blocked", errors=["store_token_reference_required"])
+    access_token = resolve_store_access_token(db, store, settings.token_encryption_key)
+    if not access_token:
+        return PublishExecutionResult(status="blocked", errors=["store_access_token_required"])
     job = create_publish_job(
         db=db,
         product_draft_id=payload.product_draft_id or 0,
@@ -64,7 +66,7 @@ async def publish_execute(
         listing_choice=payload.listing_choice,
     )
     result = await execute_publish(
-        client=MercadoLibreClient(access_token=store.token_reference),
+        client=MercadoLibreClient(access_token=access_token),
         draft=payload.draft,
         review=payload.review,
         listing_choice=payload.listing_choice,

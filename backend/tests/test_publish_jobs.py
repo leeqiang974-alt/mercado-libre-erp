@@ -11,7 +11,9 @@ from app.models.product_draft import ProductDraft
 from app.models.publish_job import PublishJob, PublishJobStatus
 from app.models.registry import import_all_models
 from app.models.store import Store
+from app.models.token_credential import TokenCredential
 from app.schemas.publishing import PublishExecutionResult
+from app.services.meli.token_vault import encrypt_token_value
 
 
 def make_client():
@@ -24,13 +26,21 @@ def make_client():
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with testing_session() as db:
+        store = Store(
+            site_id="MLM",
+            seller_id="seller-1",
+            display_name="Demo Store",
+            oauth_status="connected",
+            token_reference="meli:seller-1",
+        )
+        db.add(store)
+        db.flush()
         db.add(
-            Store(
-                site_id="MLM",
-                seller_id="seller-1",
-                display_name="Demo Store",
-                oauth_status="connected",
+            TokenCredential(
+                store_id=store.id,
                 token_reference="meli:seller-1",
+                encrypted_access_token=encrypt_token_value("access-token", "test-secret"),
+                encrypted_refresh_token=encrypt_token_value("refresh-token", "test-secret"),
             )
         )
         db.add(
@@ -93,7 +103,8 @@ def payload():
     }
 
 
-def test_publish_execute_persists_blocked_job_by_default():
+def test_publish_execute_persists_blocked_job_by_default(monkeypatch):
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
     client, testing_session = make_client()
 
     response = client.post("/api/publishing/execute", json=payload())
@@ -119,6 +130,7 @@ def test_publish_execute_persists_published_job(monkeypatch):
         )
 
     monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
     monkeypatch.setattr(publishing, "execute_publish", fake_execute_publish)
     client, testing_session = make_client()
 

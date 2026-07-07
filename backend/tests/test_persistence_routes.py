@@ -12,9 +12,11 @@ from app.models.product_draft import ProductDraft
 from app.models.registry import import_all_models
 from app.models.source_product import SourceProduct, SourceProductStatus
 from app.models.store import Store
+from app.models.token_credential import TokenCredential
 from app.schemas.drafts import ProductDraftCreate
 from app.services.amazon.collector import CollectionResult, CollectionStatus
 from app.services.meli.oauth import MercadoLibreOAuthClient
+from app.services.meli.token_vault import resolve_store_access_token
 
 
 def make_client():
@@ -91,6 +93,7 @@ def test_oauth_callback_persists_store_without_returning_tokens(monkeypatch):
         )
 
     monkeypatch.setattr(stores, "create_oauth_client", fake_client)
+    monkeypatch.setattr(stores.settings, "token_encryption_key", "test-secret")
 
     response = client.get("/api/stores/meli/callback?code=code-789&state=state-abc")
 
@@ -106,6 +109,13 @@ def test_oauth_callback_persists_store_without_returning_tokens(monkeypatch):
 
     with Session(testing_session.kw["bind"]) as session:
         assert session.query(Store).count() == 1
+        store = session.query(Store).one()
+        credential = session.query(TokenCredential).one()
+        assert credential.store_id == store.id
+        assert credential.token_reference == "meli:456"
+        assert "access-token" not in credential.encrypted_access_token
+        assert "refresh-token" not in credential.encrypted_refresh_token
+        assert resolve_store_access_token(session, store, "test-secret") == "access-token"
 
 
 def test_import_amazon_url_can_persist_collected_draft(monkeypatch):

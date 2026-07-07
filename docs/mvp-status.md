@@ -13,6 +13,7 @@ Implemented:
 - NVIDIA NIM/OpenAI-compatible chat review adapter with safe fallback when no API key or parse failure occurs.
 - Mercado Libre OAuth authorization URL, callback, and token exchange skeleton.
 - Persisted connected stores with token references instead of exposing raw tokens.
+- Encrypted Mercado Libre access/refresh token credential storage for connected stores.
 - Persisted product drafts for HTML snapshot imports.
 - Persisted product drafts for successful URL collections.
 - Mercado Libre metadata proxy for listing types, category prediction, and category attributes.
@@ -20,6 +21,7 @@ Implemented:
 - Publishing validation gates for human approval, listing type availability, and FULL exclusion.
 - Guarded Mercado Libre publish execution adapter that posts to `/items` only when live publishing is explicitly enabled.
 - Guarded publish execution API now uses `store_id` rather than accepting access tokens from the frontend.
+- Guarded publish execution resolves encrypted store access tokens server-side.
 - Persisted publish jobs for blocked, failed, and published execution attempts.
 - Publish job list API for reviewing status, errors, item IDs, and permalinks.
 - Persisted local, Claude, and NVIDIA review results for saved drafts.
@@ -39,4 +41,4 @@ Next production phase:
 - Add Mercado Libre metadata refresh for categories, attributes, listing types, and shipping options.
 - Add publish job retry controls and worker-backed asynchronous execution.
 - Add provider prompt versioning and review-model version analytics.
-- Replace token-reference placeholder with encrypted token storage and refresh-token rotation.
+- Add refresh-token rotation before token expiry.
