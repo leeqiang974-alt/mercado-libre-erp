@@ -57,3 +57,15 @@ class MercadoLibreOAuthClient:
             response = await client.post(TOKEN_URL, data=data)
             response.raise_for_status()
             return MercadoLibreToken.model_validate(response.json())
+
+    async def refresh_token(self, refresh_token: str) -> MercadoLibreToken:
+        data = {
+            "grant_type": "refresh_token",
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "refresh_token": refresh_token,
+        }
+        async with httpx.AsyncClient(transport=self.transport, timeout=30) as client:
+            response = await client.post(TOKEN_URL, data=data)
+            response.raise_for_status()
+            return MercadoLibreToken.model_validate(response.json())

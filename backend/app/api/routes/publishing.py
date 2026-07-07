@@ -16,12 +16,21 @@ from app.schemas.reviews import ReviewResponse
 from app.services.draft_listing_configs import build_configured_draft
 from app.services.audit_events import create_audit_event
 from app.services.meli.client import MercadoLibreClient
+from app.services.meli.oauth import MercadoLibreOAuthClient
 from app.services.meli.publisher import execute_publish, validate_publish_request
-from app.services.meli.token_vault import resolve_store_access_token
+from app.services.meli.token_vault import resolve_fresh_store_access_token
 from app.services.publish_jobs import create_publish_job, complete_publish_job, list_publish_jobs
 
 router = APIRouter(prefix="/api/publishing", tags=["publishing"])
 settings = get_settings()
+
+
+def create_oauth_client() -> MercadoLibreOAuthClient:
+    return MercadoLibreOAuthClient(
+        client_id=settings.meli_client_id,
+        client_secret=settings.meli_client_secret,
+        redirect_uri=settings.meli_redirect_uri,
+    )
 
 
 class PublishPreviewRequest(BaseModel):
@@ -120,7 +129,12 @@ async def _execute_with_payload(
     store = db.get(Store, store_id)
     if not store:
         raise HTTPException(status_code=404, detail="Store not found.")
-    access_token = resolve_store_access_token(db, store, settings.token_encryption_key)
+    access_token = await resolve_fresh_store_access_token(
+        db=db,
+        store=store,
+        encryption_key=settings.token_encryption_key,
+        oauth_client=create_oauth_client(),
+    )
     if not access_token:
         return PublishExecutionResult(status="blocked", errors=["store_access_token_required"])
     job = create_publish_job(

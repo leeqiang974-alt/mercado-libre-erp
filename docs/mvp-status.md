@@ -16,6 +16,7 @@ Implemented:
 - Mercado Libre OAuth authorization URL, callback, and token exchange skeleton.
 - Persisted connected stores with token references instead of exposing raw tokens.
 - Encrypted Mercado Libre access/refresh token credential storage for connected stores.
+- Refresh-token rotation for Mercado Libre credentials before publish execution.
 - Persisted product drafts for HTML snapshot imports.
 - Persisted product drafts for successful URL collections.
 - Mercado Libre metadata proxy for listing types, category prediction, and category attributes.
@@ -47,4 +48,3 @@ Next production phase:
 - Add Mercado Libre metadata refresh for categories, attributes, listing types, and shipping options.
 - Add publish job retry controls and worker-backed asynchronous execution.
 - Add provider prompt versioning and review-model version analytics.
-- Add refresh-token rotation before token expiry.

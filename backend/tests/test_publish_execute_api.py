@@ -1,4 +1,6 @@
 from fastapi.testclient import TestClient
+import httpx
+from datetime import UTC, datetime, timedelta
 
 from app.api.routes import publishing
 from app.db.base import Base
@@ -8,6 +10,7 @@ from app.models.registry import import_all_models
 from app.models.store import Store
 from app.models.token_credential import TokenCredential
 from app.schemas.publishing import PublishExecutionResult
+from app.services.meli.oauth import MercadoLibreOAuthClient
 from app.services.meli.token_vault import encrypt_token_value
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -45,7 +48,7 @@ def payload():
     }
 
 
-def make_client(with_store: bool = True):
+def make_client(with_store: bool = True, token_expires_in_seconds: int = 7200):
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -71,6 +74,7 @@ def make_client(with_store: bool = True):
                     token_reference="meli:seller-1",
                     encrypted_access_token=encrypt_token_value("access-token", "test-secret"),
                     encrypted_refresh_token=encrypt_token_value("refresh-token", "test-secret"),
+                    expires_at=datetime.now(UTC) + timedelta(seconds=token_expires_in_seconds),
                 )
             )
             db.commit()
@@ -121,6 +125,48 @@ def test_publish_execute_route_uses_store_token_reference_without_echoing_it(mon
     assert response.status_code == 200
     assert response.json()["item_id"] == "MLM123"
     assert "meli:seller-1" not in response.text
+
+
+def test_publish_execute_route_refreshes_expiring_store_token(monkeypatch):
+    async def fake_execute_publish(**kwargs):
+        assert kwargs["client"].access_token == "new-access-token"
+        return PublishExecutionResult(
+            status="published",
+            item_id="MLM123",
+            permalink="https://example.com/MLM123",
+        )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "new-access-token",
+                "refresh_token": "new-refresh-token",
+                "expires_in": 21600,
+                "user_id": "seller-1",
+            },
+        )
+
+    def fake_oauth_client() -> MercadoLibreOAuthClient:
+        return MercadoLibreOAuthClient(
+            client_id="client-123",
+            client_secret="secret-456",
+            redirect_uri="http://localhost:8000/api/stores/meli/callback",
+            transport=httpx.MockTransport(handler),
+        )
+
+    monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing, "execute_publish", fake_execute_publish)
+    monkeypatch.setattr(publishing, "create_oauth_client", fake_oauth_client)
+    client = make_client(token_expires_in_seconds=30)
+
+    response = client.post("/api/publishing/execute", json=payload())
+
+    assert response.status_code == 200
+    assert response.json()["item_id"] == "MLM123"
+    assert "new-access-token" not in response.text
+    assert "new-refresh-token" not in response.text
 
 
 def test_publish_execute_route_blocks_unknown_store():

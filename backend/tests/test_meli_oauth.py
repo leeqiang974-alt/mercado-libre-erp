@@ -64,3 +64,38 @@ async def test_exchange_code_posts_oauth_payload():
     assert "client_id=client-123" in body
     assert "client_secret=secret-456" in body
     assert "code=code-789" in body
+
+
+@pytest.mark.asyncio
+async def test_refresh_token_posts_refresh_payload():
+    requests = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "new-access-token",
+                "refresh_token": "new-refresh-token",
+                "expires_in": 21600,
+                "user_id": 123,
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = MercadoLibreOAuthClient(
+        client_id="client-123",
+        client_secret="secret-456",
+        redirect_uri="http://localhost:8000/api/stores/meli/callback",
+        transport=transport,
+    )
+
+    token = await client.refresh_token("old-refresh-token")
+
+    assert token.access_token == "new-access-token"
+    assert token.refresh_token == "new-refresh-token"
+    body = requests[0].content.decode()
+    assert "grant_type=refresh_token" in body
+    assert "client_id=client-123" in body
+    assert "client_secret=secret-456" in body
+    assert "refresh_token=old-refresh-token" in body

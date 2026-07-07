@@ -65,6 +65,7 @@ python -m app.worker --loop --interval 30 --limit 10
 - List saved drafts.
 - Generate a Mercado Libre OAuth authorization URL and persist the connected store callback as a token reference.
 - Store Mercado Libre access/refresh tokens encrypted in the backend token vault.
+- Refresh expiring Mercado Libre access tokens with encrypted refresh tokens before publishing.
 - List connected stores.
 - Fetch Mercado Libre listing types, category predictions, and category attributes through backend metadata routes.
 - Save Mercado Libre category, listing type, fulfillment, and attribute values as draft listing configuration.

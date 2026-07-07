@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models.store import Store
 from app.models.token_credential import TokenCredential
-from app.services.meli.oauth import MercadoLibreToken
+from app.services.meli.oauth import MercadoLibreOAuthClient, MercadoLibreToken
 
 
 def encrypt_token_value(value: str, encryption_key: str) -> str:
@@ -53,9 +53,38 @@ def upsert_store_token(
 
 
 def resolve_store_access_token(db: Session, store: Store, encryption_key: str) -> str:
-    if not store.token_reference:
+    credential = get_store_credential(db, store)
+    if credential is None:
         return ""
-    credential = (
+    return decrypt_token_value(credential.encrypted_access_token, encryption_key)
+
+
+async def resolve_fresh_store_access_token(
+    db: Session,
+    store: Store,
+    encryption_key: str,
+    oauth_client: MercadoLibreOAuthClient,
+    refresh_window_seconds: int = 300,
+) -> str:
+    credential = get_store_credential(db, store)
+    if credential is None:
+        return ""
+    if not _needs_refresh(credential, refresh_window_seconds):
+        return decrypt_token_value(credential.encrypted_access_token, encryption_key)
+
+    refresh_token = decrypt_token_value(credential.encrypted_refresh_token, encryption_key)
+    if not refresh_token:
+        return ""
+    token = await oauth_client.refresh_token(refresh_token)
+    upsert_store_token(db, store, token, encryption_key)
+    db.commit()
+    return token.access_token
+
+
+def get_store_credential(db: Session, store: Store) -> TokenCredential | None:
+    if not store.token_reference:
+        return None
+    return (
         db.query(TokenCredential)
         .filter(
             TokenCredential.store_id == store.id,
@@ -63,9 +92,15 @@ def resolve_store_access_token(db: Session, store: Store, encryption_key: str) -
         )
         .one_or_none()
     )
-    if credential is None:
-        return ""
-    return decrypt_token_value(credential.encrypted_access_token, encryption_key)
+
+
+def _needs_refresh(credential: TokenCredential, refresh_window_seconds: int) -> bool:
+    if credential.expires_at is None:
+        return False
+    expires_at = credential.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    return expires_at <= datetime.now(UTC) + timedelta(seconds=refresh_window_seconds)
 
 
 def _fernet(encryption_key: str) -> Fernet:
