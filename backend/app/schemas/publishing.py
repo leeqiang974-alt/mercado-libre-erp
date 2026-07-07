@@ -10,3 +10,10 @@ class ListingChoice(BaseModel):
 class PublishValidationResult(BaseModel):
     allowed: bool
     errors: list[str]
+
+
+class PublishExecutionResult(BaseModel):
+    status: str
+    item_id: str = ""
+    permalink: str = ""
+    errors: list[str] = []
