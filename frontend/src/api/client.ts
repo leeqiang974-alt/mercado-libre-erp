@@ -93,3 +93,23 @@ export async function listStores() {
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<StoreRecord[]>;
 }
+
+export async function getListingTypes(siteId: string) {
+  const response = await fetch(`${API_BASE}/api/metadata/sites/${siteId}/listing-types`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<{ listing_type_ids: string[] }>;
+}
+
+export async function getCategoryPredictions(siteId: string, query: string) {
+  const response = await fetch(
+    `${API_BASE}/api/metadata/sites/${siteId}/category-predictions?q=${encodeURIComponent(query)}`,
+  );
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<{ predictions: Record<string, unknown>[] }>;
+}
+
+export async function getCategoryAttributes(categoryId: string) {
+  const response = await fetch(`${API_BASE}/api/metadata/categories/${categoryId}/attributes`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<{ attributes: Record<string, unknown>[] }>;
+}

@@ -4,8 +4,11 @@ from app.models.product_draft import ProductDraft
 from app.schemas.drafts import ProductDraftCreate, ProductDraftRead
 
 
-def create_product_draft(db: Session, draft: ProductDraftCreate) -> ProductDraft:
+def create_product_draft(
+    db: Session, draft: ProductDraftCreate, source_product_id: int | None = None
+) -> ProductDraft:
     model = ProductDraft(
+        source_product_id=source_product_id,
         target_site_id=draft.target_site_id,
         target_category_id=draft.target_category_id,
         title=draft.title,

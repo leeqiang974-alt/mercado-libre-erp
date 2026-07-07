@@ -10,7 +10,10 @@ from app.db.session import get_db
 from app.main import app
 from app.models.product_draft import ProductDraft
 from app.models.registry import import_all_models
+from app.models.source_product import SourceProduct, SourceProductStatus
 from app.models.store import Store
+from app.schemas.drafts import ProductDraftCreate
+from app.services.amazon.collector import CollectionResult, CollectionStatus
 from app.services.meli.oauth import MercadoLibreOAuthClient
 
 
@@ -103,3 +106,83 @@ def test_oauth_callback_persists_store_without_returning_tokens(monkeypatch):
 
     with Session(testing_session.kw["bind"]) as session:
         assert session.query(Store).count() == 1
+
+
+def test_import_amazon_url_can_persist_collected_draft(monkeypatch):
+    from app.api.routes import imports
+
+    client, testing_session = make_client()
+
+    async def fake_collect(source_url: str, target_site_id: str):
+        return CollectionResult(
+            status=CollectionStatus.COLLECTED,
+            source_url=source_url,
+            message="collected",
+            draft=ProductDraftCreate(
+                title="Persisted URL Bottle",
+                target_site_id=target_site_id,
+                price=11.5,
+                currency="USD",
+                stock=1,
+                image_urls=["https://example.com/a.jpg"],
+            ),
+        )
+
+    monkeypatch.setattr(imports, "collect_amazon_page", fake_collect)
+
+    response = client.post(
+        "/api/imports/amazon-url",
+        json={
+            "source_url": "https://www.amazon.com/dp/B000TEST",
+            "target_site_id": "MLM",
+            "persist": True,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "collected"
+    assert body["draft_id"] == 1
+    assert body["source_product_id"] == 1
+
+    with Session(testing_session.kw["bind"]) as session:
+        source = session.query(SourceProduct).one()
+        draft = session.query(ProductDraft).one()
+        assert source.raw_status == SourceProductStatus.COLLECTED
+        assert draft.source_product_id == source.id
+
+
+def test_import_amazon_url_persists_manual_action_without_draft(monkeypatch):
+    from app.api.routes import imports
+
+    client, testing_session = make_client()
+
+    async def fake_collect(source_url: str, target_site_id: str):
+        return CollectionResult(
+            status=CollectionStatus.NEEDS_MANUAL_ACTION,
+            source_url=source_url,
+            message="Amazon challenge detected; manual action required.",
+            draft=None,
+        )
+
+    monkeypatch.setattr(imports, "collect_amazon_page", fake_collect)
+
+    response = client.post(
+        "/api/imports/amazon-url",
+        json={
+            "source_url": "https://www.amazon.com/dp/B000TEST",
+            "target_site_id": "MLM",
+            "persist": True,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "needs_manual_action"
+    assert body["draft_id"] is None
+    assert body["source_product_id"] == 1
+
+    with Session(testing_session.kw["bind"]) as session:
+        source = session.query(SourceProduct).one()
+        assert source.raw_status == SourceProductStatus.NEEDS_MANUAL_ACTION
+        assert session.query(ProductDraft).count() == 0

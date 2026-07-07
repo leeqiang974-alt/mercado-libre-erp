@@ -43,8 +43,11 @@ docker compose up -d
 
 - Import an Amazon HTML snapshot and optionally save it as a draft.
 - Collect an Amazon URL through the backend Playwright adapter; challenge pages are marked for manual action.
+- Persist successful URL collections as source products and product drafts.
+- Persist failed/manual-action URL collections as source products for later handling.
 - List saved drafts.
 - Generate a Mercado Libre OAuth authorization URL and persist the connected store callback as a token reference.
 - List connected stores.
+- Fetch Mercado Libre listing types, category predictions, and category attributes through backend metadata routes.
 - Build and validate non-FULL Mercado Libre item payloads.
 - Execute a guarded publish adapter only when `ALLOW_LIVE_PUBLISH=true`.

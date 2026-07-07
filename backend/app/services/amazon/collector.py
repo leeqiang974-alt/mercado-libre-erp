@@ -19,6 +19,8 @@ class CollectionResult(BaseModel):
     source_url: str
     message: str
     draft: ProductDraftCreate | None = None
+    source_product_id: int | None = None
+    draft_id: int | None = None
 
 
 HtmlFetcher = Callable[[str], Awaitable[str]]
