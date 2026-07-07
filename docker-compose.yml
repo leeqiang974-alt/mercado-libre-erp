@@ -1,4 +1,49 @@
 services:
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
+      MELI_CLIENT_ID: ${MELI_CLIENT_ID:-}
+      MELI_CLIENT_SECRET: ${MELI_CLIENT_SECRET:-}
+      MELI_REDIRECT_URI: ${MELI_REDIRECT_URI:-http://localhost:8000/api/stores/meli/callback}
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      ALLOW_LIVE_PUBLISH: ${ALLOW_LIVE_PUBLISH:-false}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-local-dev-token-key-change-me}
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8000:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  collection_worker:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-local-dev-token-key-change-me}
+    depends_on:
+      - postgres
+      - redis
+    command: python -m app.worker --queue collection --loop --interval 30 --limit 10
+
+  publish_worker:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
+      MELI_CLIENT_ID: ${MELI_CLIENT_ID:-}
+      MELI_CLIENT_SECRET: ${MELI_CLIENT_SECRET:-}
+      MELI_REDIRECT_URI: ${MELI_REDIRECT_URI:-http://localhost:8000/api/stores/meli/callback}
+      ALLOW_LIVE_PUBLISH: ${ALLOW_LIVE_PUBLISH:-false}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-local-dev-token-key-change-me}
+    depends_on:
+      - postgres
+      - redis
+    command: python -m app.worker --queue publish --loop --interval 30 --limit 10
+
   postgres:
     image: postgres:16
     environment:

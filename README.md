@@ -29,6 +29,7 @@ Frontend: `http://127.0.0.1:5173`
 ```powershell
 cd D:\amazon-meli-publisher\.worktrees\mvp-skeleton
 docker compose up -d
+docker compose up -d backend collection_worker publish_worker
 ```
 
 ## Database Migrations
@@ -62,6 +63,7 @@ python -m app.worker --queue publish --loop --interval 30 --limit 10
 - Collect an Amazon URL through the backend Playwright adapter; challenge pages are marked for manual action.
 - Queue Amazon URL collection jobs, run queued jobs, and list job status/history.
 - Run queued Amazon URL collection jobs through a backend worker CLI.
+- Run API, collection worker, and publish worker services through Docker Compose.
 - Persist successful URL collections as source products and product drafts.
 - Persist failed/manual-action URL collections as source products for later handling.
 - List saved drafts.

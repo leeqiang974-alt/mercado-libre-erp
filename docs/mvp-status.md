@@ -41,15 +41,14 @@ Implemented:
 - Review history API and frontend refresh control for saved draft audit trails.
 - API flow for URL/HTML import, persisted source products, persisted drafts, persisted stores, review, metadata, publish preview, and guarded publish execution.
 - React MVP shell for import, saved draft list, Claude/NVIDIA review buttons, publishing metadata lookup, publish job list, publishing readiness, connected store list, and store authorization link startup.
-- Docker Compose services for PostgreSQL and Redis.
+- Docker Compose services for PostgreSQL, Redis, backend API, collection worker, and publish worker.
 
 Not connected yet:
 
-- External process supervisor for always-on collection workers.
 - Production-grade external KMS or secrets manager for Mercado Libre token encryption keys.
 
 Next production phase:
 
 - Add Mercado Libre shipping options metadata refresh.
-- Add production process supervision for collection and publish workers.
+- Add production deployment health checks and restart policies for collection and publish workers.
 - Add provider prompt versioning and review-model version analytics.
