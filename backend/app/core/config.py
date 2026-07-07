@@ -1,0 +1,22 @@
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    app_name: str = "Amazon Mercado Libre Publisher"
+    database_url: str = "sqlite:///./dev.db"
+    meli_client_id: str = ""
+    meli_client_secret: str = ""
+    meli_redirect_uri: str = "http://localhost:8000/api/stores/meli/callback"
+    claude_api_key: str = ""
+    nvidia_api_key: str = ""
+    default_site_id: str = "MLM"
+    allow_live_publish: bool = False
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
