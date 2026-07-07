@@ -51,3 +51,5 @@ docker compose up -d
 - Fetch Mercado Libre listing types, category predictions, and category attributes through backend metadata routes.
 - Build and validate non-FULL Mercado Libre item payloads.
 - Execute a guarded publish adapter only when `ALLOW_LIVE_PUBLISH=true`.
+- Persist publish attempts as jobs with blocked/published/failed status, errors, item id, and permalink.
+- List publish jobs from the frontend.

@@ -1,5 +1,11 @@
 import { useState } from "react";
-import { getCategoryAttributes, getCategoryPredictions, getListingTypes } from "../api/client";
+import {
+  getCategoryAttributes,
+  getCategoryPredictions,
+  getListingTypes,
+  listPublishJobs,
+  type PublishJobRecord,
+} from "../api/client";
 import type { ProductDraft } from "../api/client";
 
 export function PublishingPage({
@@ -14,6 +20,7 @@ export function PublishingPage({
   const [categoryId, setCategoryId] = useState("");
   const [predictions, setPredictions] = useState<Record<string, unknown>[]>([]);
   const [attributes, setAttributes] = useState<Record<string, unknown>[]>([]);
+  const [jobs, setJobs] = useState<PublishJobRecord[]>([]);
   const [status, setStatus] = useState("");
 
   async function loadListingTypes() {
@@ -56,6 +63,16 @@ export function PublishingPage({
     }
   }
 
+  async function refreshJobs() {
+    setStatus("Loading publish jobs");
+    try {
+      setJobs(await listPublishJobs());
+      setStatus("");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to load publish jobs");
+    }
+  }
+
   return (
     <section className="panel">
       <h2>Publish Queue</h2>
@@ -83,6 +100,9 @@ export function PublishingPage({
       </div>
       {status && <p>{status}</p>}
       <button disabled={!ready}>Create Publish Preview</button>
+      <div className="button-row">
+        <button onClick={refreshJobs}>Refresh Publish Jobs</button>
+      </div>
       {listingTypes.length > 0 && (
         <>
           <h3>Listing Types</h3>
@@ -99,6 +119,12 @@ export function PublishingPage({
         <>
           <h3>Category Attributes</h3>
           <pre>{JSON.stringify(attributes, null, 2)}</pre>
+        </>
+      )}
+      {jobs.length > 0 && (
+        <>
+          <h3>Publish Jobs</h3>
+          <pre>{JSON.stringify(jobs, null, 2)}</pre>
         </>
       )}
     </section>

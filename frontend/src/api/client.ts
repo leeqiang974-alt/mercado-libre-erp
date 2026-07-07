@@ -34,6 +34,16 @@ export type StoreRecord = {
   token_reference: string;
 };
 
+export type PublishJobRecord = {
+  id: number;
+  product_draft_id: number;
+  store_id: number;
+  status: string;
+  item_id: string;
+  permalink: string;
+  errors: string[];
+};
+
 export async function importAmazonHtml(
   sourceUrl: string,
   html: string,
@@ -112,4 +122,10 @@ export async function getCategoryAttributes(categoryId: string) {
   const response = await fetch(`${API_BASE}/api/metadata/categories/${categoryId}/attributes`);
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<{ attributes: Record<string, unknown>[] }>;
+}
+
+export async function listPublishJobs() {
+  const response = await fetch(`${API_BASE}/api/publishing/jobs`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<PublishJobRecord[]>;
 }

@@ -17,3 +17,14 @@ class PublishExecutionResult(BaseModel):
     item_id: str = ""
     permalink: str = ""
     errors: list[str] = []
+    job_id: int | None = None
+
+
+class PublishJobRead(BaseModel):
+    id: int
+    product_draft_id: int
+    store_id: int
+    status: str
+    item_id: str = ""
+    permalink: str = ""
+    errors: list[str] = []
