@@ -1,7 +1,10 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.db.session import get_db
+from app.models.store import Store
 from app.schemas.drafts import ProductDraftCreate
 from app.schemas.publishing import ListingChoice, PublishExecutionResult, PublishValidationResult
 from app.schemas.reviews import ReviewResponse
@@ -21,7 +24,7 @@ class PublishPreviewRequest(BaseModel):
 
 
 class PublishExecuteRequest(PublishPreviewRequest):
-    access_token: str
+    store_id: int
 
 
 @router.post("/preview", response_model=PublishValidationResult)
@@ -36,9 +39,16 @@ def publish_preview(payload: PublishPreviewRequest) -> PublishValidationResult:
 
 
 @router.post("/execute", response_model=PublishExecutionResult)
-async def publish_execute(payload: PublishExecuteRequest) -> PublishExecutionResult:
+async def publish_execute(
+    payload: PublishExecuteRequest, db: Session = Depends(get_db)
+) -> PublishExecutionResult:
+    store = db.get(Store, payload.store_id)
+    if not store:
+        raise HTTPException(status_code=404, detail="Store not found.")
+    if not store.token_reference:
+        return PublishExecutionResult(status="blocked", errors=["store_token_reference_required"])
     return await execute_publish(
-        client=MercadoLibreClient(access_token=payload.access_token),
+        client=MercadoLibreClient(access_token=store.token_reference),
         draft=payload.draft,
         review=payload.review,
         listing_choice=payload.listing_choice,

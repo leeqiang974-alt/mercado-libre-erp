@@ -1,13 +1,20 @@
 from fastapi.testclient import TestClient
 
 from app.api.routes import publishing
+from app.db.base import Base
+from app.db.session import get_db
 from app.main import app
+from app.models.registry import import_all_models
+from app.models.store import Store
 from app.schemas.publishing import PublishExecutionResult
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 def payload():
     return {
-        "access_token": "secret-token",
+        "store_id": 1,
         "draft": {
             "title": "Bottle",
             "description": "Leak proof.",
@@ -36,20 +43,57 @@ def payload():
     }
 
 
+def make_client(with_store: bool = True):
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    import_all_models()
+    Base.metadata.create_all(engine)
+    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    if with_store:
+        with testing_session() as db:
+            db.add(
+                Store(
+                    site_id="MLM",
+                    seller_id="seller-1",
+                    display_name="Demo Store",
+                    oauth_status="connected",
+                    token_reference="meli:seller-1",
+                )
+            )
+            db.commit()
+
+    def override_get_db():
+        db = testing_session()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    return TestClient(app)
+
+
+def teardown_function():
+    app.dependency_overrides.clear()
+
+
 def test_publish_execute_route_blocks_by_default():
-    client = TestClient(app)
+    client = make_client()
     response = client.post("/api/publishing/execute", json=payload())
 
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "blocked"
     assert "live_publish_disabled" in body["errors"]
-    assert "secret-token" not in response.text
+    assert "meli:seller-1" not in response.text
 
 
-def test_publish_execute_route_uses_service_without_echoing_token(monkeypatch):
+def test_publish_execute_route_uses_store_token_reference_without_echoing_it(monkeypatch):
     async def fake_execute_publish(**kwargs):
-        assert kwargs["client"].access_token == "secret-token"
+        assert kwargs["client"].access_token == "meli:seller-1"
         return PublishExecutionResult(
             status="published",
             item_id="MLM123",
@@ -58,10 +102,19 @@ def test_publish_execute_route_uses_service_without_echoing_token(monkeypatch):
 
     monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
     monkeypatch.setattr(publishing, "execute_publish", fake_execute_publish)
-    client = TestClient(app)
+    client = make_client()
 
     response = client.post("/api/publishing/execute", json=payload())
 
     assert response.status_code == 200
     assert response.json()["item_id"] == "MLM123"
-    assert "secret-token" not in response.text
+    assert "meli:seller-1" not in response.text
+
+
+def test_publish_execute_route_blocks_unknown_store():
+    client = make_client(with_store=False)
+
+    response = client.post("/api/publishing/execute", json=payload())
+
+    assert response.status_code == 404
+    assert "Store not found" in response.text

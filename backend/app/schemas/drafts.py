@@ -13,3 +13,14 @@ class ProductDraftCreate(BaseModel):
     stock: int = 0
     listing_type_id: str = ""
     image_urls: list[str] = []
+
+
+class ProductDraftRead(ProductDraftCreate):
+    id: int
+    status: str
+    risk_status: str
+
+
+class PersistedDraftResponse(BaseModel):
+    id: int | None = None
+    draft: ProductDraftCreate

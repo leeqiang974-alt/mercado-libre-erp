@@ -5,7 +5,12 @@ export function ImportPage({
   onCollectUrl,
   status,
 }: {
-  onImportHtml: (sourceUrl: string, html: string, targetSiteId: string) => Promise<void>;
+  onImportHtml: (
+    sourceUrl: string,
+    html: string,
+    targetSiteId: string,
+    persist: boolean,
+  ) => Promise<void>;
   onCollectUrl: (sourceUrl: string, targetSiteId: string) => Promise<void>;
   status: string;
 }) {
@@ -14,6 +19,7 @@ export function ImportPage({
   const [html, setHtml] = useState(
     "<span id='productTitle'>Bottle</span><span class='a-price'><span class='a-offscreen'>$9.99</span></span><img id='landingImage' src='https://example.com/a.jpg' />",
   );
+  const [persist, setPersist] = useState(true);
   const [error, setError] = useState("");
 
   async function runUrlCollection() {
@@ -28,7 +34,7 @@ export function ImportPage({
   async function runHtmlImport() {
     setError("");
     try {
-      await onImportHtml(sourceUrl, html, targetSiteId);
+      await onImportHtml(sourceUrl, html, targetSiteId, persist);
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : "Import failed");
     }
@@ -51,6 +57,14 @@ export function ImportPage({
       <label>
         HTML Snapshot
         <textarea value={html} onChange={(event) => setHtml(event.target.value)} />
+      </label>
+      <label className="check-row">
+        <input
+          type="checkbox"
+          checked={persist}
+          onChange={(event) => setPersist(event.target.checked)}
+        />
+        Save snapshot import as draft
       </label>
       <div className="button-row">
         <button onClick={runHtmlImport}>Import Snapshot and Review</button>

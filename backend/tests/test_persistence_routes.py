@@ -1,14 +1,16 @@
 import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.routes import stores
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
+from app.models.product_draft import ProductDraft
 from app.models.registry import import_all_models
+from app.models.store import Store
 from app.services.meli.oauth import MercadoLibreOAuthClient
 
 
@@ -30,31 +32,42 @@ def make_client():
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
-    return TestClient(app)
+    return TestClient(app), testing_session
 
 
 def teardown_function():
     app.dependency_overrides.clear()
 
 
-def test_authorization_url_route_returns_url(monkeypatch):
-    monkeypatch.setattr(stores.settings, "meli_client_id", "client-123")
-    monkeypatch.setattr(
-        stores.settings,
-        "meli_redirect_uri",
-        "http://localhost:8000/api/stores/meli/callback",
-    )
-    client = make_client()
+def test_import_amazon_html_can_persist_and_list_draft():
+    client, testing_session = make_client()
 
-    response = client.get("/api/stores/meli/authorization-url")
+    response = client.post(
+        "/api/imports/amazon-html",
+        json={
+            "source_url": "https://www.amazon.com/dp/B000TEST",
+            "html": "<span id='productTitle'>Persisted Bottle</span><span class='a-price'><span class='a-offscreen'>$9.99</span></span><img id='landingImage' src='https://example.com/a.jpg' />",
+            "target_site_id": "MLM",
+            "persist": True,
+        },
+    )
 
     assert response.status_code == 200
     body = response.json()
-    assert body["authorization_url"].startswith("https://auth.mercadolibre.com/authorization?")
-    assert body["state"]
+    assert body["id"] == 1
+    assert body["draft"]["title"] == "Persisted Bottle"
+
+    list_response = client.get("/api/drafts")
+    assert list_response.status_code == 200
+    assert list_response.json()[0]["title"] == "Persisted Bottle"
+
+    with Session(testing_session.kw["bind"]) as session:
+        assert session.query(ProductDraft).count() == 1
 
 
-def test_callback_exchanges_code_without_returning_tokens(monkeypatch):
+def test_oauth_callback_persists_store_without_returning_tokens(monkeypatch):
+    client, testing_session = make_client()
+
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -62,7 +75,7 @@ def test_callback_exchanges_code_without_returning_tokens(monkeypatch):
                 "access_token": "access-token",
                 "refresh_token": "refresh-token",
                 "expires_in": 21600,
-                "user_id": 123,
+                "user_id": 456,
             },
         )
 
@@ -75,13 +88,18 @@ def test_callback_exchanges_code_without_returning_tokens(monkeypatch):
         )
 
     monkeypatch.setattr(stores, "create_oauth_client", fake_client)
-    client = make_client()
 
     response = client.get("/api/stores/meli/callback?code=code-789&state=state-abc")
 
     assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "authorized"
-    assert body["seller_id"] == "123"
+    assert response.json()["seller_id"] == "456"
     assert "access-token" not in response.text
     assert "refresh-token" not in response.text
+
+    stores_response = client.get("/api/stores")
+    assert stores_response.status_code == 200
+    assert stores_response.json()[0]["seller_id"] == "456"
+    assert stores_response.json()[0]["token_reference"] == "meli:456"
+
+    with Session(testing_session.kw["bind"]) as session:
+        assert session.query(Store).count() == 1

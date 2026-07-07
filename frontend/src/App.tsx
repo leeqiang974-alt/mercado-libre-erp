@@ -12,9 +12,10 @@ export function App() {
   const [page, setPage] = useState("import");
   const [status, setStatus] = useState("");
 
-  async function importAndReview(sourceUrl: string, html: string, targetSiteId: string) {
+  async function importAndReview(sourceUrl: string, html: string, targetSiteId: string, persist: boolean) {
     setStatus("Importing Amazon page snapshot");
-    const nextDraft = await importAmazonHtml(sourceUrl, html, targetSiteId);
+    const importResult = await importAmazonHtml(sourceUrl, html, targetSiteId, persist);
+    const nextDraft = "draft" in importResult ? importResult.draft : importResult;
     setDraft(nextDraft);
     setStatus("Running local review");
     const nextReview = await reviewDraft(nextDraft);

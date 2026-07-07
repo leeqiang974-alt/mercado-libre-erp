@@ -86,6 +86,18 @@ button:disabled {
   margin: 10px 0;
 }
 
+.check-row {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.check-row input {
+  width: 16px;
+  height: 16px;
+}
+
 pre {
   background: white;
   border: 1px solid #dde3ea;

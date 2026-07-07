@@ -1,6 +1,9 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.db.session import get_db
+from app.models.store import Store
 from app.services.meli.oauth import (
     MercadoLibreOAuthClient,
     build_authorization_url,
@@ -35,11 +38,45 @@ def get_meli_authorization_url() -> dict[str, str]:
 
 
 @router.get("/meli/callback")
-async def meli_callback(code: str = Query(...), state: str = Query("")) -> dict[str, str]:
+async def meli_callback(
+    code: str = Query(...), state: str = Query(""), db: Session = Depends(get_db)
+) -> dict[str, str]:
     token = await create_oauth_client().exchange_code(code)
+    seller_id = str(token.user_id)
+    existing = db.query(Store).filter(Store.seller_id == seller_id).one_or_none()
+    if existing:
+        existing.oauth_status = "connected"
+        existing.token_reference = f"meli:{seller_id}"
+        existing.display_name = f"Mercado Libre {seller_id}"
+        store = existing
+    else:
+        store = Store(
+            site_id=settings.default_site_id,
+            seller_id=seller_id,
+            display_name=f"Mercado Libre {seller_id}",
+            oauth_status="connected",
+            token_reference=f"meli:{seller_id}",
+        )
+        db.add(store)
+    db.commit()
     return {
         "status": "authorized",
-        "seller_id": str(token.user_id),
+        "seller_id": seller_id,
         "state": state,
-        "token_reference": f"meli:{token.user_id}",
+        "token_reference": f"meli:{seller_id}",
     }
+
+
+@router.get("")
+def list_stores(db: Session = Depends(get_db)) -> list[dict[str, str]]:
+    return [
+        {
+            "id": str(store.id),
+            "site_id": store.site_id,
+            "seller_id": store.seller_id,
+            "display_name": store.display_name,
+            "oauth_status": store.oauth_status,
+            "token_reference": store.token_reference,
+        }
+        for store in db.query(Store).order_by(Store.id.desc()).all()
+    ]

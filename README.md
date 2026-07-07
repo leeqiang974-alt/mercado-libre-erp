@@ -37,3 +37,14 @@ docker compose up -d
 - Mercado Libre FULL fulfillment is excluded.
 - AI providers never receive Mercado Libre tokens.
 - No publish request is sent unless a human approval flag is present.
+- Publish execution uses an authorized store id and backend token reference, not a frontend-provided access token.
+
+## Current MVP Capabilities
+
+- Import an Amazon HTML snapshot and optionally save it as a draft.
+- Collect an Amazon URL through the backend Playwright adapter; challenge pages are marked for manual action.
+- List saved drafts.
+- Generate a Mercado Libre OAuth authorization URL and persist the connected store callback as a token reference.
+- List connected stores.
+- Build and validate non-FULL Mercado Libre item payloads.
+- Execute a guarded publish adapter only when `ALLOW_LIVE_PUBLISH=true`.

@@ -1,6 +1,6 @@
 from enum import Enum
 
-from sqlalchemy import Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Float, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -30,5 +30,6 @@ class ProductDraft(Base):
     stock: Mapped[int] = mapped_column(Integer, default=0)
     listing_type_id: Mapped[str] = mapped_column(String(40), default="")
     shipping_profile: Mapped[str] = mapped_column(String(80), default="")
+    image_urls_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[ProductDraftStatus] = mapped_column(default=ProductDraftStatus.DRAFT)
     risk_status: Mapped[str] = mapped_column(String(40), default="unreviewed")

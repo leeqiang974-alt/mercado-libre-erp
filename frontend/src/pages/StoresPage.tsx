@@ -1,9 +1,22 @@
-import { useState } from "react";
-import { getMeliAuthorizationUrl } from "../api/client";
+import { useEffect, useState } from "react";
+import { getMeliAuthorizationUrl, listStores, type StoreRecord } from "../api/client";
 
 export function StoresPage() {
   const [status, setStatus] = useState("");
   const [authUrl, setAuthUrl] = useState("");
+  const [stores, setStores] = useState<StoreRecord[]>([]);
+
+  async function refreshStores() {
+    try {
+      setStores(await listStores());
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to load stores");
+    }
+  }
+
+  useEffect(() => {
+    void refreshStores();
+  }, []);
 
   async function startAuthorization() {
     setStatus("Preparing authorization link");
@@ -30,6 +43,9 @@ export function StoresPage() {
           </a>
         </p>
       )}
+      <h3>Connected Stores</h3>
+      {stores.length === 0 && <p>No stores connected yet.</p>}
+      {stores.length > 0 && <pre>{JSON.stringify(stores, null, 2)}</pre>}
     </section>
   );
 }

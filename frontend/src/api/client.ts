@@ -14,14 +14,39 @@ export type ProductDraft = {
   image_urls: string[];
 };
 
-export async function importAmazonHtml(sourceUrl: string, html: string, targetSiteId: string) {
+export type ProductDraftRead = ProductDraft & {
+  id: number;
+  status: string;
+  risk_status: string;
+};
+
+export type PersistedDraftResponse = {
+  id: number | null;
+  draft: ProductDraft;
+};
+
+export type StoreRecord = {
+  id: string;
+  site_id: string;
+  seller_id: string;
+  display_name: string;
+  oauth_status: string;
+  token_reference: string;
+};
+
+export async function importAmazonHtml(
+  sourceUrl: string,
+  html: string,
+  targetSiteId: string,
+  persist = false,
+) {
   const response = await fetch(`${API_BASE}/api/imports/amazon-html`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source_url: sourceUrl, html, target_site_id: targetSiteId }),
+    body: JSON.stringify({ source_url: sourceUrl, html, target_site_id: targetSiteId, persist }),
   });
   if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<ProductDraft>;
+  return response.json() as Promise<ProductDraft | PersistedDraftResponse>;
 }
 
 export type CollectionResult = {
@@ -55,4 +80,16 @@ export async function getMeliAuthorizationUrl() {
   const response = await fetch(`${API_BASE}/api/stores/meli/authorization-url`);
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<{ authorization_url: string; state: string }>;
+}
+
+export async function listDrafts() {
+  const response = await fetch(`${API_BASE}/api/drafts`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<ProductDraftRead[]>;
+}
+
+export async function listStores() {
+  const response = await fetch(`${API_BASE}/api/stores`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<StoreRecord[]>;
 }
