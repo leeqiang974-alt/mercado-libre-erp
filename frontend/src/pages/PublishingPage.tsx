@@ -8,6 +8,8 @@ import {
   listPublishJobs,
   listStores,
   previewPublishFromDraft,
+  refreshCategoryAttributes,
+  refreshListingTypes,
   saveDraftListingConfig,
   type DraftListingConfig,
   type PublishExecutionResult,
@@ -57,6 +59,21 @@ export function PublishingPage({
     }
   }
 
+  async function forceRefreshListingTypes() {
+    if (!draft) return;
+    setStatus("Refreshing listing types");
+    try {
+      const result = await refreshListingTypes(draft.target_site_id);
+      setListingTypes(result.listing_type_ids);
+      if (result.listing_type_ids.length > 0) {
+        setListingTypeId(result.listing_type_ids[0]);
+      }
+      setStatus("");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to refresh listing types");
+    }
+  }
+
   async function predictDraftCategory() {
     if (!draft) return;
     setStatus("Predicting category");
@@ -82,6 +99,18 @@ export function PublishingPage({
       setStatus("");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to load attributes");
+    }
+  }
+
+  async function forceRefreshAttributes() {
+    if (!categoryId) return;
+    setStatus("Refreshing category attributes");
+    try {
+      const result = await refreshCategoryAttributes(categoryId);
+      setAttributes(result.attributes);
+      setStatus("");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to refresh attributes");
     }
   }
 
@@ -187,6 +216,9 @@ export function PublishingPage({
         <button disabled={!draft} onClick={loadListingTypes}>
           Load Listing Types
         </button>
+        <button disabled={!draft} onClick={forceRefreshListingTypes}>
+          Refresh Listing Types
+        </button>
         <button disabled={!draft} onClick={predictDraftCategory}>
           Predict Category
         </button>
@@ -218,6 +250,9 @@ export function PublishingPage({
       <div className="button-row">
         <button disabled={!categoryId} onClick={loadAttributes}>
           Load Attributes
+        </button>
+        <button disabled={!categoryId} onClick={forceRefreshAttributes}>
+          Refresh Attributes
         </button>
         <button disabled={!draftId} onClick={loadSavedConfig}>
           Load Saved Config

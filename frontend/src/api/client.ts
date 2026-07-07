@@ -218,6 +218,14 @@ export async function getListingTypes(siteId: string) {
   return response.json() as Promise<{ listing_type_ids: string[] }>;
 }
 
+export async function refreshListingTypes(siteId: string) {
+  const response = await fetch(`${API_BASE}/api/metadata/sites/${siteId}/listing-types/refresh`, {
+    method: "POST",
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<{ listing_type_ids: string[] }>;
+}
+
 export async function getCategoryPredictions(siteId: string, query: string) {
   const response = await fetch(
     `${API_BASE}/api/metadata/sites/${siteId}/category-predictions?q=${encodeURIComponent(query)}`,
@@ -228,6 +236,14 @@ export async function getCategoryPredictions(siteId: string, query: string) {
 
 export async function getCategoryAttributes(categoryId: string) {
   const response = await fetch(`${API_BASE}/api/metadata/categories/${categoryId}/attributes`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<{ attributes: Record<string, unknown>[] }>;
+}
+
+export async function refreshCategoryAttributes(categoryId: string) {
+  const response = await fetch(`${API_BASE}/api/metadata/categories/${categoryId}/attributes/refresh`, {
+    method: "POST",
+  });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<{ attributes: Record<string, unknown>[] }>;
 }

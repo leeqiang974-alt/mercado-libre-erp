@@ -20,6 +20,7 @@ Implemented:
 - Persisted product drafts for HTML snapshot imports.
 - Persisted product drafts for successful URL collections.
 - Mercado Libre metadata proxy for listing types, category prediction, and category attributes.
+- Mercado Libre metadata cache and refresh APIs for listing types and category attributes.
 - Persisted Mercado Libre draft listing configuration for category, listing type, fulfillment, and attributes.
 - Mercado Libre non-FULL payload builder.
 - Publish preview from saved draft listing configuration.
@@ -45,6 +46,6 @@ Not connected yet:
 
 Next production phase:
 
-- Add Mercado Libre metadata refresh for categories, attributes, listing types, and shipping options.
+- Add Mercado Libre shipping options metadata refresh.
 - Add publish job retry controls and worker-backed asynchronous execution.
 - Add provider prompt versioning and review-model version analytics.

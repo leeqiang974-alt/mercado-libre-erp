@@ -1,7 +1,38 @@
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.api.routes import metadata
+from app.db.base import Base
+from app.db.session import get_db
 from app.main import app
+from app.models.registry import import_all_models
+
+
+def make_client():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    import_all_models()
+    Base.metadata.create_all(engine)
+    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+    def override_get_db():
+        db = testing_session()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    return TestClient(app)
+
+
+def teardown_function():
+    app.dependency_overrides.clear()
 
 
 def test_metadata_routes_proxy_listing_types(monkeypatch):
@@ -10,7 +41,7 @@ def test_metadata_routes_proxy_listing_types(monkeypatch):
         return ["gold_special", "gold_pro"]
 
     monkeypatch.setattr(metadata, "fetch_listing_type_ids", fake_fetch)
-    client = TestClient(app)
+    client = make_client()
 
     response = client.get("/api/metadata/sites/MLM/listing-types")
 
@@ -25,7 +56,7 @@ def test_metadata_routes_proxy_category_prediction(monkeypatch):
         return [{"category_id": "MLM123", "category_name": "Bottles"}]
 
     monkeypatch.setattr(metadata, "predict_category", fake_predict)
-    client = TestClient(app)
+    client = make_client()
 
     response = client.get("/api/metadata/sites/MLM/category-predictions?q=water%20bottle")
 
@@ -39,7 +70,7 @@ def test_metadata_routes_proxy_category_attributes(monkeypatch):
         return [{"id": "BRAND", "name": "Brand"}]
 
     monkeypatch.setattr(metadata, "fetch_category_attributes", fake_attributes)
-    client = TestClient(app)
+    client = make_client()
 
     response = client.get("/api/metadata/categories/MLM123/attributes")
 
