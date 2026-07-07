@@ -1,0 +1,93 @@
+body {
+  margin: 0;
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+  background: #f6f7f9;
+  color: #1f2933;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  background: #111827;
+  color: white;
+  padding: 20px;
+}
+
+.sidebar h1 {
+  font-size: 20px;
+  margin: 0 0 24px;
+}
+
+.sidebar button {
+  width: 100%;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  border: 0;
+  border-radius: 6px;
+  padding: 10px;
+  color: white;
+  background: transparent;
+  cursor: pointer;
+}
+
+.sidebar button.active {
+  background: #2563eb;
+}
+
+main {
+  padding: 24px;
+}
+
+.panel {
+  max-width: 980px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  margin: 14px 0;
+  font-weight: 600;
+}
+
+input,
+textarea {
+  border: 1px solid #ccd2da;
+  border-radius: 6px;
+  padding: 10px;
+  font: inherit;
+}
+
+textarea {
+  min-height: 160px;
+}
+
+button {
+  border: 0;
+  border-radius: 6px;
+  padding: 10px 14px;
+  background: #2563eb;
+  color: white;
+  cursor: pointer;
+}
+
+button:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
+}
+
+pre {
+  background: white;
+  border: 1px solid #dde3ea;
+  border-radius: 6px;
+  padding: 16px;
+  overflow: auto;
+}
+
+.error {
+  color: #b42318;
+}
