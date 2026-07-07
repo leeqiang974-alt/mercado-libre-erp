@@ -55,6 +55,7 @@ label {
 }
 
 input,
+select,
 textarea {
   border: 1px solid #ccd2da;
   border-radius: 6px;

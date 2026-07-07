@@ -55,7 +55,7 @@ export function App() {
         />
       )}
       {page === "drafts" && <DraftsPage draft={draft} draftId={draftId} review={review} />}
-      {page === "publishing" && <PublishingPage draft={draft} review={review} />}
+      {page === "publishing" && <PublishingPage draft={draft} draftId={draftId} review={review} />}
       {page === "stores" && <StoresPage />}
     </Layout>
   );

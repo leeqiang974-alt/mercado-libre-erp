@@ -58,7 +58,9 @@ python -m alembic upgrade head
 - Store Mercado Libre access/refresh tokens encrypted in the backend token vault.
 - List connected stores.
 - Fetch Mercado Libre listing types, category predictions, and category attributes through backend metadata routes.
+- Save Mercado Libre category, listing type, fulfillment, and attribute values as draft listing configuration.
 - Build and validate non-FULL Mercado Libre item payloads.
+- Preview publishing from saved draft listing configuration.
 - Execute a guarded publish adapter only when `ALLOW_LIVE_PUBLISH=true`.
 - Resolve encrypted store tokens server-side for guarded publish execution.
 - Manage the current database schema through an Alembic baseline migration.

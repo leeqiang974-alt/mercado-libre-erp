@@ -1,6 +1,7 @@
 def import_all_models() -> None:
     import app.models.audit_event  # noqa: F401
     import app.models.collection_job  # noqa: F401
+    import app.models.draft_listing_config  # noqa: F401
     import app.models.product_draft  # noqa: F401
     import app.models.publish_job  # noqa: F401
     import app.models.review_result  # noqa: F401

@@ -40,3 +40,17 @@ def test_build_item_payload_rejects_full_fulfillment():
                 site_id="MLM", listing_type_id="gold_special", fulfillment="full"
             ),
         )
+
+
+def test_build_item_payload_includes_listing_attributes():
+    payload = build_item_payload(
+        draft=complete_draft(),
+        listing_choice=ListingChoice(
+            site_id="MLM",
+            listing_type_id="gold_special",
+            fulfillment="not_full",
+            attributes=[{"id": "BRAND", "value_name": "Acme"}],
+        ),
+    )
+
+    assert payload["attributes"] == [{"id": "BRAND", "value_name": "Acme"}]

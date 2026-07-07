@@ -56,6 +56,23 @@ export type PublishJobRecord = {
   errors: string[];
 };
 
+export type DraftListingConfig = {
+  id: number;
+  product_draft_id: number;
+  site_id: string;
+  category_id: string;
+  listing_type_id: string;
+  fulfillment: string;
+  attributes: { id: string; value_name: string }[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type PublishValidationResult = {
+  allowed: boolean;
+  errors: string[];
+};
+
 export async function importAmazonHtml(
   sourceUrl: string,
   html: string,
@@ -199,6 +216,51 @@ export async function listPublishJobs() {
   const response = await fetch(`${API_BASE}/api/publishing/jobs`);
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<PublishJobRecord[]>;
+}
+
+export async function saveDraftListingConfig(
+  productDraftId: number,
+  payload: {
+    site_id: string;
+    category_id: string;
+    listing_type_id: string;
+    fulfillment: string;
+    attributes: { id: string; value_name: string }[];
+  },
+) {
+  const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/listing-config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<DraftListingConfig>;
+}
+
+export async function getDraftListingConfig(productDraftId: number) {
+  const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/listing-config`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<DraftListingConfig>;
+}
+
+export async function previewPublishFromDraft(
+  productDraftId: number,
+  review: Record<string, unknown>,
+  validListingTypeIds: string[],
+  humanApproved: boolean,
+) {
+  const response = await fetch(`${API_BASE}/api/publishing/preview-from-draft`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      product_draft_id: productDraftId,
+      review,
+      valid_listing_type_ids: validListingTypeIds,
+      human_approved: humanApproved,
+    }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<PublishValidationResult>;
 }
 
 function reviewUrl(provider: "local" | "claude" | "nvidia", productDraftId?: number | null) {

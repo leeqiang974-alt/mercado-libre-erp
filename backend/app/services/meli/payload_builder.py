@@ -9,7 +9,7 @@ def build_item_payload(draft: ProductDraftCreate, listing_choice: ListingChoice)
         raise ValueError("Listing choice site must match draft target site.")
     if not listing_choice.listing_type_id:
         raise ValueError("Listing type is required.")
-    return {
+    payload = {
         "site_id": draft.target_site_id,
         "title": draft.title,
         "category_id": draft.target_category_id,
@@ -22,3 +22,6 @@ def build_item_payload(draft: ProductDraftCreate, listing_choice: ListingChoice)
         "description": {"plain_text": draft.description},
         "pictures": [{"source": url} for url in draft.image_urls],
     }
+    if listing_choice.attributes:
+        payload["attributes"] = listing_choice.attributes
+    return payload

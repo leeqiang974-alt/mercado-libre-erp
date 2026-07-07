@@ -5,6 +5,7 @@ class ListingChoice(BaseModel):
     site_id: str
     listing_type_id: str
     fulfillment: str = "not_full"
+    attributes: list[dict] = []
 
 
 class PublishValidationResult(BaseModel):

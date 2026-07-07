@@ -13,6 +13,7 @@ from app.schemas.publishing import (
     PublishValidationResult,
 )
 from app.schemas.reviews import ReviewResponse
+from app.services.draft_listing_configs import build_configured_draft
 from app.services.meli.client import MercadoLibreClient
 from app.services.meli.publisher import execute_publish, validate_publish_request
 from app.services.meli.token_vault import resolve_store_access_token
@@ -35,12 +36,34 @@ class PublishExecuteRequest(PublishPreviewRequest):
     product_draft_id: int | None = None
 
 
+class PublishFromDraftPreviewRequest(BaseModel):
+    product_draft_id: int
+    review: ReviewResponse
+    valid_listing_type_ids: list[str]
+    human_approved: bool
+
+
 @router.post("/preview", response_model=PublishValidationResult)
 def publish_preview(payload: PublishPreviewRequest) -> PublishValidationResult:
     return validate_publish_request(
         draft=payload.draft,
         review=payload.review,
         listing_choice=payload.listing_choice,
+        valid_listing_type_ids=payload.valid_listing_type_ids,
+        human_approved=payload.human_approved,
+    )
+
+
+@router.post("/preview-from-draft", response_model=PublishValidationResult)
+def publish_preview_from_draft(
+    payload: PublishFromDraftPreviewRequest,
+    db: Session = Depends(get_db),
+) -> PublishValidationResult:
+    draft, listing_choice = build_configured_draft(db, payload.product_draft_id)
+    return validate_publish_request(
+        draft=draft,
+        review=payload.review,
+        listing_choice=listing_choice,
         valid_listing_type_ids=payload.valid_listing_type_ids,
         human_approved=payload.human_approved,
     )

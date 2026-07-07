@@ -18,7 +18,9 @@ Implemented:
 - Persisted product drafts for HTML snapshot imports.
 - Persisted product drafts for successful URL collections.
 - Mercado Libre metadata proxy for listing types, category prediction, and category attributes.
+- Persisted Mercado Libre draft listing configuration for category, listing type, fulfillment, and attributes.
 - Mercado Libre non-FULL payload builder.
+- Publish preview from saved draft listing configuration.
 - Publishing validation gates for human approval, listing type availability, and FULL exclusion.
 - Guarded Mercado Libre publish execution adapter that posts to `/items` only when live publishing is explicitly enabled.
 - Guarded publish execution API now uses `store_id` rather than accepting access tokens from the frontend.
