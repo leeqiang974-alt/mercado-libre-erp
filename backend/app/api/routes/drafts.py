@@ -2,8 +2,10 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.schemas.draft_approvals import DraftApprovalCreate, DraftApprovalRead
 from app.schemas.draft_listing_config import DraftListingConfigRead, DraftListingConfigUpsert
 from app.schemas.drafts import ProductDraftRead
+from app.services.draft_approvals import approve_product_draft, to_approval_read
 from app.services.draft_listing_configs import (
     get_draft_listing_config,
     to_listing_config_read,
@@ -34,3 +36,12 @@ def read_listing_config(
     db: Session = Depends(get_db),
 ) -> DraftListingConfigRead:
     return to_listing_config_read(get_draft_listing_config(db, product_draft_id))
+
+
+@router.post("/{product_draft_id}/approval", response_model=DraftApprovalRead)
+def approve_draft(
+    product_draft_id: int,
+    payload: DraftApprovalCreate,
+    db: Session = Depends(get_db),
+) -> DraftApprovalRead:
+    return to_approval_read(approve_product_draft(db, product_draft_id, payload))

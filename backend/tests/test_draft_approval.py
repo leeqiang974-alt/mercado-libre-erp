@@ -7,8 +7,9 @@ from app.api.routes import publishing
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
+from app.models.audit_event import AuditEvent
 from app.models.product_draft import ProductDraft
-from app.models.publish_job import PublishJob, PublishJobStatus
+from app.models.product_draft_approval import ProductDraftApproval
 from app.models.registry import import_all_models
 from app.models.store import Store
 from app.models.token_credential import TokenCredential
@@ -74,7 +75,7 @@ def make_client(with_config: bool = True):
                 "category_id": "MLM123",
                 "listing_type_id": "gold_special",
                 "fulfillment": "not_full",
-                "attributes": [{"id": "BRAND", "value_name": "Acme"}],
+                "attributes": [],
             },
         )
     return client, testing_session
@@ -95,7 +96,7 @@ def review_payload():
     }
 
 
-def execute_payload():
+def publish_from_draft_payload():
     return {
         "store_id": 1,
         "product_draft_id": 1,
@@ -105,44 +106,60 @@ def execute_payload():
     }
 
 
-def test_publish_execute_from_draft_uses_saved_config_and_persists_job(monkeypatch):
-    async def fake_execute_publish(**kwargs):
-        assert kwargs["client"].access_token == "access-token"
-        assert kwargs["draft"].target_category_id == "MLM123"
-        assert kwargs["listing_choice"].listing_type_id == "gold_special"
-        assert kwargs["listing_choice"].attributes == [{"id": "BRAND", "value_name": "Acme"}]
-        return PublishExecutionResult(
-            status="published",
-            item_id="MLM999",
-            permalink="https://example.com/MLM999",
-        )
-
-    monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
-    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
-    monkeypatch.setattr(publishing, "execute_publish", fake_execute_publish)
+def test_draft_can_be_approved_and_audited():
     client, testing_session = make_client()
-    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
 
-    response = client.post("/api/publishing/execute-from-draft", json=execute_payload())
+    response = client.post(
+        "/api/drafts/1/approval",
+        json={"approved_by": "operator", "note": "checked listing"},
+    )
 
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "published"
-    assert body["job_id"] == 1
-    assert "access-token" not in response.text
+    assert body["product_draft_id"] == 1
+    assert body["approved_by"] == "operator"
+    assert body["status"] == "approved"
     with testing_session() as db:
-        job = db.query(PublishJob).one()
-        assert job.product_draft_id == 1
-        assert job.store_id == 1
-        assert job.status == PublishJobStatus.PUBLISHED
-        assert job.meli_item_id == "MLM999"
+        approval = db.query(ProductDraftApproval).one()
+        assert approval.note == "checked listing"
+        event = db.query(AuditEvent).filter(AuditEvent.action == "draft.approved").one()
+        assert event.entity_type == "product_draft"
+        assert event.entity_id == "1"
+        assert event.after_json["approved_by"] == "operator"
 
 
-def test_publish_execute_from_draft_requires_saved_config(monkeypatch):
+def test_execute_from_draft_ignores_request_boolean_without_saved_approval(monkeypatch):
+    async def fake_execute_publish(**kwargs):
+        raise AssertionError("publish adapter should not run without saved approval")
+
     monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
-    client, _ = make_client(with_config=False)
+    monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
+    monkeypatch.setattr(publishing, "execute_publish", fake_execute_publish)
+    client, _ = make_client()
 
-    response = client.post("/api/publishing/execute-from-draft", json=execute_payload())
+    response = client.post("/api/publishing/execute-from-draft", json=publish_from_draft_payload())
 
-    assert response.status_code == 404
-    assert "Listing config not found" in response.text
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "blocked"
+    assert "human_approval_required" in body["errors"]
+
+
+def test_execute_from_draft_uses_saved_approval(monkeypatch):
+    async def fake_execute_publish(**kwargs):
+        assert kwargs["human_approved"] is True
+        return PublishExecutionResult(status="published", item_id="MLM123")
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
+    monkeypatch.setattr(publishing, "execute_publish", fake_execute_publish)
+    client, _ = make_client()
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+
+    response = client.post(
+        "/api/publishing/execute-from-draft",
+        json=publish_from_draft_payload() | {"human_approved": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "published"

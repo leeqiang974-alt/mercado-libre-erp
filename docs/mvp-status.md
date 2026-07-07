@@ -22,6 +22,7 @@ Implemented:
 - Mercado Libre metadata proxy for listing types, category prediction, and category attributes.
 - Mercado Libre metadata cache and refresh APIs for listing types and category attributes.
 - Persisted Mercado Libre draft listing configuration for category, listing type, fulfillment, and attributes.
+- Persisted operator approval records for draft publish gates.
 - Mercado Libre non-FULL payload builder.
 - Publish preview from saved draft listing configuration.
 - Publishing validation gates for human approval, listing type availability, and FULL exclusion.

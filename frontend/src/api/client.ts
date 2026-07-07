@@ -68,6 +68,15 @@ export type DraftListingConfig = {
   updated_at: string;
 };
 
+export type DraftApproval = {
+  id: number;
+  product_draft_id: number;
+  status: string;
+  approved_by: string;
+  note: string;
+  approved_at: string;
+};
+
 export type PublishValidationResult = {
   allowed: boolean;
   errors: string[];
@@ -277,6 +286,16 @@ export async function getDraftListingConfig(productDraftId: number) {
   const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/listing-config`);
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<DraftListingConfig>;
+}
+
+export async function approveDraft(productDraftId: number, approvedBy = "operator", note = "") {
+  const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/approval`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ approved_by: approvedBy, note }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<DraftApproval>;
 }
 
 export async function previewPublishFromDraft(

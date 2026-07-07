@@ -108,6 +108,7 @@ def test_listing_config_rejects_full_fulfillment():
 def test_publish_preview_from_saved_draft_config():
     client, _ = make_client()
     client.put("/api/drafts/1/listing-config", json=config_payload())
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
 
     response = client.post(
         "/api/publishing/preview-from-draft",

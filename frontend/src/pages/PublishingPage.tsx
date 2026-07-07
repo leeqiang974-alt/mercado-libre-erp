@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  approveDraft,
   executePublishFromDraft,
   getCategoryAttributes,
   getCategoryPredictions,
@@ -12,6 +13,7 @@ import {
   refreshListingTypes,
   saveDraftListingConfig,
   type DraftListingConfig,
+  type DraftApproval,
   type PublishExecutionResult,
   type PublishJobRecord,
   type PublishValidationResult,
@@ -37,6 +39,7 @@ export function PublishingPage({
   const [predictions, setPredictions] = useState<Record<string, unknown>[]>([]);
   const [attributes, setAttributes] = useState<Record<string, unknown>[]>([]);
   const [savedConfig, setSavedConfig] = useState<DraftListingConfig | null>(null);
+  const [approval, setApproval] = useState<DraftApproval | null>(null);
   const [preview, setPreview] = useState<PublishValidationResult | null>(null);
   const [execution, setExecution] = useState<PublishExecutionResult | null>(null);
   const [stores, setStores] = useState<StoreRecord[]>([]);
@@ -184,6 +187,17 @@ export function PublishingPage({
     }
   }
 
+  async function approveCurrentDraft() {
+    if (!draftId) return;
+    setStatus("Approving draft");
+    try {
+      setApproval(await approveDraft(draftId, "operator", "Approved for Mercado Libre publish"));
+      setStatus("");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to approve draft");
+    }
+  }
+
   async function executeSavedConfig() {
     if (!draftId || !review || !storeId) return;
     setStatus("Executing publish request");
@@ -260,6 +274,9 @@ export function PublishingPage({
         <button disabled={!draftId || !categoryId || !listingTypeId} onClick={saveConfig}>
           Save Listing Config
         </button>
+        <button disabled={!draftId || !savedConfig} onClick={approveCurrentDraft}>
+          Approve Draft
+        </button>
       </div>
       {status && <p>{status}</p>}
       {stores.length > 0 && (
@@ -310,6 +327,12 @@ export function PublishingPage({
         <>
           <h3>Saved Listing Config</h3>
           <pre>{JSON.stringify(savedConfig, null, 2)}</pre>
+        </>
+      )}
+      {approval && (
+        <>
+          <h3>Draft Approval</h3>
+          <pre>{JSON.stringify(approval, null, 2)}</pre>
         </>
       )}
       {preview && (

@@ -70,6 +70,7 @@ python -m app.worker --loop --interval 30 --limit 10
 - Fetch Mercado Libre listing types, category predictions, and category attributes through backend metadata routes.
 - Cache Mercado Libre listing types and category attributes, with explicit refresh endpoints.
 - Save Mercado Libre category, listing type, fulfillment, and attribute values as draft listing configuration.
+- Persist operator approval for drafts before publish-from-draft execution.
 - Build and validate non-FULL Mercado Libre item payloads.
 - Preview publishing from saved draft listing configuration.
 - Execute a guarded publish adapter only when `ALLOW_LIVE_PUBLISH=true`.
