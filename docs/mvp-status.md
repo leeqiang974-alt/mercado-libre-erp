@@ -24,6 +24,7 @@ Implemented:
 - Guarded publish execution resolves encrypted store access tokens server-side.
 - Persisted publish jobs for blocked, failed, and published execution attempts.
 - Publish job list API for reviewing status, errors, item IDs, and permalinks.
+- Alembic baseline migration for the current backend schema.
 - Persisted local, Claude, and NVIDIA review results for saved drafts.
 - Review history API and frontend refresh control for saved draft audit trails.
 - API flow for URL/HTML import, persisted source products, persisted drafts, persisted stores, review, metadata, publish preview, and guarded publish execution.
@@ -33,8 +34,7 @@ Implemented:
 Not connected yet:
 
 - Background Amazon collection jobs and queueing.
-- Production credential vault or encryption for Mercado Libre tokens.
-- Persistent PostgreSQL migrations.
+- Production-grade external KMS or secrets manager for Mercado Libre token encryption keys.
 
 Next production phase:
 

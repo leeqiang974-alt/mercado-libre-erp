@@ -31,6 +31,13 @@ cd D:\amazon-meli-publisher\.worktrees\mvp-skeleton
 docker compose up -d
 ```
 
+## Database Migrations
+
+```powershell
+cd D:\amazon-meli-publisher\.worktrees\mvp-skeleton\backend
+python -m alembic upgrade head
+```
+
 ## Safety Rules
 
 - Amazon collection starts from user-provided pages or HTML snapshots.
@@ -53,6 +60,7 @@ docker compose up -d
 - Build and validate non-FULL Mercado Libre item payloads.
 - Execute a guarded publish adapter only when `ALLOW_LIVE_PUBLISH=true`.
 - Resolve encrypted store tokens server-side for guarded publish execution.
+- Manage the current database schema through an Alembic baseline migration.
 - Persist publish attempts as jobs with blocked/published/failed status, errors, item id, and permalink.
 - List publish jobs from the frontend.
 - Run local, Claude, or NVIDIA review from the backend review API.
