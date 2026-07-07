@@ -263,6 +263,14 @@ export async function listPublishJobs() {
   return response.json() as Promise<PublishJobRecord[]>;
 }
 
+export async function retryPublishJob(jobId: number) {
+  const response = await fetch(`${API_BASE}/api/publishing/jobs/${jobId}/retry`, {
+    method: "POST",
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<PublishExecutionResult>;
+}
+
 export async function saveDraftListingConfig(
   productDraftId: number,
   payload: {

@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.session import get_db
+from app.models.publish_job import PublishJobStatus
 from app.models.store import Store
 from app.schemas.drafts import ProductDraftCreate
 from app.schemas.publishing import (
@@ -20,7 +21,13 @@ from app.services.meli.client import MercadoLibreClient
 from app.services.meli.oauth import MercadoLibreOAuthClient
 from app.services.meli.publisher import execute_publish, validate_publish_request
 from app.services.meli.token_vault import resolve_fresh_store_access_token
-from app.services.publish_jobs import create_publish_job, complete_publish_job, list_publish_jobs
+from app.services.publish_jobs import (
+    complete_publish_job,
+    create_publish_job,
+    get_publish_job_or_404,
+    list_publish_jobs,
+    review_from_job_summary,
+)
 
 router = APIRouter(prefix="/api/publishing", tags=["publishing"])
 settings = get_settings()
@@ -115,6 +122,48 @@ async def publish_execute_from_draft(
         review=payload.review,
         listing_choice=listing_choice,
         valid_listing_type_ids=payload.valid_listing_type_ids,
+        human_approved=human_approved,
+    )
+
+
+@router.post("/jobs/{job_id}/retry", response_model=PublishExecutionResult)
+async def retry_publish_job(job_id: int, db: Session = Depends(get_db)) -> PublishExecutionResult:
+    job = get_publish_job_or_404(db, job_id)
+    if job.status not in {PublishJobStatus.BLOCKED, PublishJobStatus.FAILED}:
+        raise HTTPException(
+            status_code=400,
+            detail="Only blocked or failed publish jobs can be retried.",
+        )
+
+    draft, listing_choice = build_configured_draft(db, job.product_draft_id)
+    review = review_from_job_summary(job)
+    human_approved = is_product_draft_approved(db, job.product_draft_id)
+    create_audit_event(
+        db=db,
+        actor_type="operator",
+        actor_id="operator",
+        action="publish.retry_requested",
+        entity_type="publish_job",
+        entity_id=str(job.id),
+        before={
+            "status": job.status.value if hasattr(job.status, "value") else str(job.status),
+            "product_draft_id": job.product_draft_id,
+            "store_id": job.store_id,
+        },
+        after={
+            "retry_product_draft_id": job.product_draft_id,
+            "retry_store_id": job.store_id,
+            "listing_type_id": listing_choice.listing_type_id,
+        },
+    )
+    return await _execute_with_payload(
+        db=db,
+        store_id=job.store_id,
+        product_draft_id=job.product_draft_id,
+        draft=draft,
+        review=review,
+        listing_choice=listing_choice,
+        valid_listing_type_ids=[listing_choice.listing_type_id],
         human_approved=human_approved,
     )
 

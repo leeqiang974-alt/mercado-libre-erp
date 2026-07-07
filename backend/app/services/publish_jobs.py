@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.publish_job import PublishJob, PublishJobStatus
@@ -27,7 +28,13 @@ def create_publish_job(
             "site_id": draft.target_site_id,
             "category_id": draft.target_category_id,
             "listing_type_id": listing_choice.listing_type_id,
+            "fulfillment": listing_choice.fulfillment,
+            "review_provider": review.provider,
             "review_decision": review.decision,
+            "review_risk_level": review.risk_level,
+            "review_reason_codes": review.reason_codes,
+            "review_reasons": review.reasons,
+            "review_suggested_changes": review.suggested_changes,
         },
     )
     db.add(job)
@@ -72,3 +79,22 @@ def to_publish_job_read(job: PublishJob) -> PublishJobRead:
 
 def list_publish_jobs(db: Session) -> list[PublishJobRead]:
     return [to_publish_job_read(job) for job in db.query(PublishJob).order_by(PublishJob.id.desc()).all()]
+
+
+def get_publish_job_or_404(db: Session, job_id: int) -> PublishJob:
+    job = db.get(PublishJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Publish job not found.")
+    return job
+
+
+def review_from_job_summary(job: PublishJob) -> ReviewResponse:
+    summary = job.request_summary_json or {}
+    return ReviewResponse(
+        provider=summary.get("review_provider", "previous_review"),
+        decision=summary.get("review_decision", "needs_changes"),
+        risk_level=summary.get("review_risk_level", "medium"),
+        reason_codes=summary.get("review_reason_codes", []),
+        reasons=summary.get("review_reasons", []),
+        suggested_changes=summary.get("review_suggested_changes", {}),
+    )

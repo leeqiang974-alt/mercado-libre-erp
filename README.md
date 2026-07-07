@@ -79,6 +79,7 @@ python -m app.worker --loop --interval 30 --limit 10
 - Manage the current database schema through an Alembic baseline migration.
 - Persist publish attempts as jobs with blocked/published/failed status, errors, item id, and permalink.
 - List publish jobs from the frontend.
+- Retry blocked or failed publish jobs from saved draft configuration while preserving the original job history.
 - Run local, Claude, or NVIDIA review from the backend review API.
 - Persist local, Claude, and NVIDIA review results against saved product drafts.
 - Persist and list audit events for AI review and publish execution actions.

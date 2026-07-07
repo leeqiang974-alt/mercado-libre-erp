@@ -32,6 +32,7 @@ Implemented:
 - Guarded publish execution from saved draft listing configuration.
 - Persisted publish jobs for blocked, failed, and published execution attempts.
 - Publish job list API for reviewing status, errors, item IDs, and permalinks.
+- Publish job retry API and frontend retry control for blocked or failed jobs, preserving original job history and audit trail.
 - Audit event log for AI review and publish execution actions, with frontend audit page.
 - Alembic baseline migration for the current backend schema.
 - Persisted local, Claude, and NVIDIA review results for saved drafts.
@@ -48,5 +49,5 @@ Not connected yet:
 Next production phase:
 
 - Add Mercado Libre shipping options metadata refresh.
-- Add publish job retry controls and worker-backed asynchronous execution.
+- Add worker-backed asynchronous publish execution.
 - Add provider prompt versioning and review-model version analytics.

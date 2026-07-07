@@ -99,6 +99,23 @@ button:disabled {
   height: 16px;
 }
 
+.job-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.job-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #dde3ea;
+  border-radius: 6px;
+  background: white;
+  padding: 10px 12px;
+}
+
 pre {
   background: white;
   border: 1px solid #dde3ea;

@@ -11,6 +11,7 @@ import {
   previewPublishFromDraft,
   refreshCategoryAttributes,
   refreshListingTypes,
+  retryPublishJob,
   saveDraftListingConfig,
   type DraftListingConfig,
   type DraftApproval,
@@ -45,6 +46,7 @@ export function PublishingPage({
   const [stores, setStores] = useState<StoreRecord[]>([]);
   const [storeId, setStoreId] = useState("");
   const [jobs, setJobs] = useState<PublishJobRecord[]>([]);
+  const [retryingJobId, setRetryingJobId] = useState<number | null>(null);
   const [status, setStatus] = useState("");
 
   async function loadListingTypes() {
@@ -217,6 +219,20 @@ export function PublishingPage({
     }
   }
 
+  async function retryJob(jobId: number) {
+    setRetryingJobId(jobId);
+    setStatus(`Retrying publish job #${jobId}`);
+    try {
+      setExecution(await retryPublishJob(jobId));
+      setJobs(await listPublishJobs());
+      setStatus("");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to retry publish job");
+    } finally {
+      setRetryingJobId(null);
+    }
+  }
+
   return (
     <section className="panel">
       <h2>Publish Queue</h2>
@@ -350,6 +366,24 @@ export function PublishingPage({
       {jobs.length > 0 && (
         <>
           <h3>Publish Jobs</h3>
+          <div className="job-list">
+            {jobs.map((job) => {
+              const canRetry = job.status === "blocked" || job.status === "failed";
+              return (
+                <div className="job-row" key={job.id}>
+                  <span>
+                    #{job.id} draft #{job.product_draft_id} store #{job.store_id} {job.status}
+                  </span>
+                  <button
+                    disabled={!canRetry || retryingJobId === job.id}
+                    onClick={() => retryJob(job.id)}
+                  >
+                    Retry
+                  </button>
+                </div>
+              );
+            })}
+          </div>
           <pre>{JSON.stringify(jobs, null, 2)}</pre>
         </>
       )}
