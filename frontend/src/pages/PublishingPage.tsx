@@ -1,15 +1,19 @@
 import { useState } from "react";
 import {
+  executePublishFromDraft,
   getCategoryAttributes,
   getCategoryPredictions,
   getDraftListingConfig,
   getListingTypes,
   listPublishJobs,
+  listStores,
   previewPublishFromDraft,
   saveDraftListingConfig,
   type DraftListingConfig,
+  type PublishExecutionResult,
   type PublishJobRecord,
   type PublishValidationResult,
+  type StoreRecord,
 } from "../api/client";
 import type { ProductDraft } from "../api/client";
 
@@ -32,6 +36,9 @@ export function PublishingPage({
   const [attributes, setAttributes] = useState<Record<string, unknown>[]>([]);
   const [savedConfig, setSavedConfig] = useState<DraftListingConfig | null>(null);
   const [preview, setPreview] = useState<PublishValidationResult | null>(null);
+  const [execution, setExecution] = useState<PublishExecutionResult | null>(null);
+  const [stores, setStores] = useState<StoreRecord[]>([]);
+  const [storeId, setStoreId] = useState("");
   const [jobs, setJobs] = useState<PublishJobRecord[]>([]);
   const [status, setStatus] = useState("");
 
@@ -88,6 +95,20 @@ export function PublishingPage({
     }
   }
 
+  async function refreshStores() {
+    setStatus("Loading stores");
+    try {
+      const result = await listStores();
+      setStores(result);
+      if (!storeId && result.length > 0) {
+        setStoreId(result[0].id);
+      }
+      setStatus("");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to load stores");
+    }
+  }
+
   async function loadSavedConfig() {
     if (!draftId) return;
     setStatus("Loading saved listing config");
@@ -134,6 +155,25 @@ export function PublishingPage({
     }
   }
 
+  async function executeSavedConfig() {
+    if (!draftId || !review || !storeId) return;
+    setStatus("Executing publish request");
+    try {
+      const result = await executePublishFromDraft(
+        draftId,
+        Number(storeId),
+        review,
+        listingTypes,
+        true,
+      );
+      setExecution(result);
+      setJobs(await listPublishJobs());
+      setStatus("");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to execute publish request");
+    }
+  }
+
   return (
     <section className="panel">
       <h2>Publish Queue</h2>
@@ -150,6 +190,7 @@ export function PublishingPage({
         <button disabled={!draft} onClick={predictDraftCategory}>
           Predict Category
         </button>
+        <button onClick={refreshStores}>Load Stores</button>
       </div>
       <label>
         Category ID
@@ -186,9 +227,29 @@ export function PublishingPage({
         </button>
       </div>
       {status && <p>{status}</p>}
-      <button disabled={!ready || !draftId || listingTypes.length === 0} onClick={previewSavedConfig}>
-        Create Publish Preview
-      </button>
+      {stores.length > 0 && (
+        <label>
+          Store
+          <select value={storeId} onChange={(event) => setStoreId(event.target.value)}>
+            {stores.map((store) => (
+              <option key={store.id} value={store.id}>
+                #{store.id} {store.display_name} {store.site_id}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <div className="button-row">
+        <button disabled={!ready || !draftId || listingTypes.length === 0} onClick={previewSavedConfig}>
+          Create Publish Preview
+        </button>
+        <button
+          disabled={!preview?.allowed || !draftId || !storeId || listingTypes.length === 0}
+          onClick={executeSavedConfig}
+        >
+          Execute Publish
+        </button>
+      </div>
       <div className="button-row">
         <button onClick={refreshJobs}>Refresh Publish Jobs</button>
       </div>
@@ -220,6 +281,12 @@ export function PublishingPage({
         <>
           <h3>Publish Preview</h3>
           <pre>{JSON.stringify(preview, null, 2)}</pre>
+        </>
+      )}
+      {execution && (
+        <>
+          <h3>Publish Execution</h3>
+          <pre>{JSON.stringify(execution, null, 2)}</pre>
         </>
       )}
       {jobs.length > 0 && (

@@ -62,6 +62,7 @@ python -m alembic upgrade head
 - Build and validate non-FULL Mercado Libre item payloads.
 - Preview publishing from saved draft listing configuration.
 - Execute a guarded publish adapter only when `ALLOW_LIVE_PUBLISH=true`.
+- Execute guarded publishing directly from saved draft listing configuration.
 - Resolve encrypted store tokens server-side for guarded publish execution.
 - Manage the current database schema through an Alembic baseline migration.
 - Persist publish attempts as jobs with blocked/published/failed status, errors, item id, and permalink.

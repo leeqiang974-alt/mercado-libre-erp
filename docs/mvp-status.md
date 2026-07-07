@@ -25,6 +25,7 @@ Implemented:
 - Guarded Mercado Libre publish execution adapter that posts to `/items` only when live publishing is explicitly enabled.
 - Guarded publish execution API now uses `store_id` rather than accepting access tokens from the frontend.
 - Guarded publish execution resolves encrypted store access tokens server-side.
+- Guarded publish execution from saved draft listing configuration.
 - Persisted publish jobs for blocked, failed, and published execution attempts.
 - Publish job list API for reviewing status, errors, item IDs, and permalinks.
 - Alembic baseline migration for the current backend schema.
@@ -36,7 +37,7 @@ Implemented:
 
 Not connected yet:
 
-- Background Amazon collection jobs and queueing.
+- Worker-backed automatic scheduling for queued Amazon collection jobs.
 - Production-grade external KMS or secrets manager for Mercado Libre token encryption keys.
 
 Next production phase:

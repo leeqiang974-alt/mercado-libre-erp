@@ -73,6 +73,14 @@ export type PublishValidationResult = {
   errors: string[];
 };
 
+export type PublishExecutionResult = {
+  status: string;
+  item_id: string;
+  permalink: string;
+  errors: string[];
+  job_id: number | null;
+};
+
 export async function importAmazonHtml(
   sourceUrl: string,
   html: string,
@@ -261,6 +269,28 @@ export async function previewPublishFromDraft(
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<PublishValidationResult>;
+}
+
+export async function executePublishFromDraft(
+  productDraftId: number,
+  storeId: number,
+  review: Record<string, unknown>,
+  validListingTypeIds: string[],
+  humanApproved: boolean,
+) {
+  const response = await fetch(`${API_BASE}/api/publishing/execute-from-draft`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      product_draft_id: productDraftId,
+      store_id: storeId,
+      review,
+      valid_listing_type_ids: validListingTypeIds,
+      human_approved: humanApproved,
+    }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<PublishExecutionResult>;
 }
 
 function reviewUrl(provider: "local" | "claude" | "nvidia", productDraftId?: number | null) {

@@ -43,6 +43,10 @@ class PublishFromDraftPreviewRequest(BaseModel):
     human_approved: bool
 
 
+class PublishFromDraftExecuteRequest(PublishFromDraftPreviewRequest):
+    store_id: int
+
+
 @router.post("/preview", response_model=PublishValidationResult)
 def publish_preview(payload: PublishPreviewRequest) -> PublishValidationResult:
     return validate_publish_request(
@@ -73,7 +77,46 @@ def publish_preview_from_draft(
 async def publish_execute(
     payload: PublishExecuteRequest, db: Session = Depends(get_db)
 ) -> PublishExecutionResult:
-    store = db.get(Store, payload.store_id)
+    return await _execute_with_payload(
+        db=db,
+        store_id=payload.store_id,
+        product_draft_id=payload.product_draft_id or 0,
+        draft=payload.draft,
+        review=payload.review,
+        listing_choice=payload.listing_choice,
+        valid_listing_type_ids=payload.valid_listing_type_ids,
+        human_approved=payload.human_approved,
+    )
+
+
+@router.post("/execute-from-draft", response_model=PublishExecutionResult)
+async def publish_execute_from_draft(
+    payload: PublishFromDraftExecuteRequest, db: Session = Depends(get_db)
+) -> PublishExecutionResult:
+    draft, listing_choice = build_configured_draft(db, payload.product_draft_id)
+    return await _execute_with_payload(
+        db=db,
+        store_id=payload.store_id,
+        product_draft_id=payload.product_draft_id,
+        draft=draft,
+        review=payload.review,
+        listing_choice=listing_choice,
+        valid_listing_type_ids=payload.valid_listing_type_ids,
+        human_approved=payload.human_approved,
+    )
+
+
+async def _execute_with_payload(
+    db: Session,
+    store_id: int,
+    product_draft_id: int,
+    draft: ProductDraftCreate,
+    review: ReviewResponse,
+    listing_choice: ListingChoice,
+    valid_listing_type_ids: list[str],
+    human_approved: bool,
+) -> PublishExecutionResult:
+    store = db.get(Store, store_id)
     if not store:
         raise HTTPException(status_code=404, detail="Store not found.")
     access_token = resolve_store_access_token(db, store, settings.token_encryption_key)
@@ -81,20 +124,20 @@ async def publish_execute(
         return PublishExecutionResult(status="blocked", errors=["store_access_token_required"])
     job = create_publish_job(
         db=db,
-        product_draft_id=payload.product_draft_id or 0,
-        store_id=payload.store_id,
+        product_draft_id=product_draft_id,
+        store_id=store_id,
         requested_by="operator",
-        draft=payload.draft,
-        review=payload.review,
-        listing_choice=payload.listing_choice,
+        draft=draft,
+        review=review,
+        listing_choice=listing_choice,
     )
     result = await execute_publish(
         client=MercadoLibreClient(access_token=access_token),
-        draft=payload.draft,
-        review=payload.review,
-        listing_choice=payload.listing_choice,
-        valid_listing_type_ids=payload.valid_listing_type_ids,
-        human_approved=payload.human_approved,
+        draft=draft,
+        review=review,
+        listing_choice=listing_choice,
+        valid_listing_type_ids=valid_listing_type_ids,
+        human_approved=human_approved,
         allow_live_publish=settings.allow_live_publish,
     )
     complete_publish_job(db, job, result)
