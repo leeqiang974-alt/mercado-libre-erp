@@ -7,6 +7,7 @@ Implemented:
 - FastAPI health endpoint.
 - Amazon HTML parser and normalizer.
 - Playwright-backed Amazon URL collection adapter with manual-action handling for CAPTCHA/challenge pages.
+- Amazon URL collection job model, create/list/run APIs, and frontend queue controls.
 - Persisted Amazon URL collection results as source products, including manual-action and failed collection states.
 - Local AI review policy.
 - Claude Messages API review adapter with safe fallback when no API key or parse failure occurs.

@@ -1,4 +1,10 @@
 import { useState } from "react";
+import {
+  createCollectionJob,
+  listCollectionJobs,
+  runCollectionJob,
+  type CollectionJobRecord,
+} from "../api/client";
 
 export function ImportPage({
   onImportHtml,
@@ -20,6 +26,8 @@ export function ImportPage({
     "<span id='productTitle'>Bottle</span><span class='a-price'><span class='a-offscreen'>$9.99</span></span><img id='landingImage' src='https://example.com/a.jpg' />",
   );
   const [persist, setPersist] = useState(true);
+  const [collectionJobs, setCollectionJobs] = useState<CollectionJobRecord[]>([]);
+  const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
   const [error, setError] = useState("");
 
   async function runUrlCollection() {
@@ -40,6 +48,41 @@ export function ImportPage({
     }
   }
 
+  async function queueCollectionJob() {
+    setError("");
+    try {
+      const job = await createCollectionJob(sourceUrl, targetSiteId);
+      setSelectedJobId(job.id);
+      setCollectionJobs(await listCollectionJobs());
+    } catch (jobError) {
+      setError(jobError instanceof Error ? jobError.message : "Failed to create collection job");
+    }
+  }
+
+  async function refreshCollectionJobs() {
+    setError("");
+    try {
+      const jobs = await listCollectionJobs();
+      setCollectionJobs(jobs);
+      if (!selectedJobId && jobs.length > 0) {
+        setSelectedJobId(jobs[0].id);
+      }
+    } catch (jobError) {
+      setError(jobError instanceof Error ? jobError.message : "Failed to load collection jobs");
+    }
+  }
+
+  async function runSelectedCollectionJob() {
+    if (!selectedJobId) return;
+    setError("");
+    try {
+      await runCollectionJob(selectedJobId);
+      setCollectionJobs(await listCollectionJobs());
+    } catch (jobError) {
+      setError(jobError instanceof Error ? jobError.message : "Failed to run collection job");
+    }
+  }
+
   return (
     <section className="panel">
       <h2>Amazon Page Import</h2>
@@ -53,7 +96,30 @@ export function ImportPage({
       </label>
       <div className="button-row">
         <button onClick={runUrlCollection}>Collect URL and Review</button>
+        <button onClick={queueCollectionJob}>Queue URL Job</button>
+        <button onClick={refreshCollectionJobs}>Refresh Jobs</button>
+        <button disabled={!selectedJobId} onClick={runSelectedCollectionJob}>
+          Run Selected Job
+        </button>
       </div>
+      {collectionJobs.length > 0 && (
+        <>
+          <label>
+            Collection Job
+            <select
+              value={selectedJobId ?? ""}
+              onChange={(event) => setSelectedJobId(Number(event.target.value))}
+            >
+              {collectionJobs.map((job) => (
+                <option key={job.id} value={job.id}>
+                  #{job.id} {job.status} {job.source_url}
+                </option>
+              ))}
+            </select>
+          </label>
+          <pre>{JSON.stringify(collectionJobs, null, 2)}</pre>
+        </>
+      )}
       <label>
         HTML Snapshot
         <textarea value={html} onChange={(event) => setHtml(event.target.value)} />

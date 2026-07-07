@@ -10,6 +10,13 @@ from app.services.amazon.parser import parse_amazon_html
 from app.services.drafts import create_product_draft
 from app.services.source_products import create_source_product
 from app.models.source_product import SourceProductStatus
+from app.services.collection_jobs import (
+    create_collection_job,
+    list_collection_jobs,
+    run_collection_job,
+    to_collection_job_read,
+)
+from app.schemas.collection_jobs import CollectionJobRead
 
 router = APIRouter(prefix="/api/imports", tags=["imports"])
 
@@ -68,3 +75,28 @@ async def import_amazon_url(
             "draft_id": draft_model.id if draft_model else None,
         }
     )
+
+
+@router.post("/amazon-url/jobs", response_model=CollectionJobRead)
+def create_amazon_url_collection_job(
+    payload: AmazonUrlImport, db: Session = Depends(get_db)
+) -> CollectionJobRead:
+    job = create_collection_job(
+        db=db,
+        source_url=payload.source_url,
+        target_site_id=payload.target_site_id,
+    )
+    return to_collection_job_read(job)
+
+
+@router.get("/amazon-url/jobs", response_model=list[CollectionJobRead])
+def get_amazon_url_collection_jobs(db: Session = Depends(get_db)) -> list[CollectionJobRead]:
+    return list_collection_jobs(db)
+
+
+@router.post("/amazon-url/jobs/{job_id}/run", response_model=CollectionJobRead)
+async def run_amazon_url_collection_job(
+    job_id: int, db: Session = Depends(get_db)
+) -> CollectionJobRead:
+    job = await run_collection_job(db=db, job_id=job_id, collector=collect_amazon_page)
+    return to_collection_job_read(job)

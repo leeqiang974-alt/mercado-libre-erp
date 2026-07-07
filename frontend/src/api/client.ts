@@ -79,6 +79,19 @@ export type CollectionResult = {
   draft_id: number | null;
 };
 
+export type CollectionJobRecord = {
+  id: number;
+  source_url: string;
+  target_site_id: string;
+  status: "pending" | "running" | "completed" | "needs_manual_action" | "failed";
+  message: string;
+  source_product_id: number | null;
+  draft_id: number | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
 export async function importAmazonUrl(sourceUrl: string, targetSiteId: string) {
   const response = await fetch(`${API_BASE}/api/imports/amazon-url`, {
     method: "POST",
@@ -87,6 +100,30 @@ export async function importAmazonUrl(sourceUrl: string, targetSiteId: string) {
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<CollectionResult>;
+}
+
+export async function createCollectionJob(sourceUrl: string, targetSiteId: string) {
+  const response = await fetch(`${API_BASE}/api/imports/amazon-url/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_url: sourceUrl, target_site_id: targetSiteId }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<CollectionJobRecord>;
+}
+
+export async function listCollectionJobs() {
+  const response = await fetch(`${API_BASE}/api/imports/amazon-url/jobs`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<CollectionJobRecord[]>;
+}
+
+export async function runCollectionJob(jobId: number) {
+  const response = await fetch(`${API_BASE}/api/imports/amazon-url/jobs/${jobId}/run`, {
+    method: "POST",
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<CollectionJobRecord>;
 }
 
 export async function reviewDraft(draft: ProductDraft, productDraftId?: number | null) {
