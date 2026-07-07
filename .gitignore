@@ -1,0 +1,11 @@
+.worktrees/
+.env
+*.pyc
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+backend/dev.db
+backend/.venv/
+frontend/node_modules/
+frontend/dist/
+data/
