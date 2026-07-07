@@ -1,7 +1,7 @@
 # Amazon to Mercado Libre Publisher Design
 
 Date: 2026-07-07
-Status: Approved direction, awaiting user review of written spec
+Status: Approved for implementation planning
 Project location: D:\amazon-meli-publisher
 
 ## 1. Goal
