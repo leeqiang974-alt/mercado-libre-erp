@@ -8,6 +8,7 @@ Implemented:
 - Amazon HTML parser and normalizer.
 - Playwright-backed Amazon URL collection adapter with manual-action handling for CAPTCHA/challenge pages.
 - Amazon URL collection job model, create/list/run APIs, and frontend queue controls.
+- Backend collection worker CLI for processing pending Amazon URL collection jobs in batches.
 - Persisted Amazon URL collection results as source products, including manual-action and failed collection states.
 - Local AI review policy.
 - Claude Messages API review adapter with safe fallback when no API key or parse failure occurs.
@@ -38,7 +39,7 @@ Implemented:
 
 Not connected yet:
 
-- Worker-backed automatic scheduling for queued Amazon collection jobs.
+- External process supervisor for always-on collection workers.
 - Production-grade external KMS or secrets manager for Mercado Libre token encryption keys.
 
 Next production phase:

@@ -38,6 +38,14 @@ cd D:\amazon-meli-publisher\.worktrees\mvp-skeleton\backend
 python -m alembic upgrade head
 ```
 
+## Collection Worker
+
+```powershell
+cd D:\amazon-meli-publisher\.worktrees\mvp-skeleton\backend
+python -m app.worker --limit 10
+python -m app.worker --loop --interval 30 --limit 10
+```
+
 ## Safety Rules
 
 - Amazon collection starts from user-provided pages or HTML snapshots.
@@ -51,6 +59,7 @@ python -m alembic upgrade head
 - Import an Amazon HTML snapshot and optionally save it as a draft.
 - Collect an Amazon URL through the backend Playwright adapter; challenge pages are marked for manual action.
 - Queue Amazon URL collection jobs, run queued jobs, and list job status/history.
+- Run queued Amazon URL collection jobs through a backend worker CLI.
 - Persist successful URL collections as source products and product drafts.
 - Persist failed/manual-action URL collections as source products for later handling.
 - List saved drafts.
