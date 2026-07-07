@@ -217,7 +217,27 @@ async def _execute_with_payload(
         oauth_client=create_oauth_client(),
     )
     if not access_token:
-        return PublishExecutionResult(status="blocked", errors=["store_access_token_required"])
+        job = create_publish_job(
+            db=db,
+            product_draft_id=product_draft_id,
+            store_id=store_id,
+            requested_by="operator",
+            draft=draft,
+            review=review,
+            listing_choice=listing_choice,
+        )
+        result = PublishExecutionResult(status="blocked", errors=["store_access_token_required"])
+        complete_publish_job(db, job, result)
+        _audit_publish_execution(
+            db=db,
+            job_id=job.id,
+            product_draft_id=product_draft_id,
+            store_id=store_id,
+            listing_choice=listing_choice,
+            human_approved=human_approved,
+            result=result,
+        )
+        return result.model_copy(update={"job_id": job.id})
     job = create_publish_job(
         db=db,
         product_draft_id=product_draft_id,

@@ -7,6 +7,7 @@ from app.api.routes import publishing
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
+from app.models.audit_event import AuditEvent
 from app.models.product_draft import ProductDraft
 from app.models.publish_job import PublishJob, PublishJobStatus
 from app.models.registry import import_all_models
@@ -16,7 +17,7 @@ from app.schemas.publishing import PublishExecutionResult
 from app.services.meli.token_vault import encrypt_token_value
 
 
-def make_client():
+def make_client(with_token: bool = True):
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -35,14 +36,15 @@ def make_client():
         )
         db.add(store)
         db.flush()
-        db.add(
-            TokenCredential(
-                store_id=store.id,
-                token_reference="meli:seller-1",
-                encrypted_access_token=encrypt_token_value("access-token", "test-secret"),
-                encrypted_refresh_token=encrypt_token_value("refresh-token", "test-secret"),
+        if with_token:
+            db.add(
+                TokenCredential(
+                    store_id=store.id,
+                    token_reference="meli:seller-1",
+                    encrypted_access_token=encrypt_token_value("access-token", "test-secret"),
+                    encrypted_refresh_token=encrypt_token_value("refresh-token", "test-secret"),
+                )
             )
-        )
         db.add(
             ProductDraft(
                 title="Persisted Bottle",
@@ -145,6 +147,26 @@ def test_publish_execute_persists_published_job(monkeypatch):
         assert job.status == PublishJobStatus.PUBLISHED
         assert job.meli_item_id == "MLM123"
         assert job.permalink == "https://example.com/MLM123"
+
+
+def test_publish_execute_persists_blocked_job_when_store_token_is_missing(monkeypatch):
+    monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    client, testing_session = make_client(with_token=False)
+
+    response = client.post("/api/publishing/execute", json=payload())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "blocked"
+    assert body["job_id"] == 1
+    with testing_session() as db:
+        job = db.query(PublishJob).one()
+        audit = db.query(AuditEvent).filter(AuditEvent.action == "publish.executed").one()
+        assert job.status == PublishJobStatus.BLOCKED
+        assert job.response_summary_json["errors"] == ["store_access_token_required"]
+        assert audit.entity_id == "1"
+        assert audit.after_json["errors"] == ["store_access_token_required"]
 
 
 def test_publish_jobs_can_be_listed():
