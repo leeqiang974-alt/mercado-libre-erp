@@ -50,3 +50,9 @@ export async function reviewDraft(draft: ProductDraft) {
   if (!response.ok) throw new Error(await response.text());
   return response.json();
 }
+
+export async function getMeliAuthorizationUrl() {
+  const response = await fetch(`${API_BASE}/api/stores/meli/authorization-url`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<{ authorization_url: string; state: string }>;
+}

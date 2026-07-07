@@ -4,6 +4,7 @@ import { importAmazonHtml, importAmazonUrl, reviewDraft, type ProductDraft } fro
 import { ImportPage } from "./pages/ImportPage";
 import { DraftsPage } from "./pages/DraftsPage";
 import { PublishingPage } from "./pages/PublishingPage";
+import { StoresPage } from "./pages/StoresPage";
 
 export function App() {
   const [draft, setDraft] = useState<ProductDraft | null>(null);
@@ -50,6 +51,7 @@ export function App() {
       )}
       {page === "drafts" && <DraftsPage draft={draft} review={review} />}
       {page === "publishing" && <PublishingPage draft={draft} review={review} />}
+      {page === "stores" && <StoresPage />}
     </Layout>
   );
 }

@@ -1,0 +1,66 @@
+import httpx
+import pytest
+
+from app.services.meli.oauth import (
+    MercadoLibreOAuthClient,
+    build_authorization_url,
+    create_state_token,
+)
+
+
+def test_build_authorization_url_contains_required_params():
+    url = build_authorization_url(
+        client_id="client-123",
+        redirect_uri="http://localhost:8000/api/stores/meli/callback",
+        state="state-abc",
+    )
+
+    assert url.startswith("https://auth.mercadolibre.com/authorization?")
+    assert "response_type=code" in url
+    assert "client_id=client-123" in url
+    assert "redirect_uri=http%3A%2F%2Flocalhost%3A8000%2Fapi%2Fstores%2Fmeli%2Fcallback" in url
+    assert "state=state-abc" in url
+
+
+def test_create_state_token_is_url_safe_and_non_empty():
+    state = create_state_token()
+    assert len(state) >= 24
+    assert "+" not in state
+    assert "/" not in state
+
+
+@pytest.mark.asyncio
+async def test_exchange_code_posts_oauth_payload():
+    requests = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "access-token",
+                "refresh_token": "refresh-token",
+                "expires_in": 21600,
+                "user_id": 123,
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = MercadoLibreOAuthClient(
+        client_id="client-123",
+        client_secret="secret-456",
+        redirect_uri="http://localhost:8000/api/stores/meli/callback",
+        transport=transport,
+    )
+
+    token = await client.exchange_code("code-789")
+
+    assert token.access_token == "access-token"
+    assert token.refresh_token == "refresh-token"
+    assert token.user_id == 123
+    assert requests[0].url == "https://api.mercadolibre.com/oauth/token"
+    body = requests[0].content.decode()
+    assert "grant_type=authorization_code" in body
+    assert "client_id=client-123" in body
+    assert "client_secret=secret-456" in body
+    assert "code=code-789" in body

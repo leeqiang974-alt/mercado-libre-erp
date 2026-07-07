@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import imports, publishing, reviews
+from app.api.routes import imports, publishing, reviews, stores
 from app.core.config import get_settings
 
 
@@ -17,6 +17,7 @@ app.add_middleware(
 app.include_router(imports.router)
 app.include_router(reviews.router)
 app.include_router(publishing.router)
+app.include_router(stores.router)
 
 
 @app.get("/health")
