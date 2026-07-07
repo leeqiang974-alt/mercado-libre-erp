@@ -1,10 +1,12 @@
 import { useState } from "react";
 
 export function ImportPage({
-  onImport,
+  onImportHtml,
+  onCollectUrl,
   status,
 }: {
-  onImport: (sourceUrl: string, html: string, targetSiteId: string) => Promise<void>;
+  onImportHtml: (sourceUrl: string, html: string, targetSiteId: string) => Promise<void>;
+  onCollectUrl: (sourceUrl: string, targetSiteId: string) => Promise<void>;
   status: string;
 }) {
   const [sourceUrl, setSourceUrl] = useState("https://www.amazon.com/dp/B000TEST");
@@ -14,10 +16,19 @@ export function ImportPage({
   );
   const [error, setError] = useState("");
 
-  async function runImport() {
+  async function runUrlCollection() {
     setError("");
     try {
-      await onImport(sourceUrl, html, targetSiteId);
+      await onCollectUrl(sourceUrl, targetSiteId);
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : "Collection failed");
+    }
+  }
+
+  async function runHtmlImport() {
+    setError("");
+    try {
+      await onImportHtml(sourceUrl, html, targetSiteId);
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : "Import failed");
     }
@@ -34,11 +45,16 @@ export function ImportPage({
         Site
         <input value={targetSiteId} onChange={(event) => setTargetSiteId(event.target.value)} />
       </label>
+      <div className="button-row">
+        <button onClick={runUrlCollection}>Collect URL and Review</button>
+      </div>
       <label>
         HTML Snapshot
         <textarea value={html} onChange={(event) => setHtml(event.target.value)} />
       </label>
-      <button onClick={runImport}>Import and Review</button>
+      <div className="button-row">
+        <button onClick={runHtmlImport}>Import Snapshot and Review</button>
+      </div>
       <p>{status}</p>
       {error && <p className="error">{error}</p>}
     </section>

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Layout } from "./components/Layout";
-import { importAmazonHtml, reviewDraft, type ProductDraft } from "./api/client";
+import { importAmazonHtml, importAmazonUrl, reviewDraft, type ProductDraft } from "./api/client";
 import { ImportPage } from "./pages/ImportPage";
 import { DraftsPage } from "./pages/DraftsPage";
 import { PublishingPage } from "./pages/PublishingPage";
@@ -22,9 +22,32 @@ export function App() {
     setPage("drafts");
   }
 
+  async function collectUrlAndReview(sourceUrl: string, targetSiteId: string) {
+    setStatus("Collecting Amazon page");
+    const result = await importAmazonUrl(sourceUrl, targetSiteId);
+    if (result.status !== "collected" || !result.draft) {
+      setStatus(result.message);
+      setDraft(null);
+      setReview(null);
+      return;
+    }
+    setDraft(result.draft);
+    setStatus("Running local review");
+    const nextReview = await reviewDraft(result.draft);
+    setReview(nextReview);
+    setStatus(`Review complete: ${nextReview.decision}`);
+    setPage("drafts");
+  }
+
   return (
     <Layout page={page} onPageChange={setPage}>
-      {page === "import" && <ImportPage onImport={importAndReview} status={status} />}
+      {page === "import" && (
+        <ImportPage
+          onImportHtml={importAndReview}
+          onCollectUrl={collectUrlAndReview}
+          status={status}
+        />
+      )}
       {page === "drafts" && <DraftsPage draft={draft} review={review} />}
       {page === "publishing" && <PublishingPage draft={draft} review={review} />}
     </Layout>

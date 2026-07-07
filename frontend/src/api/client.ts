@@ -24,6 +24,23 @@ export async function importAmazonHtml(sourceUrl: string, html: string, targetSi
   return response.json() as Promise<ProductDraft>;
 }
 
+export type CollectionResult = {
+  status: "collected" | "needs_manual_action" | "failed";
+  source_url: string;
+  message: string;
+  draft: ProductDraft | null;
+};
+
+export async function importAmazonUrl(sourceUrl: string, targetSiteId: string) {
+  const response = await fetch(`${API_BASE}/api/imports/amazon-url`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_url: sourceUrl, target_site_id: targetSiteId }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<CollectionResult>;
+}
+
 export async function reviewDraft(draft: ProductDraft) {
   const response = await fetch(`${API_BASE}/api/reviews/local`, {
     method: "POST",
