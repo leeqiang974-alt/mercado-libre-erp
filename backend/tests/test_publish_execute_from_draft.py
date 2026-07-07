@@ -138,6 +138,25 @@ def test_publish_execute_from_draft_uses_saved_config_and_persists_job(monkeypat
         assert job.meli_item_id == "MLM999"
 
 
+def test_publish_enqueue_from_draft_creates_pending_job(monkeypatch):
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    client, testing_session = make_client()
+
+    response = client.post("/api/publishing/enqueue-from-draft", json=execute_payload())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == 1
+    assert body["status"] == "pending"
+    assert body["product_draft_id"] == 1
+    assert body["store_id"] == 1
+    with testing_session() as db:
+        job = db.query(PublishJob).one()
+        assert job.status == PublishJobStatus.PENDING
+        assert job.request_summary_json["review_provider"] == "local_policy"
+        assert job.request_summary_json["listing_type_id"] == "gold_special"
+
+
 def test_publish_execute_from_draft_requires_saved_config(monkeypatch):
     monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
     client, _ = make_client(with_config=False)

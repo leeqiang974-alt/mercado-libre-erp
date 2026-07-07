@@ -27,6 +27,7 @@ from app.services.publish_jobs import (
     get_publish_job_or_404,
     list_publish_jobs,
     review_from_job_summary,
+    to_publish_job_read,
 )
 
 router = APIRouter(prefix="/api/publishing", tags=["publishing"])
@@ -124,6 +125,26 @@ async def publish_execute_from_draft(
         valid_listing_type_ids=payload.valid_listing_type_ids,
         human_approved=human_approved,
     )
+
+
+@router.post("/enqueue-from-draft", response_model=PublishJobRead)
+def publish_enqueue_from_draft(
+    payload: PublishFromDraftExecuteRequest, db: Session = Depends(get_db)
+) -> PublishJobRead:
+    store = db.get(Store, payload.store_id)
+    if not store:
+        raise HTTPException(status_code=404, detail="Store not found.")
+    draft, listing_choice = build_configured_draft(db, payload.product_draft_id)
+    job = create_publish_job(
+        db=db,
+        product_draft_id=payload.product_draft_id,
+        store_id=payload.store_id,
+        requested_by="operator",
+        draft=draft,
+        review=payload.review,
+        listing_choice=listing_choice,
+    )
+    return to_publish_job_read(job)
 
 
 @router.post("/jobs/{job_id}/retry", response_model=PublishExecutionResult)

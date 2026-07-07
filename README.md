@@ -44,6 +44,8 @@ python -m alembic upgrade head
 cd D:\amazon-meli-publisher\.worktrees\mvp-skeleton\backend
 python -m app.worker --limit 10
 python -m app.worker --loop --interval 30 --limit 10
+python -m app.worker --queue publish --limit 10
+python -m app.worker --queue publish --loop --interval 30 --limit 10
 ```
 
 ## Safety Rules
@@ -75,6 +77,7 @@ python -m app.worker --loop --interval 30 --limit 10
 - Preview publishing from saved draft listing configuration.
 - Execute a guarded publish adapter only when `ALLOW_LIVE_PUBLISH=true`.
 - Execute guarded publishing directly from saved draft listing configuration.
+- Queue saved draft publishing as pending jobs for the backend publish worker.
 - Resolve encrypted store tokens server-side for guarded publish execution.
 - Manage the current database schema through an Alembic baseline migration.
 - Persist publish attempts as jobs with blocked/published/failed status, errors, item id, and permalink.

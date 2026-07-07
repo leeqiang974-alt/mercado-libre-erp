@@ -348,6 +348,28 @@ export async function executePublishFromDraft(
   return response.json() as Promise<PublishExecutionResult>;
 }
 
+export async function enqueuePublishFromDraft(
+  productDraftId: number,
+  storeId: number,
+  review: Record<string, unknown>,
+  validListingTypeIds: string[],
+  humanApproved: boolean,
+) {
+  const response = await fetch(`${API_BASE}/api/publishing/enqueue-from-draft`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      product_draft_id: productDraftId,
+      store_id: storeId,
+      review,
+      valid_listing_type_ids: validListingTypeIds,
+      human_approved: humanApproved,
+    }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<PublishJobRecord>;
+}
+
 export async function listAuditEvents(limit = 100) {
   const response = await fetch(`${API_BASE}/api/audit-events?limit=${limit}`);
   if (!response.ok) throw new Error(await response.text());

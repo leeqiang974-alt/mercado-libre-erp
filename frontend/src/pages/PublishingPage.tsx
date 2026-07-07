@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   approveDraft,
+  enqueuePublishFromDraft,
   executePublishFromDraft,
   getCategoryAttributes,
   getCategoryPredictions,
@@ -219,6 +220,18 @@ export function PublishingPage({
     }
   }
 
+  async function enqueueSavedConfig() {
+    if (!draftId || !review || !storeId) return;
+    setStatus("Queueing publish job");
+    try {
+      await enqueuePublishFromDraft(draftId, Number(storeId), review, listingTypes, true);
+      setJobs(await listPublishJobs());
+      setStatus("");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to queue publish job");
+    }
+  }
+
   async function retryJob(jobId: number) {
     setRetryingJobId(jobId);
     setStatus(`Retrying publish job #${jobId}`);
@@ -316,6 +329,12 @@ export function PublishingPage({
           onClick={executeSavedConfig}
         >
           Execute Publish
+        </button>
+        <button
+          disabled={!ready || !draftId || !storeId || listingTypes.length === 0}
+          onClick={enqueueSavedConfig}
+        >
+          Queue Publish Job
         </button>
       </div>
       <div className="button-row">

@@ -30,6 +30,8 @@ Implemented:
 - Guarded publish execution API now uses `store_id` rather than accepting access tokens from the frontend.
 - Guarded publish execution resolves encrypted store access tokens server-side.
 - Guarded publish execution from saved draft listing configuration.
+- Queued publish execution from saved draft listing configuration.
+- Backend publish worker CLI for processing pending publish jobs in batches.
 - Persisted publish jobs for blocked, failed, and published execution attempts.
 - Publish job list API for reviewing status, errors, item IDs, and permalinks.
 - Publish job retry API and frontend retry control for blocked or failed jobs, preserving original job history and audit trail.
@@ -49,5 +51,5 @@ Not connected yet:
 Next production phase:
 
 - Add Mercado Libre shipping options metadata refresh.
-- Add worker-backed asynchronous publish execution.
+- Add production process supervision for collection and publish workers.
 - Add provider prompt versioning and review-model version analytics.
