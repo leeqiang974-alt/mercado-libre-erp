@@ -5,6 +5,7 @@ import { ImportPage } from "./pages/ImportPage";
 import { DraftsPage } from "./pages/DraftsPage";
 import { PublishingPage } from "./pages/PublishingPage";
 import { StoresPage } from "./pages/StoresPage";
+import { AuditPage } from "./pages/AuditPage";
 
 export function App() {
   const [draft, setDraft] = useState<ProductDraft | null>(null);
@@ -57,6 +58,7 @@ export function App() {
       {page === "drafts" && <DraftsPage draft={draft} draftId={draftId} review={review} />}
       {page === "publishing" && <PublishingPage draft={draft} draftId={draftId} review={review} />}
       {page === "stores" && <StoresPage />}
+      {page === "audit" && <AuditPage />}
     </Layout>
   );
 }

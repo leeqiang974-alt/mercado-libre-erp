@@ -69,5 +69,6 @@ python -m alembic upgrade head
 - List publish jobs from the frontend.
 - Run local, Claude, or NVIDIA review from the backend review API.
 - Persist local, Claude, and NVIDIA review results against saved product drafts.
+- Persist and list audit events for AI review and publish execution actions.
 - List review history for a saved product draft from the frontend.
 - Use Claude/NVIDIA provider adapters when `CLAUDE_API_KEY` or `NVIDIA_API_KEY` is configured; otherwise they safely fall back to local policy.

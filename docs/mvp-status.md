@@ -28,6 +28,7 @@ Implemented:
 - Guarded publish execution from saved draft listing configuration.
 - Persisted publish jobs for blocked, failed, and published execution attempts.
 - Publish job list API for reviewing status, errors, item IDs, and permalinks.
+- Audit event log for AI review and publish execution actions, with frontend audit page.
 - Alembic baseline migration for the current backend schema.
 - Persisted local, Claude, and NVIDIA review results for saved drafts.
 - Review history API and frontend refresh control for saved draft audit trails.

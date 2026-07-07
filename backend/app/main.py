@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import drafts, imports, metadata, publishing, reviews, stores
+from app.api.routes import audit_events, drafts, imports, metadata, publishing, reviews, stores
 from app.core.config import get_settings
 from app.db.base import Base
 from app.db.session import engine
@@ -34,6 +34,7 @@ app.include_router(metadata.router)
 app.include_router(reviews.router)
 app.include_router(publishing.router)
 app.include_router(stores.router)
+app.include_router(audit_events.router)
 
 
 @app.get("/health")

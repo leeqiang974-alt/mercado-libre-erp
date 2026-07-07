@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.models.product_draft import ProductDraft
 from app.models.review_result import ReviewDecision, ReviewResult
 from app.schemas.reviews import ReviewResponse, ReviewResultRead
+from app.services.audit_events import create_audit_event
 
 
 def persist_review_result(
@@ -35,6 +36,20 @@ def persist_review_result(
     db.add(result)
     db.commit()
     db.refresh(result)
+    create_audit_event(
+        db=db,
+        actor_type="ai_provider",
+        actor_id=response.provider,
+        action="review.completed",
+        entity_type="product_draft",
+        entity_id=str(product_draft_id),
+        after={
+            "review_result_id": result.id,
+            "decision": response.decision,
+            "risk_level": response.risk_level,
+            "reason_codes": response.reason_codes,
+        },
+    )
     return result
 
 

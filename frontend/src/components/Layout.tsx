@@ -1,4 +1,4 @@
-import { FileText, Send, Store, Upload } from "lucide-react";
+import { ClipboardList, FileText, Send, Store, Upload } from "lucide-react";
 import type { ReactNode } from "react";
 
 const tabs = [
@@ -6,6 +6,7 @@ const tabs = [
   { id: "drafts", label: "Drafts", icon: FileText },
   { id: "publishing", label: "Publish", icon: Send },
   { id: "stores", label: "Stores", icon: Store },
+  { id: "audit", label: "Audit", icon: ClipboardList },
 ];
 
 export function Layout({

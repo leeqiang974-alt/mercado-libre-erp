@@ -14,6 +14,7 @@ from app.schemas.publishing import (
 )
 from app.schemas.reviews import ReviewResponse
 from app.services.draft_listing_configs import build_configured_draft
+from app.services.audit_events import create_audit_event
 from app.services.meli.client import MercadoLibreClient
 from app.services.meli.publisher import execute_publish, validate_publish_request
 from app.services.meli.token_vault import resolve_store_access_token
@@ -141,6 +142,27 @@ async def _execute_with_payload(
         allow_live_publish=settings.allow_live_publish,
     )
     complete_publish_job(db, job, result)
+    create_audit_event(
+        db=db,
+        actor_type="operator",
+        actor_id="operator",
+        action="publish.executed",
+        entity_type="publish_job",
+        entity_id=str(job.id),
+        before={
+            "product_draft_id": product_draft_id,
+            "store_id": store_id,
+            "listing_type_id": listing_choice.listing_type_id,
+            "human_approved": human_approved,
+        },
+        after={
+            "status": result.status,
+            "item_id": result.item_id,
+            "permalink": result.permalink,
+            "errors": result.errors,
+            "store_id": store_id,
+        },
+    )
     return result.model_copy(update={"job_id": job.id})
 
 

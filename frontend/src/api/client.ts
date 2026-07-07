@@ -81,6 +81,18 @@ export type PublishExecutionResult = {
   job_id: number | null;
 };
 
+export type AuditEventRecord = {
+  id: number;
+  actor_type: string;
+  actor_id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+  created_at: string;
+};
+
 export async function importAmazonHtml(
   sourceUrl: string,
   html: string,
@@ -291,6 +303,12 @@ export async function executePublishFromDraft(
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<PublishExecutionResult>;
+}
+
+export async function listAuditEvents(limit = 100) {
+  const response = await fetch(`${API_BASE}/api/audit-events?limit=${limit}`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<AuditEventRecord[]>;
 }
 
 function reviewUrl(provider: "local" | "claude" | "nvidia", productDraftId?: number | null) {
