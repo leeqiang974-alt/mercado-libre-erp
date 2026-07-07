@@ -53,3 +53,5 @@ docker compose up -d
 - Execute a guarded publish adapter only when `ALLOW_LIVE_PUBLISH=true`.
 - Persist publish attempts as jobs with blocked/published/failed status, errors, item id, and permalink.
 - List publish jobs from the frontend.
+- Run local, Claude, or NVIDIA review from the backend review API.
+- Use Claude/NVIDIA provider adapters when `CLAUDE_API_KEY` or `NVIDIA_API_KEY` is configured; otherwise they safely fall back to local policy.

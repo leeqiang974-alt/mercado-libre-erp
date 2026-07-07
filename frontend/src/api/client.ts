@@ -86,6 +86,16 @@ export async function reviewDraft(draft: ProductDraft) {
   return response.json();
 }
 
+export async function reviewDraftWithProvider(draft: ProductDraft, provider: "claude" | "nvidia") {
+  const response = await fetch(`${API_BASE}/api/reviews/${provider}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(draft),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
 export async function getMeliAuthorizationUrl() {
   const response = await fetch(`${API_BASE}/api/stores/meli/authorization-url`);
   if (!response.ok) throw new Error(await response.text());

@@ -8,7 +8,9 @@ Implemented:
 - Amazon HTML parser and normalizer.
 - Playwright-backed Amazon URL collection adapter with manual-action handling for CAPTCHA/challenge pages.
 - Persisted Amazon URL collection results as source products, including manual-action and failed collection states.
-- Local AI review policy with Claude/NVIDIA provider stubs.
+- Local AI review policy.
+- Claude Messages API review adapter with safe fallback when no API key or parse failure occurs.
+- NVIDIA NIM/OpenAI-compatible chat review adapter with safe fallback when no API key or parse failure occurs.
 - Mercado Libre OAuth authorization URL, callback, and token exchange skeleton.
 - Persisted connected stores with token references instead of exposing raw tokens.
 - Persisted product drafts for HTML snapshot imports.
@@ -21,15 +23,13 @@ Implemented:
 - Persisted publish jobs for blocked, failed, and published execution attempts.
 - Publish job list API for reviewing status, errors, item IDs, and permalinks.
 - API flow for URL/HTML import, persisted source products, persisted drafts, persisted stores, review, metadata, publish preview, and guarded publish execution.
-- React MVP shell for import, saved draft list, publishing metadata lookup, publish job list, publishing readiness, connected store list, and store authorization link startup.
+- React MVP shell for import, saved draft list, Claude/NVIDIA review buttons, publishing metadata lookup, publish job list, publishing readiness, connected store list, and store authorization link startup.
 - Docker Compose services for PostgreSQL and Redis.
 
 Not connected yet:
 
 - Background Amazon collection jobs and queueing.
 - Production credential vault or encryption for Mercado Libre tokens.
-- Live Claude API.
-- Live NVIDIA NIM API.
 - Persistent PostgreSQL migrations.
 
 Next production phase:
@@ -38,4 +38,5 @@ Next production phase:
 - Add Mercado Libre metadata refresh for categories, attributes, listing types, and shipping options.
 - Add publish job retry controls and worker-backed asynchronous execution.
 - Replace AI stubs with real provider clients behind the same interfaces.
+- Add provider prompt versioning and persisted AI review records.
 - Replace token-reference placeholder with encrypted token storage and refresh-token rotation.
