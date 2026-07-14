@@ -16,6 +16,7 @@ from app.models.token_credential import TokenCredential
 from app.schemas.drafts import ProductDraftCreate
 from app.services.amazon.collector import CollectionResult, CollectionStatus
 from app.services.meli.oauth import MercadoLibreOAuthClient
+from app.services.meli.client import MercadoLibreClient
 from app.services.meli.token_vault import resolve_store_access_token
 
 
@@ -74,6 +75,8 @@ def test_oauth_callback_persists_store_without_returning_tokens(monkeypatch):
     client, testing_session = make_client()
 
     async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/users/me":
+            return httpx.Response(200, json={"id": 456, "site_id": "MLM"})
         return httpx.Response(
             200,
             json={
@@ -93,6 +96,14 @@ def test_oauth_callback_persists_store_without_returning_tokens(monkeypatch):
         )
 
     monkeypatch.setattr(stores, "create_oauth_client", fake_client)
+    monkeypatch.setattr(
+        stores,
+        "create_meli_client",
+        lambda access_token: MercadoLibreClient(
+            access_token=access_token,
+            transport=httpx.MockTransport(handler),
+        ),
+    )
     monkeypatch.setattr(stores.settings, "token_encryption_key", "test-secret")
 
     response = client.get("/api/stores/meli/callback?code=code-789&state=state-abc")

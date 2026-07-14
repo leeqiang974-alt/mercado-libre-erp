@@ -5,6 +5,12 @@ from app.services.meli.client import MercadoLibreClient
 from app.services.meli.payload_builder import build_item_payload
 
 
+def validate_store_site_match(store_site_id: str, listing_site_id: str) -> list[str]:
+    if store_site_id.strip().upper() == listing_site_id.strip().upper():
+        return []
+    return ["store_site_mismatch"]
+
+
 def validate_publish_request(
     draft: ProductDraftCreate,
     review: ReviewResponse,

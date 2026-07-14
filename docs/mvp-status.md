@@ -29,6 +29,7 @@ Implemented:
 - Guarded Mercado Libre publish execution adapter that posts to `/items` only when live publishing is explicitly enabled.
 - Guarded publish execution API now uses `store_id` rather than accepting access tokens from the frontend.
 - Guarded publish execution resolves encrypted store access tokens server-side.
+- OAuth callback resolves and persists the seller's real Mercado Libre `site_id`; enqueue, direct execution, and workers enforce store/site matching.
 - Guarded publish execution from saved draft listing configuration.
 - Queued publish execution from saved draft listing configuration.
 - Backend publish worker CLI for processing pending publish jobs in batches.

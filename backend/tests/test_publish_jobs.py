@@ -169,6 +169,28 @@ def test_publish_execute_persists_blocked_job_when_store_token_is_missing(monkey
         assert audit.after_json["errors"] == ["store_access_token_required"]
 
 
+def test_publish_execute_blocks_when_draft_site_does_not_match_authorized_store(monkeypatch):
+    monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+
+    async def unexpected_publish(**kwargs):
+        raise AssertionError("site mismatch must block before the publisher")
+
+    monkeypatch.setattr(publishing, "execute_publish", unexpected_publish)
+    client, testing_session = make_client()
+    body = payload()
+    body["draft"]["target_site_id"] = "MLA"
+    body["listing_choice"]["site_id"] = "MLA"
+
+    response = client.post("/api/publishing/execute", json=body)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "blocked"
+    assert "store_site_mismatch" in response.json()["errors"]
+    with testing_session() as db:
+        assert db.query(PublishJob).one().status == PublishJobStatus.BLOCKED
+
+
 def test_publish_jobs_can_be_listed():
     client, testing_session = make_client()
     with testing_session() as db:

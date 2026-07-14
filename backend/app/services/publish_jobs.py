@@ -17,6 +17,7 @@ def create_publish_job(
     draft: ProductDraftCreate,
     review: ReviewResponse,
     listing_choice: ListingChoice,
+    valid_listing_type_ids: list[str] | None = None,
 ) -> PublishJob:
     job = PublishJob(
         product_draft_id=product_draft_id,
@@ -28,6 +29,7 @@ def create_publish_job(
             "site_id": draft.target_site_id,
             "category_id": draft.target_category_id,
             "listing_type_id": listing_choice.listing_type_id,
+            "valid_listing_type_ids": valid_listing_type_ids or [listing_choice.listing_type_id],
             "fulfillment": listing_choice.fulfillment,
             "review_provider": review.provider,
             "review_decision": review.decision,

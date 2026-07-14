@@ -13,7 +13,11 @@ from app.services.draft_approvals import is_product_draft_approved
 from app.services.draft_listing_configs import build_configured_draft
 from app.services.meli.client import MercadoLibreClient
 from app.services.meli.oauth import MercadoLibreOAuthClient
-from app.services.meli.publisher import execute_publish
+from app.services.meli.publisher import (
+    execute_publish,
+    validate_publish_request,
+    validate_store_site_match,
+)
 from app.services.meli.token_vault import resolve_fresh_store_access_token
 from app.services.publish_jobs import complete_publish_job, review_from_job_summary
 
@@ -74,40 +78,82 @@ async def run_pending_publish_job(
         draft, listing_choice = build_configured_draft(db, job.product_draft_id)
         review = review_from_job_summary(job)
         human_approved = is_product_draft_approved(db, job.product_draft_id)
+        valid_listing_type_ids = (job.request_summary_json or {}).get(
+            "valid_listing_type_ids", [listing_choice.listing_type_id]
+        )
         store = db.get(Store, job.store_id)
         if store is None:
             result = PublishExecutionResult(status="failed", errors=["store_not_found"])
+        elif (site_errors := validate_store_site_match(store.site_id, listing_choice.site_id)):
+            result = PublishExecutionResult(status="blocked", errors=site_errors)
         else:
-            settings = get_settings()
-            access_token = await resolve_fresh_store_access_token(
-                db=db,
-                store=store,
-                encryption_key=token_encryption_key or settings.token_encryption_key,
-                oauth_client=_create_oauth_client(),
+            validation = validate_publish_request(
+                draft=draft,
+                review=review,
+                listing_choice=listing_choice,
+                valid_listing_type_ids=valid_listing_type_ids,
+                human_approved=human_approved,
             )
-            if not access_token:
-                result = PublishExecutionResult(status="blocked", errors=["store_access_token_required"])
+            if not validation.allowed:
+                result = PublishExecutionResult(status="blocked", errors=validation.errors)
             else:
-                publish = publisher or execute_publish
-                result = await publish(
-                    client=MercadoLibreClient(access_token=access_token),
+                result = await _publish_job(
+                    db=db,
+                    store=store,
                     draft=draft,
                     review=review,
                     listing_choice=listing_choice,
-                    valid_listing_type_ids=[listing_choice.listing_type_id],
                     human_approved=human_approved,
-                    allow_live_publish=(
-                        settings.allow_live_publish
-                        if allow_live_publish is None
-                        else allow_live_publish
-                    ),
+                    valid_listing_type_ids=valid_listing_type_ids,
+                    publisher=publisher,
+                    allow_live_publish=allow_live_publish,
+                    token_encryption_key=token_encryption_key,
                 )
     except HTTPException as exc:
         result = PublishExecutionResult(status="failed", errors=[str(exc.detail)])
+    except Exception as exc:
+        result = PublishExecutionResult(
+            status="failed", errors=[f"worker_error:{type(exc).__name__}"]
+        )
 
     complete_publish_job(db, job, result)
     _audit_publish_job(db=db, job=job, result=result)
     return result.model_copy(update={"job_id": job.id})
+
+
+async def _publish_job(
+    db: Session,
+    store: Store,
+    draft,
+    review,
+    listing_choice,
+    human_approved: bool,
+    valid_listing_type_ids: list[str],
+    publisher: Publisher | None,
+    allow_live_publish: bool | None,
+    token_encryption_key: str | None,
+) -> PublishExecutionResult:
+    settings = get_settings()
+    access_token = await resolve_fresh_store_access_token(
+        db=db,
+        store=store,
+        encryption_key=token_encryption_key or settings.token_encryption_key,
+        oauth_client=_create_oauth_client(),
+    )
+    if not access_token:
+        return PublishExecutionResult(status="blocked", errors=["store_access_token_required"])
+    publish = publisher or execute_publish
+    return await publish(
+        client=MercadoLibreClient(access_token=access_token),
+        draft=draft,
+        review=review,
+        listing_choice=listing_choice,
+        valid_listing_type_ids=valid_listing_type_ids,
+        human_approved=human_approved,
+        allow_live_publish=(
+            settings.allow_live_publish if allow_live_publish is None else allow_live_publish
+        ),
+    )
 
 
 def _create_oauth_client() -> MercadoLibreOAuthClient:

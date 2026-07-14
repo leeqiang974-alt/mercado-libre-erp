@@ -173,3 +173,48 @@ def test_full_fulfillment_is_rejected_before_queueing():
 
     assert response.status_code == 422
     assert "FULL fulfillment is excluded" in response.text
+
+
+def test_selected_site_requires_matching_authorized_store_before_queueing():
+    client, _ = make_client()
+    imported = client.post(
+        "/api/imports/amazon-html",
+        json={
+            "source_url": "https://www.amazon.com/dp/B000E2E",
+            "html": AMAZON_HTML,
+            "persist": True,
+        },
+    )
+    draft_id = imported.json()["id"]
+    configured = client.put(
+        f"/api/drafts/{draft_id}/listing-config",
+        json={
+            "site_id": "MLA",
+            "category_id": "MLA123",
+            "listing_type_id": "gold_special",
+            "fulfillment": "classic",
+            "attributes": [],
+        },
+    )
+    assert configured.status_code == 200
+
+    response = client.post(
+        "/api/publishing/enqueue-from-draft",
+        json={
+            "product_draft_id": draft_id,
+            "store_id": 1,
+            "review": {
+                "provider": "local_policy",
+                "decision": "pass",
+                "risk_level": "low",
+                "reason_codes": [],
+                "reasons": [],
+                "suggested_changes": {},
+            },
+            "valid_listing_type_ids": ["gold_special"],
+            "human_approved": True,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "store_site_mismatch" in response.text

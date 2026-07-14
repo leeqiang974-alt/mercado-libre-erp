@@ -175,3 +175,41 @@ async def test_worker_skips_non_pending_publish_jobs():
         )
 
     assert summary == {"processed": 0, "published": 0, "blocked": 0, "failed": 0}
+
+
+@pytest.mark.asyncio
+async def test_worker_rechecks_saved_listing_type_catalog_before_publisher():
+    testing_session = make_session()
+    with testing_session() as db:
+        config = db.query(DraftListingConfig).one()
+        config.listing_type_id = "gold_pro"
+        summary = job_summary()
+        summary["valid_listing_type_ids"] = ["gold_special"]
+        db.add(
+            PublishJob(
+                product_draft_id=1,
+                store_id=1,
+                requested_by="operator",
+                status=PublishJobStatus.PENDING,
+                request_summary_json=summary,
+            )
+        )
+        db.commit()
+
+    async def unexpected_publisher(**kwargs):
+        raise AssertionError("invalid listing type must block before publisher")
+
+    with testing_session() as db:
+        summary = await run_pending_publish_jobs(
+            db,
+            limit=10,
+            publisher=unexpected_publisher,
+            allow_live_publish=True,
+            token_encryption_key="test-secret",
+        )
+
+    assert summary == {"processed": 1, "published": 0, "blocked": 1, "failed": 0}
+    with testing_session() as db:
+        job = db.query(PublishJob).one()
+        assert job.status == PublishJobStatus.BLOCKED
+        assert "listing_type_not_available" in job.response_summary_json["errors"]

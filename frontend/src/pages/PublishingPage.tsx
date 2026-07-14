@@ -163,6 +163,9 @@ export function PublishingPage({
       const config = await getDraftListingConfig(draftId);
       setSavedConfig(config);
       setSiteId(config.site_id);
+      setListingTypes([]);
+      const metadata = await getListingTypes(config.site_id);
+      setListingTypes(metadata.listing_type_ids);
       setCategoryId(config.category_id);
       setListingTypeId(config.listing_type_id);
       setFulfillment(config.fulfillment);

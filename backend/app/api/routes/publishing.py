@@ -19,7 +19,11 @@ from app.services.draft_listing_configs import build_configured_draft
 from app.services.audit_events import create_audit_event
 from app.services.meli.client import MercadoLibreClient
 from app.services.meli.oauth import MercadoLibreOAuthClient
-from app.services.meli.publisher import execute_publish, validate_publish_request
+from app.services.meli.publisher import (
+    execute_publish,
+    validate_publish_request,
+    validate_store_site_match,
+)
 from app.services.meli.token_vault import resolve_fresh_store_access_token
 from app.services.publish_jobs import (
     complete_publish_job,
@@ -135,6 +139,9 @@ def publish_enqueue_from_draft(
     if not store:
         raise HTTPException(status_code=404, detail="Store not found.")
     draft, listing_choice = build_configured_draft(db, payload.product_draft_id)
+    site_errors = validate_store_site_match(store.site_id, listing_choice.site_id)
+    if site_errors:
+        raise HTTPException(status_code=422, detail=site_errors)
     job = create_publish_job(
         db=db,
         product_draft_id=payload.product_draft_id,
@@ -143,6 +150,7 @@ def publish_enqueue_from_draft(
         draft=draft,
         review=payload.review,
         listing_choice=listing_choice,
+        valid_listing_type_ids=payload.valid_listing_type_ids,
     )
     return to_publish_job_read(job)
 
@@ -158,6 +166,9 @@ async def retry_publish_job(job_id: int, db: Session = Depends(get_db)) -> Publi
 
     draft, listing_choice = build_configured_draft(db, job.product_draft_id)
     review = review_from_job_summary(job)
+    valid_listing_type_ids = (job.request_summary_json or {}).get(
+        "valid_listing_type_ids", [listing_choice.listing_type_id]
+    )
     human_approved = is_product_draft_approved(db, job.product_draft_id)
     create_audit_event(
         db=db,
@@ -184,7 +195,7 @@ async def retry_publish_job(job_id: int, db: Session = Depends(get_db)) -> Publi
         draft=draft,
         review=review,
         listing_choice=listing_choice,
-        valid_listing_type_ids=[listing_choice.listing_type_id],
+        valid_listing_type_ids=valid_listing_type_ids,
         human_approved=human_approved,
     )
 
@@ -209,6 +220,13 @@ async def _execute_with_payload(
         valid_listing_type_ids=valid_listing_type_ids,
         human_approved=human_approved,
     )
+    validation_errors = [
+        *validation.errors,
+        *validate_store_site_match(store.site_id, listing_choice.site_id),
+    ]
+    validation = validation.model_copy(
+        update={"allowed": not validation_errors, "errors": validation_errors}
+    )
     if not validation.allowed:
         job = create_publish_job(
             db=db,
@@ -218,6 +236,7 @@ async def _execute_with_payload(
             draft=draft,
             review=review,
             listing_choice=listing_choice,
+            valid_listing_type_ids=valid_listing_type_ids,
         )
         result = PublishExecutionResult(status="blocked", errors=validation.errors)
         complete_publish_job(db, job, result)
@@ -246,6 +265,7 @@ async def _execute_with_payload(
             draft=draft,
             review=review,
             listing_choice=listing_choice,
+            valid_listing_type_ids=valid_listing_type_ids,
         )
         result = PublishExecutionResult(status="blocked", errors=["store_access_token_required"])
         complete_publish_job(db, job, result)
@@ -267,6 +287,7 @@ async def _execute_with_payload(
         draft=draft,
         review=review,
         listing_choice=listing_choice,
+        valid_listing_type_ids=valid_listing_type_ids,
     )
     result = await execute_publish(
         client=MercadoLibreClient(access_token=access_token),

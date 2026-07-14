@@ -9,6 +9,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.registry import import_all_models
+from app.services.meli.client import MercadoLibreClient
 from app.services.meli.oauth import MercadoLibreOAuthClient
 
 
@@ -56,6 +57,8 @@ def test_authorization_url_route_returns_url(monkeypatch):
 
 def test_callback_exchanges_code_without_returning_tokens(monkeypatch):
     async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/users/me":
+            return httpx.Response(200, json={"id": 123, "site_id": "MLM", "nickname": "seller"})
         return httpx.Response(
             200,
             json={
@@ -75,6 +78,14 @@ def test_callback_exchanges_code_without_returning_tokens(monkeypatch):
         )
 
     monkeypatch.setattr(stores, "create_oauth_client", fake_client)
+    monkeypatch.setattr(
+        stores,
+        "create_meli_client",
+        lambda access_token: MercadoLibreClient(
+            access_token=access_token,
+            transport=httpx.MockTransport(handler),
+        ),
+    )
     client = make_client()
 
     response = client.get("/api/stores/meli/callback?code=code-789&state=state-abc")
@@ -85,3 +96,6 @@ def test_callback_exchanges_code_without_returning_tokens(monkeypatch):
     assert body["seller_id"] == "123"
     assert "access-token" not in response.text
     assert "refresh-token" not in response.text
+
+    stores_response = client.get("/api/stores")
+    assert stores_response.json()[0]["site_id"] == "MLM"
