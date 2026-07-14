@@ -42,6 +42,7 @@ Implemented:
 - API flow for URL/HTML import, persisted source products, persisted drafts, persisted stores, review, metadata, publish preview, and guarded publish execution.
 - React MVP shell for import, saved draft list, Claude/NVIDIA review buttons, publishing metadata lookup, publish job list, publishing readiness, connected store list, and store authorization link startup.
 - Docker Compose services for PostgreSQL, Redis, backend API, collection worker, and publish worker.
+- Compose migration gate (`alembic upgrade head`) plus database/Redis/API health checks and restart policies.
 
 Not connected yet:
 
@@ -50,5 +51,4 @@ Not connected yet:
 Next production phase:
 
 - Add Mercado Libre shipping options metadata refresh.
-- Add production deployment health checks and restart policies for collection and publish workers.
 - Add provider prompt versioning and review-model version analytics.

@@ -1,4 +1,15 @@
 services:
+  migrate:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: python -m alembic upgrade head
+    restart: "no"
+
   backend:
     build:
       context: ./backend
@@ -12,11 +23,20 @@ services:
       ALLOW_LIVE_PUBLISH: ${ALLOW_LIVE_PUBLISH:-false}
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-local-dev-token-key-change-me}
     depends_on:
-      - postgres
-      - redis
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     ports:
       - "8000:8000"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   collection_worker:
     build:
@@ -25,9 +45,12 @@ services:
       DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-local-dev-token-key-change-me}
     depends_on:
-      - postgres
-      - redis
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     command: python -m app.worker --queue collection --loop --interval 30 --limit 10
+    restart: unless-stopped
 
   publish_worker:
     build:
@@ -40,9 +63,12 @@ services:
       ALLOW_LIVE_PUBLISH: ${ALLOW_LIVE_PUBLISH:-false}
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-local-dev-token-key-change-me}
     depends_on:
-      - postgres
-      - redis
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     command: python -m app.worker --queue publish --loop --interval 30 --limit 10
+    restart: unless-stopped
 
   postgres:
     image: postgres:16
@@ -54,7 +80,18 @@ services:
       - "5432:5432"
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meli -d amazon_meli"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
   redis:
     image: redis:7
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped

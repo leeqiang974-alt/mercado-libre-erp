@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   approveDraft,
   enqueuePublishFromDraft,
@@ -33,6 +33,7 @@ export function PublishingPage({
   review: Record<string, unknown> | null;
 }) {
   const ready = Boolean(draft && review?.decision === "pass");
+  const [siteId, setSiteId] = useState(draft?.target_site_id ?? "MLM");
   const [listingTypes, setListingTypes] = useState<string[]>([]);
   const [listingTypeId, setListingTypeId] = useState("");
   const [fulfillment, setFulfillment] = useState("not_full");
@@ -50,11 +51,22 @@ export function PublishingPage({
   const [retryingJobId, setRetryingJobId] = useState<number | null>(null);
   const [status, setStatus] = useState("");
 
+  useEffect(() => {
+    if (!draft) return;
+    setSiteId(draft.target_site_id);
+    setListingTypes([]);
+    setListingTypeId("");
+    setSavedConfig(null);
+    setPreview(null);
+    setApproval(null);
+    setExecution(null);
+  }, [draft?.target_site_id, draftId]);
+
   async function loadListingTypes() {
     if (!draft) return;
     setStatus("Loading listing types");
     try {
-      const result = await getListingTypes(draft.target_site_id);
+      const result = await getListingTypes(siteId);
       setListingTypes(result.listing_type_ids);
       if (!listingTypeId && result.listing_type_ids.length > 0) {
         setListingTypeId(result.listing_type_ids[0]);
@@ -69,7 +81,7 @@ export function PublishingPage({
     if (!draft) return;
     setStatus("Refreshing listing types");
     try {
-      const result = await refreshListingTypes(draft.target_site_id);
+      const result = await refreshListingTypes(siteId);
       setListingTypes(result.listing_type_ids);
       if (result.listing_type_ids.length > 0) {
         setListingTypeId(result.listing_type_ids[0]);
@@ -84,7 +96,7 @@ export function PublishingPage({
     if (!draft) return;
     setStatus("Predicting category");
     try {
-      const result = await getCategoryPredictions(draft.target_site_id, draft.title);
+      const result = await getCategoryPredictions(siteId, draft.title);
       setPredictions(result.predictions);
       const first = result.predictions[0];
       if (first?.category_id && typeof first.category_id === "string") {
@@ -150,6 +162,7 @@ export function PublishingPage({
     try {
       const config = await getDraftListingConfig(draftId);
       setSavedConfig(config);
+      setSiteId(config.site_id);
       setCategoryId(config.category_id);
       setListingTypeId(config.listing_type_id);
       setFulfillment(config.fulfillment);
@@ -166,7 +179,7 @@ export function PublishingPage({
     try {
       const parsedAttributes = JSON.parse(attributesText || "[]");
       const config = await saveDraftListingConfig(draftId, {
-        site_id: draft.target_site_id,
+        site_id: siteId,
         category_id: categoryId,
         listing_type_id: listingTypeId,
         fulfillment,
@@ -267,6 +280,22 @@ export function PublishingPage({
         </button>
         <button onClick={refreshStores}>Load Stores</button>
       </div>
+      <label>
+        Mercado Libre Site ID
+        <input
+          value={siteId}
+          onChange={(event) => {
+            setSiteId(event.target.value.toUpperCase());
+            setListingTypes([]);
+            setListingTypeId("");
+            setCategoryId("");
+            setPredictions([]);
+            setAttributes([]);
+            setSavedConfig(null);
+            setPreview(null);
+          }}
+        />
+      </label>
       <label>
         Category ID
         <input value={categoryId} onChange={(event) => setCategoryId(event.target.value)} />

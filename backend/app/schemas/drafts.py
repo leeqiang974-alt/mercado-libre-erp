@@ -12,7 +12,7 @@ class ProductDraftCreate(BaseModel):
     currency: str = ""
     stock: int = 0
     listing_type_id: str = ""
-    image_urls: list[str] = []
+    image_urls: list[str] = Field(default_factory=list)
 
 
 class ProductDraftRead(ProductDraftCreate):

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class ListingAttributeValue(BaseModel):
@@ -13,7 +13,7 @@ class DraftListingConfigUpsert(BaseModel):
     category_id: str
     listing_type_id: str
     fulfillment: str = "not_full"
-    attributes: list[ListingAttributeValue] = []
+    attributes: list[ListingAttributeValue] = Field(default_factory=list)
 
     @field_validator("fulfillment")
     @classmethod
