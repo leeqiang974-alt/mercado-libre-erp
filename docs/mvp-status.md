@@ -38,6 +38,7 @@ Implemented:
 - Audit event log for AI review and publish execution actions, with frontend audit page.
 - Alembic baseline migration for the current backend schema.
 - Persisted local, Claude, and NVIDIA review results for saved drafts.
+- Combined Claude + NVIDIA behavioral audit endpoint with strictest-result aggregation and orchestration audit events.
 - Review history API and frontend refresh control for saved draft audit trails.
 - API flow for URL/HTML import, persisted source products, persisted drafts, persisted stores, review, metadata, publish preview, and guarded publish execution.
 - React MVP shell for import, saved draft list, Claude/NVIDIA review buttons, publishing metadata lookup, publish job list, publishing readiness, connected store list, and store authorization link startup.

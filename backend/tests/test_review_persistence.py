@@ -10,6 +10,7 @@ from app.main import app
 from app.models.product_draft import ProductDraft
 from app.models.registry import import_all_models
 from app.models.review_result import ReviewResult
+from app.models.audit_event import AuditEvent
 from app.schemas.reviews import ReviewResponse
 
 
@@ -144,3 +145,57 @@ def test_nvidia_review_can_persist_result_for_draft(monkeypatch):
         row = db.query(ReviewResult).one()
         assert row.provider == "nvidia"
         assert row.decision.value == "block"
+
+
+def test_behavioral_audit_persists_both_provider_results_and_orchestration_audit(monkeypatch):
+    class FakeClaudeClient:
+        model = "claude-test"
+
+        def __init__(self, api_key: str):
+            pass
+
+        async def review_draft(self, draft):
+            return ReviewResponse(
+                provider="claude",
+                decision="pass",
+                risk_level="low",
+                reason_codes=[],
+                reasons=[],
+            )
+
+    class FakeNvidiaClient:
+        model = "nvidia-test"
+
+        def __init__(self, api_key: str):
+            pass
+
+        async def pre_screen_draft(self, draft):
+            return ReviewResponse(
+                provider="nvidia",
+                decision="needs_human_review",
+                risk_level="medium",
+                reason_codes=["verify"],
+                reasons=["verify"],
+            )
+
+    monkeypatch.setattr(reviews, "ClaudeReviewClient", FakeClaudeClient)
+    monkeypatch.setattr(reviews, "NvidiaReviewClient", FakeNvidiaClient)
+    client, testing_session = make_client()
+
+    response = client.post(
+        "/api/reviews/behavioral-audit?product_draft_id=1",
+        json=draft_payload(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["aggregate"]["decision"] == "needs_human_review"
+    assert {body["nvidia"]["review_result_id"], body["claude"]["review_result_id"]} == {1, 2}
+    with testing_session() as db:
+        rows = db.query(ReviewResult).order_by(ReviewResult.id).all()
+        assert [(row.provider, row.model) for row in rows] == [
+            ("nvidia", "nvidia-test"),
+            ("claude", "claude-test"),
+        ]
+        audit = db.query(AuditEvent).filter(AuditEvent.action == "review.behavioral_audit.completed").one()
+        assert audit.actor_id == "claude+nvidia"

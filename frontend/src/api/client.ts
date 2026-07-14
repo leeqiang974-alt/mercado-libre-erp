@@ -37,6 +37,12 @@ export type ReviewResult = {
   suggested_changes: Record<string, unknown>;
 };
 
+export type BehavioralAudit = {
+  nvidia: Record<string, unknown>;
+  claude: Record<string, unknown>;
+  aggregate: Record<string, unknown>;
+};
+
 export type StoreRecord = {
   id: string;
   site_id: string;
@@ -195,6 +201,22 @@ export async function reviewDraftWithProvider(
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json();
+}
+
+export async function reviewDraftWithBehavioralAudit(
+  draft: ProductDraft,
+  productDraftId?: number | null,
+) {
+  const url = `${API_BASE}/api/reviews/behavioral-audit${
+    productDraftId ? `?product_draft_id=${productDraftId}` : ""
+  }`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(draft),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<BehavioralAudit>;
 }
 
 export async function getMeliAuthorizationUrl() {

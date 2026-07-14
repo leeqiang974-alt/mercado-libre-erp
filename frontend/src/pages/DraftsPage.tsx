@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   listDrafts,
   listReviewHistory,
+  reviewDraftWithBehavioralAudit,
   reviewDraftWithProvider,
   type ProductDraftRead,
   type ReviewResult,
@@ -12,10 +13,12 @@ export function DraftsPage({
   draft,
   draftId,
   review,
+  onReviewChange,
 }: {
   draft: ProductDraft | null;
   draftId: number | null;
   review: Record<string, unknown> | null;
+  onReviewChange: (review: Record<string, unknown>) => void;
 }) {
   const [savedDrafts, setSavedDrafts] = useState<ProductDraftRead[]>([]);
   const [providerReview, setProviderReview] = useState<Record<string, unknown> | null>(null);
@@ -36,11 +39,27 @@ export function DraftsPage({
     try {
       const nextReview = await reviewDraftWithProvider(draft, provider, draftId);
       setProviderReview(nextReview);
+      onReviewChange(nextReview);
       if (draftId) {
         setReviewHistory(await listReviewHistory(draftId));
       }
     } catch (reviewError) {
       setError(reviewError instanceof Error ? reviewError.message : "Provider review failed");
+    }
+  }
+
+  async function runBehavioralAudit() {
+    if (!draft) return;
+    setError("");
+    try {
+      const result = await reviewDraftWithBehavioralAudit(draft, draftId);
+      setProviderReview(result);
+      onReviewChange(result.aggregate);
+      if (draftId) {
+        setReviewHistory(await listReviewHistory(draftId));
+      }
+    } catch (auditError) {
+      setError(auditError instanceof Error ? auditError.message : "Behavioral audit failed");
     }
   }
 
@@ -66,6 +85,9 @@ export function DraftsPage({
         </button>
         <button disabled={!draft} onClick={() => runProviderReview("nvidia")}>
           NVIDIA Review
+        </button>
+        <button disabled={!draft} onClick={runBehavioralAudit}>
+          Claude + NVIDIA Audit
         </button>
         <button disabled={!draftId} onClick={refreshReviewHistory}>
           Refresh Review History

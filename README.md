@@ -88,6 +88,7 @@ python -m app.worker --queue publish --loop --interval 30 --limit 10
 - List publish jobs from the frontend.
 - Retry blocked or failed publish jobs from saved draft configuration while preserving the original job history.
 - Run local, Claude, or NVIDIA review from the backend review API.
+- Run a combined behavioral audit that executes NVIDIA pre-screening and Claude deep review, aggregates the strictest decision, and feeds that result into the publish gate.
 - Persist local, Claude, and NVIDIA review results against saved product drafts.
 - Persist and list audit events for AI review and publish execution actions.
 - List review history for a saved product draft from the frontend.

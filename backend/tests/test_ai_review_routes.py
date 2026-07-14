@@ -65,3 +65,52 @@ def test_nvidia_review_route_uses_client_without_echoing_key(monkeypatch):
     assert response.status_code == 200
     assert response.json()["provider"] == "nvidia"
     assert "nvidia-secret" not in response.text
+
+
+def test_behavioral_audit_runs_both_providers_and_aggregates_the_strictest_result(monkeypatch):
+    calls = []
+
+    class FakeClaudeClient:
+        def __init__(self, api_key: str):
+            assert api_key == "claude-secret"
+
+        async def review_draft(self, draft):
+            calls.append("claude")
+            return ReviewResponse(
+                provider="claude",
+                decision="needs_human_review",
+                risk_level="medium",
+                reason_codes=["brand_risk"],
+                reasons=["verify brand claim"],
+            )
+
+    class FakeNvidiaClient:
+        def __init__(self, api_key: str):
+            assert api_key == "nvidia-secret"
+
+        async def pre_screen_draft(self, draft):
+            calls.append("nvidia")
+            return ReviewResponse(
+                provider="nvidia",
+                decision="block",
+                risk_level="high",
+                reason_codes=["restricted_item"],
+                reasons=["restricted"],
+            )
+
+    monkeypatch.setattr(reviews.settings, "claude_api_key", "claude-secret")
+    monkeypatch.setattr(reviews.settings, "nvidia_api_key", "nvidia-secret")
+    monkeypatch.setattr(reviews, "ClaudeReviewClient", FakeClaudeClient)
+    monkeypatch.setattr(reviews, "NvidiaReviewClient", FakeNvidiaClient)
+
+    response = TestClient(app).post("/api/reviews/behavioral-audit", json=draft_payload())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert calls == ["nvidia", "claude"]
+    assert body["nvidia"]["decision"] == "block"
+    assert body["claude"]["decision"] == "needs_human_review"
+    assert body["aggregate"]["provider"] == "claude+nvidia_behavioral_audit"
+    assert body["aggregate"]["decision"] == "block"
+    assert body["aggregate"]["risk_level"] == "high"
+    assert body["aggregate"]["reason_codes"] == ["restricted_item", "brand_risk"]

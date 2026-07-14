@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ReviewResponse(BaseModel):
@@ -7,7 +7,7 @@ class ReviewResponse(BaseModel):
     risk_level: str
     reason_codes: list[str]
     reasons: list[str]
-    suggested_changes: dict = {}
+    suggested_changes: dict = Field(default_factory=dict)
     review_result_id: int | None = None
 
 
@@ -20,4 +20,10 @@ class ReviewResultRead(BaseModel):
     risk_level: str
     reason_codes: list[str]
     reasons: list[str]
-    suggested_changes: dict = {}
+    suggested_changes: dict = Field(default_factory=dict)
+
+
+class BehavioralAuditResponse(BaseModel):
+    nvidia: ReviewResponse
+    claude: ReviewResponse
+    aggregate: ReviewResponse

@@ -55,7 +55,14 @@ export function App() {
           status={status}
         />
       )}
-      {page === "drafts" && <DraftsPage draft={draft} draftId={draftId} review={review} />}
+      {page === "drafts" && (
+        <DraftsPage
+          draft={draft}
+          draftId={draftId}
+          review={review}
+          onReviewChange={setReview}
+        />
+      )}
       {page === "publishing" && <PublishingPage draft={draft} draftId={draftId} review={review} />}
       {page === "stores" && <StoresPage />}
       {page === "audit" && <AuditPage />}
