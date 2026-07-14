@@ -15,7 +15,7 @@ from app.models.store import Store
 from app.models.token_credential import TokenCredential
 from app.schemas.drafts import ProductDraftCreate
 from app.services.amazon.collector import CollectionResult, CollectionStatus
-from app.services.meli.oauth import MercadoLibreOAuthClient
+from app.services.meli.oauth import MercadoLibreOAuthClient, create_state_token
 from app.services.meli.client import MercadoLibreClient
 from app.services.meli.token_vault import resolve_store_access_token
 
@@ -106,7 +106,8 @@ def test_oauth_callback_persists_store_without_returning_tokens(monkeypatch):
     )
     monkeypatch.setattr(stores.settings, "token_encryption_key", "test-secret")
 
-    response = client.get("/api/stores/meli/callback?code=code-789&state=state-abc")
+    state = create_state_token(stores.settings.token_encryption_key)
+    response = client.get(f"/api/stores/meli/callback?code=code-789&state={state}")
 
     assert response.status_code == 200
     assert response.json()["seller_id"] == "456"

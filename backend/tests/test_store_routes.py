@@ -10,7 +10,7 @@ from app.db.session import get_db
 from app.main import app
 from app.models.registry import import_all_models
 from app.services.meli.client import MercadoLibreClient
-from app.services.meli.oauth import MercadoLibreOAuthClient
+from app.services.meli.oauth import MercadoLibreOAuthClient, create_state_token
 
 
 def make_client():
@@ -55,6 +55,21 @@ def test_authorization_url_route_returns_url(monkeypatch):
     assert body["state"]
 
 
+def test_callback_rejects_invalid_oauth_state(monkeypatch):
+    monkeypatch.setattr(stores.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(
+        stores,
+        "create_oauth_client",
+        lambda: (_ for _ in ()).throw(AssertionError("OAuth exchange must not run")),
+    )
+    client = make_client()
+
+    response = client.get("/api/stores/meli/callback?code=code-789&state=forged-state")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid or expired OAuth state."
+
+
 def test_callback_exchanges_code_without_returning_tokens(monkeypatch):
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and request.url.path == "/users/me":
@@ -88,7 +103,8 @@ def test_callback_exchanges_code_without_returning_tokens(monkeypatch):
     )
     client = make_client()
 
-    response = client.get("/api/stores/meli/callback?code=code-789&state=state-abc")
+    state = create_state_token(stores.settings.token_encryption_key)
+    response = client.get(f"/api/stores/meli/callback?code=code-789&state={state}")
 
     assert response.status_code == 200
     body = response.json()

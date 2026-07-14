@@ -5,6 +5,7 @@ from app.services.meli.oauth import (
     MercadoLibreOAuthClient,
     build_authorization_url,
     create_state_token,
+    verify_state_token,
 )
 
 
@@ -27,6 +28,14 @@ def test_create_state_token_is_url_safe_and_non_empty():
     assert len(state) >= 24
     assert "+" not in state
     assert "/" not in state
+
+
+def test_state_token_rejects_tampering_and_accepts_matching_secret():
+    state = create_state_token("test-secret")
+
+    assert verify_state_token(state, "test-secret") is True
+    assert verify_state_token(f"{state}tampered", "test-secret") is False
+    assert verify_state_token(state, "other-secret") is False
 
 
 @pytest.mark.asyncio

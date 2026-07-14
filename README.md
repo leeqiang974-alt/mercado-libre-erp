@@ -84,6 +84,7 @@ python -m app.worker --queue publish --loop --interval 30 --limit 10
 - Queue saved draft publishing as pending jobs for the backend publish worker.
 - Resolve encrypted store tokens server-side for guarded publish execution.
 - Bind each authorized store to the `site_id` returned by Mercado Libre seller profile lookup and reject cross-site publish attempts.
+- Sign and expire Mercado Libre OAuth state values before accepting a callback.
 - Manage the current database schema through an Alembic baseline migration.
 - Persist publish attempts as jobs with blocked/published/failed status, errors, item id, and permalink.
 - List publish jobs from the frontend.

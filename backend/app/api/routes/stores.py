@@ -10,6 +10,7 @@ from app.services.meli.oauth import (
     MercadoLibreOAuthClient,
     build_authorization_url,
     create_state_token,
+    verify_state_token,
 )
 from app.services.meli.token_vault import upsert_store_token
 
@@ -33,7 +34,7 @@ def create_meli_client(access_token: str) -> MercadoLibreClient:
 def get_meli_authorization_url() -> dict[str, str]:
     if not settings.meli_client_id:
         raise HTTPException(status_code=400, detail="MELI_CLIENT_ID is not configured.")
-    state = create_state_token()
+    state = create_state_token(settings.token_encryption_key)
     return {
         "authorization_url": build_authorization_url(
             client_id=settings.meli_client_id,
@@ -46,8 +47,10 @@ def get_meli_authorization_url() -> dict[str, str]:
 
 @router.get("/meli/callback")
 async def meli_callback(
-    code: str = Query(...), state: str = Query(""), db: Session = Depends(get_db)
+    code: str = Query(...), state: str = Query(...), db: Session = Depends(get_db)
 ) -> dict[str, str]:
+    if not verify_state_token(state, settings.token_encryption_key):
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state.")
     token = await create_oauth_client().exchange_code(code)
     seller_id = str(token.user_id)
     try:

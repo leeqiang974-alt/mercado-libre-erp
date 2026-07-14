@@ -1,4 +1,8 @@
+import base64
+import hashlib
+import hmac
 import secrets
+import time
 from urllib.parse import urlencode
 
 import httpx
@@ -16,8 +20,39 @@ class MercadoLibreToken(BaseModel):
     user_id: int | str
 
 
-def create_state_token() -> str:
-    return secrets.token_urlsafe(24)
+def create_state_token(secret: str = "local-dev-state-secret") -> str:
+    timestamp = str(int(time.time()))
+    nonce = secrets.token_urlsafe(24)
+    payload = f"{timestamp}.{nonce}"
+    signature = _sign_state(payload, secret)
+    return f"{payload}.{signature}"
+
+
+def verify_state_token(
+    state: str,
+    secret: str = "local-dev-state-secret",
+    max_age_seconds: int = 600,
+) -> bool:
+    try:
+        timestamp_text, nonce, signature = state.split(".", 2)
+        timestamp = int(timestamp_text)
+    except (AttributeError, TypeError, ValueError):
+        return False
+    payload = f"{timestamp_text}.{nonce}"
+    expected_signature = _sign_state(payload, secret)
+    if not hmac.compare_digest(signature, expected_signature):
+        return False
+    age = int(time.time()) - timestamp
+    return -60 <= age <= max_age_seconds
+
+
+def _sign_state(payload: str, secret: str) -> str:
+    digest = hmac.new(
+        (secret or "local-dev-state-secret").encode("utf-8"),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
 def build_authorization_url(client_id: str, redirect_uri: str, state: str) -> str:
