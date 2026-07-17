@@ -94,6 +94,7 @@ def replay_publish_result(job: PublishJob) -> PublishExecutionResult:
         status=summary.get("status", job.status.value),
         item_id=job.meli_item_id,
         permalink=job.permalink,
+        shipping_mode=summary.get("shipping_mode", ""),
         errors=summary.get("errors", []),
         job_id=job.id,
     )
@@ -112,6 +113,7 @@ def complete_publish_job(db: Session, job: PublishJob, result: PublishExecutionR
         "status": result.status,
         "item_id": result.item_id,
         "permalink": result.permalink,
+        "shipping_mode": result.shipping_mode,
         "errors": result.errors,
     }
     job.completed_at = datetime.now(UTC)
@@ -129,6 +131,7 @@ def to_publish_job_read(job: PublishJob) -> PublishJobRead:
         status=job.status.value if hasattr(job.status, "value") else str(job.status),
         item_id=job.meli_item_id,
         permalink=job.permalink,
+        shipping_mode=response_summary.get("shipping_mode", ""),
         errors=response_summary.get("errors", []),
     )
 

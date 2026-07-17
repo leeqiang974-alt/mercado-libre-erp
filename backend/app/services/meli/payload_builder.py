@@ -2,7 +2,14 @@ from app.schemas.drafts import ProductDraftCreate
 from app.schemas.publishing import ListingChoice
 
 
-def build_item_payload(draft: ProductDraftCreate, listing_choice: ListingChoice) -> dict:
+SUPPORTED_SHIPPING_MODES = {"me2", "me1", "not_specified"}
+
+
+def build_item_payload(
+    draft: ProductDraftCreate,
+    listing_choice: ListingChoice,
+    shipping_mode: str | None = None,
+) -> dict:
     if listing_choice.fulfillment.lower() == "full":
         raise ValueError("FULL fulfillment is excluded from this system.")
     if listing_choice.site_id != draft.target_site_id:
@@ -19,6 +26,8 @@ def build_item_payload(draft: ProductDraftCreate, listing_choice: ListingChoice)
         raise ValueError("Available quantity must be at least one.")
     if not draft.image_urls:
         raise ValueError("At least one picture is required.")
+    if shipping_mode and shipping_mode not in SUPPORTED_SHIPPING_MODES:
+        raise ValueError("Unsupported non-FULL shipping mode.")
     payload = {
         "site_id": draft.target_site_id,
         "title": draft.title,
@@ -34,4 +43,12 @@ def build_item_payload(draft: ProductDraftCreate, listing_choice: ListingChoice)
     }
     if listing_choice.attributes:
         payload["attributes"] = listing_choice.attributes
+    if shipping_mode:
+        payload["shipping"] = {
+            "mode": shipping_mode,
+            "local_pick_up": False,
+            "free_shipping": False,
+        }
+        if shipping_mode == "me2":
+            payload["shipping"]["free_methods"] = []
     return payload

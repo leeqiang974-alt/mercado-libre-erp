@@ -392,13 +392,13 @@ export function PublishingPage({
         </div>
         {!readiness?.mercado_libre.live_publish_enabled && <p className="inline-warning">Live publishing is disabled in server configuration.</p>}
         {preview && <div className={`validation-result ${preview.allowed ? "ready" : "blocked"}`}><strong>{preview.allowed ? "Payload is ready" : "Payload is blocked"}</strong>{preview.errors.map((item) => <span key={item}>{item}</span>)}</div>}
-        {execution && <div className={`validation-result ${execution.status === "published" ? "ready" : "blocked"}`}><strong>{execution.status}</strong>{execution.item_id && <span>{execution.item_id}</span>}{execution.errors.map((item) => <span key={item}>{item}</span>)}</div>}
+        {execution && <div className={`validation-result ${execution.status === "published" ? "ready" : "blocked"}`}><strong>{execution.status}</strong>{execution.item_id && <span>{execution.item_id}</span>}{execution.shipping_mode && <span>Shipping: {execution.shipping_mode}</span>}{execution.errors.map((item) => <span key={item}>{item}</span>)}</div>}
       </section>
 
       {status && <p className="status-line">{status}</p>}
       {jobs.length > 0 && <section className="saved-section"><div className="section-heading"><div><h3>Publish jobs</h3></div><span>{jobs.length}</span></div><div className="job-list">{jobs.map((job) => {
         const canRetry = job.status === "blocked" || job.status === "failed";
-        return <div className="job-row" key={job.id}><span>#{job.id} · draft #{job.product_draft_id} · store #{job.store_id}</span><strong>{job.status}</strong><button className="secondary-button" disabled={!canRetry || busy === `retry-${job.id}`} onClick={() => retryJob(job.id)}><RefreshCw size={16} /> Retry</button></div>;
+        return <div className="job-row" key={job.id}><span>#{job.id} · draft #{job.product_draft_id} · store #{job.store_id}{job.shipping_mode ? ` · ${job.shipping_mode}` : ""}</span><strong>{job.status}</strong><button className="secondary-button" disabled={!canRetry || busy === `retry-${job.id}`} onClick={() => retryJob(job.id)}><RefreshCw size={16} /> Retry</button></div>;
       })}</div></section>}
     </section>
   );

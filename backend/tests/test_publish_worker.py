@@ -136,6 +136,7 @@ async def test_worker_publishes_pending_publish_jobs_up_to_limit():
 
     async def fake_publisher(**kwargs):
         assert kwargs["client"].access_token == "access-token"
+        assert kwargs["seller_id"] == "seller-1"
         assert kwargs["listing_choice"].listing_type_id == "gold_special"
         assert kwargs["review"].provider == "claude+nvidia_behavioral_audit"
         return PublishExecutionResult(

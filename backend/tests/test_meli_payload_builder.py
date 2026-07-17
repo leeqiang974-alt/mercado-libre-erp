@@ -54,3 +54,32 @@ def test_build_item_payload_includes_listing_attributes():
     )
 
     assert payload["attributes"] == [{"id": "BRAND", "value_name": "Acme"}]
+
+
+def test_build_item_payload_includes_me2_shipping_fields():
+    payload = build_item_payload(
+        draft=complete_draft(),
+        listing_choice=ListingChoice(site_id="MLM", listing_type_id="gold_special"),
+        shipping_mode="me2",
+    )
+
+    assert payload["shipping"] == {
+        "mode": "me2",
+        "local_pick_up": False,
+        "free_shipping": False,
+        "free_methods": [],
+    }
+
+
+def test_build_item_payload_does_not_add_me2_fields_to_me1():
+    payload = build_item_payload(
+        draft=complete_draft(),
+        listing_choice=ListingChoice(site_id="MLM", listing_type_id="gold_special"),
+        shipping_mode="me1",
+    )
+
+    assert payload["shipping"] == {
+        "mode": "me1",
+        "local_pick_up": False,
+        "free_shipping": False,
+    }

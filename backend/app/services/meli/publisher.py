@@ -1,8 +1,11 @@
+import httpx
+
 from app.schemas.drafts import ProductDraftCreate
 from app.schemas.publishing import ListingChoice, PublishExecutionResult, PublishValidationResult
 from app.schemas.reviews import ReviewResponse
 from app.services.meli.client import MercadoLibreClient
 from app.services.meli.payload_builder import build_item_payload
+from app.services.meli.shipping import resolve_non_full_shipping_mode
 from app.services.meli.sites import expected_currency
 
 SUPPORTED_LISTING_TYPE_IDS = {"gold_special", "gold_pro"}
@@ -57,6 +60,7 @@ async def execute_publish(
     valid_listing_type_ids: list[str],
     human_approved: bool,
     allow_live_publish: bool,
+    seller_id: str = "",
 ) -> PublishExecutionResult:
     validation = validate_publish_request(
         draft=draft,
@@ -70,13 +74,42 @@ async def execute_publish(
         errors.append("live_publish_disabled")
     if not client.access_token:
         errors.append("access_token_required")
+    if not seller_id:
+        errors.append("seller_id_required")
     if errors:
         return PublishExecutionResult(status="blocked", errors=errors)
-    payload = build_item_payload(draft, listing_choice)
-    response = await client.post("/items", payload)
+    try:
+        shipping_preferences = await client.get(f"/users/{seller_id}/shipping_preferences")
+    except httpx.HTTPError:
+        return PublishExecutionResult(
+            status="blocked",
+            errors=["shipping_preferences_unavailable"],
+        )
+    shipping_mode = resolve_non_full_shipping_mode(shipping_preferences)
+    if not shipping_mode:
+        return PublishExecutionResult(
+            status="blocked",
+            errors=["non_full_shipping_mode_unavailable"],
+        )
+    payload = build_item_payload(draft, listing_choice, shipping_mode=shipping_mode)
+    try:
+        response = await client.post("/items", payload)
+    except httpx.HTTPStatusError as exc:
+        return PublishExecutionResult(
+            status="failed",
+            shipping_mode=shipping_mode,
+            errors=[f"meli_publish_failed:{exc.response.status_code}"],
+        )
+    except httpx.HTTPError:
+        return PublishExecutionResult(
+            status="failed",
+            shipping_mode=shipping_mode,
+            errors=["meli_publish_unavailable"],
+        )
     return PublishExecutionResult(
         status="published",
         item_id=str(response.get("id", "")),
         permalink=response.get("permalink", ""),
+        shipping_mode=shipping_mode,
         errors=[],
     )

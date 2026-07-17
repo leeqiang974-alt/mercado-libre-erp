@@ -172,6 +172,7 @@ async def _publish_job(
     publish = publisher or execute_publish
     return await publish(
         client=MercadoLibreClient(access_token=access_token),
+        seller_id=store.seller_id,
         draft=draft,
         review=review,
         listing_choice=listing_choice,
@@ -210,6 +211,7 @@ def _audit_publish_job(db: Session, job: PublishJob, result: PublishExecutionRes
             "status": result.status,
             "item_id": result.item_id,
             "permalink": result.permalink,
+            "shipping_mode": result.shipping_mode,
             "errors": result.errors,
             "store_id": job.store_id,
         },

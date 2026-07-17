@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from playwright.sync_api import Page, sync_playwright
@@ -5,6 +6,7 @@ from playwright.sync_api import Page, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = ROOT / "artifacts"
+RUNTIME_TEMP = ARTIFACTS / "runtime-temp"
 CHROME = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
 APP_URL = "http://127.0.0.1:5173"
 
@@ -60,10 +62,15 @@ def inspect_stores_workspace(page: Page) -> dict[str, object]:
 
 def main() -> None:
     ARTIFACTS.mkdir(exist_ok=True)
+    RUNTIME_TEMP.mkdir(exist_ok=True)
     console_errors: list[str] = []
     failed_responses: list[str] = []
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True, executable_path=str(CHROME))
+        browser = playwright.chromium.launch(
+            headless=True,
+            executable_path=str(CHROME),
+            env={**os.environ, "TEMP": str(RUNTIME_TEMP), "TMP": str(RUNTIME_TEMP)},
+        )
 
         desktop = browser.new_page(viewport={"width": 1440, "height": 1000})
         desktop.on(

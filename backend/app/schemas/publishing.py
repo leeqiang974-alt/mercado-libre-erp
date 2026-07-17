@@ -17,6 +17,7 @@ class PublishExecutionResult(BaseModel):
     status: str
     item_id: str = ""
     permalink: str = ""
+    shipping_mode: str = ""
     errors: list[str] = Field(default_factory=list)
     job_id: int | None = None
 
@@ -28,4 +29,5 @@ class PublishJobRead(BaseModel):
     status: str
     item_id: str = ""
     permalink: str = ""
+    shipping_mode: str = ""
     errors: list[str] = Field(default_factory=list)

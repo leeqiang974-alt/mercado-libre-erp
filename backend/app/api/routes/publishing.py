@@ -338,6 +338,7 @@ async def _execute_with_payload(
         return replay_publish_result(job)
     result = await execute_publish(
         client=MercadoLibreClient(access_token=access_token),
+        seller_id=store.seller_id,
         draft=draft,
         review=review,
         listing_choice=listing_choice,
@@ -402,6 +403,7 @@ def _audit_publish_execution(
             "status": result.status,
             "item_id": result.item_id,
             "permalink": result.permalink,
+            "shipping_mode": result.shipping_mode,
             "errors": result.errors,
             "store_id": store_id,
         },
