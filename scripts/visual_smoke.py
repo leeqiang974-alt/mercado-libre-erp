@@ -47,6 +47,17 @@ def inspect_publish_workspace(page: Page) -> dict[str, object]:
     }
 
 
+def inspect_stores_workspace(page: Page) -> dict[str, object]:
+    page.get_by_role("button", name="Stores", exact=True).click()
+    page.get_by_role("heading", name="Authorized stores", exact=True).wait_for()
+    page.get_by_role("button", name="Connect store", exact=True).wait_for()
+    assert "token_reference" not in page.locator("body").inner_text()
+    return {
+        "connect_available": page.get_by_role("button", name="Connect store").is_enabled(),
+        "horizontal_overflow": page.evaluate("document.documentElement.scrollWidth > innerWidth"),
+    }
+
+
 def main() -> None:
     ARTIFACTS.mkdir(exist_ok=True)
     console_errors: list[str] = []
@@ -74,6 +85,8 @@ def main() -> None:
         desktop.screenshot(path=ARTIFACTS / "draft-desktop.png", full_page=True)
         desktop_result = inspect_publish_workspace(desktop)
         desktop.screenshot(path=ARTIFACTS / "publish-desktop.png", full_page=True)
+        desktop_stores = inspect_stores_workspace(desktop)
+        desktop.screenshot(path=ARTIFACTS / "stores-desktop.png", full_page=True)
 
         mobile = browser.new_page(viewport={"width": 390, "height": 844})
         mobile.on(
@@ -92,17 +105,23 @@ def main() -> None:
         select_first_draft(mobile)
         mobile_result = inspect_publish_workspace(mobile)
         mobile.screenshot(path=ARTIFACTS / "publish-mobile.png", full_page=True)
+        mobile_stores = inspect_stores_workspace(mobile)
+        mobile.screenshot(path=ARTIFACTS / "stores-mobile.png", full_page=True)
 
         browser.close()
 
     assert not desktop_result["horizontal_overflow"], "Desktop page overflows horizontally"
     assert not mobile_result["horizontal_overflow"], "Mobile page overflows horizontally"
+    assert not desktop_stores["horizontal_overflow"], "Desktop stores page overflows horizontally"
+    assert not mobile_stores["horizontal_overflow"], "Mobile stores page overflows horizontally"
     assert not console_errors, f"Browser console errors: {console_errors}"
     assert not failed_responses, f"Failed browser responses: {failed_responses}"
     print(
         {
             "desktop": desktop_result,
             "mobile": mobile_result,
+            "desktop_stores": desktop_stores,
+            "mobile_stores": mobile_stores,
             "console_errors": console_errors,
             "failed_responses": failed_responses,
             "screenshots": str(ARTIFACTS),

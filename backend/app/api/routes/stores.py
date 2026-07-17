@@ -1,5 +1,6 @@
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -41,14 +42,13 @@ def get_meli_authorization_url() -> dict[str, str]:
             redirect_uri=settings.meli_redirect_uri,
             state=state,
         ),
-        "state": state,
     }
 
 
 @router.get("/meli/callback")
 async def meli_callback(
     code: str = Query(...), state: str = Query(...), db: Session = Depends(get_db)
-) -> dict[str, str]:
+) -> RedirectResponse:
     if not verify_state_token(state, settings.token_encryption_key):
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state.")
     token = await create_oauth_client().exchange_code(code)
@@ -81,19 +81,17 @@ async def meli_callback(
         )
         db.add(store)
         db.flush()
-    token_reference = upsert_store_token(
+    upsert_store_token(
         db=db,
         store=store,
         token=token,
         encryption_key=settings.token_encryption_key,
     )
     db.commit()
-    return {
-        "status": "authorized",
-        "seller_id": seller_id,
-        "state": state,
-        "token_reference": token_reference,
-    }
+    return RedirectResponse(
+        url=f"{settings.frontend_url.rstrip('/')}?meli_auth=authorized&seller_id={seller_id}",
+        status_code=303,
+    )
 
 
 @router.get("")
@@ -105,7 +103,6 @@ def list_stores(db: Session = Depends(get_db)) -> list[dict[str, str]]:
             "seller_id": store.seller_id,
             "display_name": store.display_name,
             "oauth_status": store.oauth_status,
-            "token_reference": store.token_reference,
         }
         for store in db.query(Store).order_by(Store.id.desc()).all()
     ]

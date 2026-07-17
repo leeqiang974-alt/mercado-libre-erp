@@ -107,17 +107,20 @@ def test_oauth_callback_persists_store_without_returning_tokens(monkeypatch):
     monkeypatch.setattr(stores.settings, "token_encryption_key", "test-secret")
 
     state = create_state_token(stores.settings.token_encryption_key)
-    response = client.get(f"/api/stores/meli/callback?code=code-789&state={state}")
+    response = client.get(
+        f"/api/stores/meli/callback?code=code-789&state={state}",
+        follow_redirects=False,
+    )
 
-    assert response.status_code == 200
-    assert response.json()["seller_id"] == "456"
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("seller_id=456")
     assert "access-token" not in response.text
     assert "refresh-token" not in response.text
 
     stores_response = client.get("/api/stores")
     assert stores_response.status_code == 200
     assert stores_response.json()[0]["seller_id"] == "456"
-    assert stores_response.json()[0]["token_reference"] == "meli:456"
+    assert "token_reference" not in stores_response.json()[0]
 
     with Session(testing_session.kw["bind"]) as session:
         assert session.query(Store).count() == 1

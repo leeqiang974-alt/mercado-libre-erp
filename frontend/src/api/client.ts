@@ -51,7 +51,6 @@ export type StoreRecord = {
   seller_id: string;
   display_name: string;
   oauth_status: string;
-  token_reference: string;
 };
 
 export type PublishJobRecord = {
@@ -287,7 +286,7 @@ export async function reviewDraftWithBehavioralAudit(
 export async function getMeliAuthorizationUrl() {
   const response = await fetch(`${API_BASE}/api/stores/meli/authorization-url`);
   if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<{ authorization_url: string; state: string }>;
+  return response.json() as Promise<{ authorization_url: string }>;
 }
 
 export async function listDrafts() {

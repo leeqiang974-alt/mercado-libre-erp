@@ -12,7 +12,9 @@ export function App() {
   const [draft, setDraft] = useState<ProductDraft | null>(null);
   const [draftId, setDraftId] = useState<number | null>(null);
   const [review, setReview] = useState<Record<string, unknown> | null>(null);
-  const [page, setPage] = useState("dashboard");
+  const [page, setPage] = useState(() =>
+    new URLSearchParams(window.location.search).get("meli_auth") ? "stores" : "dashboard",
+  );
   const [status, setStatus] = useState("");
 
   async function importAndReview(sourceUrl: string, html: string, targetSiteId: string, persist: boolean) {

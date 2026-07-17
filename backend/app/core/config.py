@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     meli_client_id: str = ""
     meli_client_secret: str = ""
     meli_redirect_uri: str = "http://localhost:8000/api/stores/meli/callback"
+    frontend_url: str = "http://localhost:5173"
     claude_api_key: str = ""
     claude_model: str = "claude-sonnet-4-6"
     nvidia_api_key: str = ""

@@ -52,7 +52,7 @@ def test_authorization_url_route_returns_url(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["authorization_url"].startswith("https://auth.mercadolibre.com/authorization?")
-    assert body["state"]
+    assert "state=" in body["authorization_url"]
 
 
 def test_callback_rejects_invalid_oauth_state(monkeypatch):
@@ -104,14 +104,16 @@ def test_callback_exchanges_code_without_returning_tokens(monkeypatch):
     client = make_client()
 
     state = create_state_token(stores.settings.token_encryption_key)
-    response = client.get(f"/api/stores/meli/callback?code=code-789&state={state}")
+    response = client.get(
+        f"/api/stores/meli/callback?code=code-789&state={state}",
+        follow_redirects=False,
+    )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "authorized"
-    assert body["seller_id"] == "123"
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("?meli_auth=authorized&seller_id=123")
     assert "access-token" not in response.text
     assert "refresh-token" not in response.text
 
     stores_response = client.get("/api/stores")
     assert stores_response.json()[0]["site_id"] == "MLM"
+    assert "token_reference" not in stores_response.json()[0]

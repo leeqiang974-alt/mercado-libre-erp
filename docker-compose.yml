@@ -22,6 +22,7 @@ services:
       MELI_CLIENT_ID: ${MELI_CLIENT_ID:-}
       MELI_CLIENT_SECRET: ${MELI_CLIENT_SECRET:-}
       MELI_REDIRECT_URI: ${MELI_REDIRECT_URI:-http://localhost:8000/api/stores/meli/callback}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
       CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
       CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-4-6}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
