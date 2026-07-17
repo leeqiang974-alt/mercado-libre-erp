@@ -75,3 +75,25 @@ async def test_collect_amazon_page_marks_incomplete_page_for_manual_action():
 
     assert result.status == CollectionStatus.NEEDS_MANUAL_ACTION
     assert result.draft is None
+
+
+@pytest.mark.asyncio
+async def test_collect_amazon_page_retries_transient_incomplete_page():
+    attempts = 0
+
+    async def fake_fetcher(url: str) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return "<html><title>Loading</title></html>"
+        return NORMAL_HTML
+
+    result = await collect_amazon_page(
+        "https://www.amazon.com/dp/B000TEST",
+        target_site_id="MLM",
+        html_fetcher=fake_fetcher,
+    )
+
+    assert attempts == 2
+    assert result.status == CollectionStatus.COLLECTED
+    assert result.draft is not None
