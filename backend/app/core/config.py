@@ -10,7 +10,9 @@ class Settings(BaseSettings):
     meli_client_secret: str = ""
     meli_redirect_uri: str = "http://localhost:8000/api/stores/meli/callback"
     claude_api_key: str = ""
+    claude_model: str = "claude-sonnet-4-6"
     nvidia_api_key: str = ""
+    nvidia_model: str = "meta/llama-3.1-70b-instruct"
     default_site_id: str = "MLM"
     allow_live_publish: bool = False
     token_encryption_key: str = "local-dev-token-key-change-me"

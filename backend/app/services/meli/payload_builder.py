@@ -9,6 +9,16 @@ def build_item_payload(draft: ProductDraftCreate, listing_choice: ListingChoice)
         raise ValueError("Listing choice site must match draft target site.")
     if not listing_choice.listing_type_id:
         raise ValueError("Listing type is required.")
+    if not draft.target_category_id:
+        raise ValueError("Category is required.")
+    if draft.price is None or draft.price <= 0:
+        raise ValueError("Target price must be greater than zero.")
+    if not draft.currency:
+        raise ValueError("Target currency is required.")
+    if draft.stock < 1:
+        raise ValueError("Available quantity must be at least one.")
+    if not draft.image_urls:
+        raise ValueError("At least one picture is required.")
     payload = {
         "site_id": draft.target_site_id,
         "title": draft.title,

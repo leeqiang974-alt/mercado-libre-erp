@@ -11,7 +11,7 @@ def valid_draft():
         target_site_id="MLM",
         target_category_id="MLM123",
         price=19.99,
-        currency="USD",
+        currency="MXN",
         stock=3,
         image_urls=["https://example.com/a.jpg"],
     )
@@ -43,6 +43,23 @@ def test_publish_gate_blocks_invalid_listing_type():
     )
     assert result.allowed is False
     assert "listing_type_not_available" in result.errors
+    assert "listing_type_not_supported" in result.errors
+
+
+def test_publish_gate_blocks_full_with_surrounding_whitespace():
+    draft = valid_draft()
+    result = validate_publish_request(
+        draft=draft,
+        review=review_draft_locally(draft),
+        listing_choice=ListingChoice(
+            site_id="MLM", listing_type_id="gold_special", fulfillment=" FULL "
+        ),
+        valid_listing_type_ids=["gold_special"],
+        human_approved=True,
+    )
+
+    assert result.allowed is False
+    assert "full_fulfillment_excluded" in result.errors
 
 
 def test_publish_gate_blocks_without_human_approval():
@@ -58,3 +75,20 @@ def test_publish_gate_blocks_without_human_approval():
     )
     assert result.allowed is False
     assert "human_approval_required" in result.errors
+
+
+def test_publish_gate_blocks_source_currency_relabeling():
+    draft = valid_draft().model_copy(update={"currency": "USD"})
+
+    result = validate_publish_request(
+        draft=draft,
+        review=review_draft_locally(draft),
+        listing_choice=ListingChoice(
+            site_id="MLM", listing_type_id="gold_special", fulfillment="not_full"
+        ),
+        valid_listing_type_ids=["gold_special", "gold_pro"],
+        human_approved=True,
+    )
+
+    assert result.allowed is False
+    assert "target_currency_mismatch" in result.errors

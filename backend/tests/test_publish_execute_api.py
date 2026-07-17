@@ -7,6 +7,11 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.registry import import_all_models
+from app.models.draft_listing_config import DraftListingConfig
+from app.models.product_draft import ProductDraft
+from app.models.meli_metadata_cache import MeliMetadataCache
+from app.models.product_draft_approval import ProductDraftApproval
+from app.models.review_result import ReviewDecision, ReviewResult
 from app.models.store import Store
 from app.models.token_credential import TokenCredential
 from app.schemas.publishing import PublishExecutionResult
@@ -20,23 +25,25 @@ from sqlalchemy.pool import StaticPool
 def payload():
     return {
         "store_id": 1,
+        "product_draft_id": 1,
         "draft": {
             "title": "Bottle",
             "description": "Leak proof.",
             "target_site_id": "MLM",
             "target_category_id": "MLM123",
             "price": 9.99,
-            "currency": "USD",
+            "currency": "MXN",
             "stock": 2,
             "image_urls": ["https://example.com/a.jpg"],
         },
         "review": {
-            "provider": "local_policy",
+            "provider": "claude+nvidia_behavioral_audit",
             "decision": "pass",
             "risk_level": "low",
             "reason_codes": [],
             "reasons": [],
             "suggested_changes": {},
+            "review_result_id": 1,
         },
         "listing_choice": {
             "site_id": "MLM",
@@ -57,8 +64,9 @@ def make_client(with_store: bool = True, token_expires_in_seconds: int = 7200):
     import_all_models()
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    if with_store:
-        with testing_session() as db:
+    with testing_session() as db:
+        db.add(MeliMetadataCache(cache_key="category_attributes:MLM123", payload_json={"attributes": []}))
+        if with_store:
             store = Store(
                 site_id="MLM",
                 seller_id="seller-1",
@@ -77,7 +85,48 @@ def make_client(with_store: bool = True, token_expires_in_seconds: int = 7200):
                     expires_at=datetime.now(UTC) + timedelta(seconds=token_expires_in_seconds),
                 )
             )
-            db.commit()
+        draft = ProductDraft(
+            title="Bottle",
+            description="Leak proof.",
+            target_site_id="MLM",
+            target_category_id="MLM123",
+            price=9.99,
+            currency="MXN",
+            stock=2,
+            listing_type_id="gold_special",
+            image_urls_json=["https://example.com/a.jpg"],
+        )
+        db.add(draft)
+        db.flush()
+        db.add_all(
+            [
+                DraftListingConfig(
+                    product_draft_id=draft.id,
+                    site_id="MLM",
+                    category_id="MLM123",
+                    listing_type_id="gold_special",
+                    fulfillment="not_full",
+                    attributes_json=[],
+                ),
+                ProductDraftApproval(
+                    product_draft_id=draft.id,
+                    status="approved",
+                    approved_by="operator",
+                    draft_version=1,
+                ),
+                ReviewResult(
+                    id=1,
+                    product_draft_id=draft.id,
+                    provider="claude+nvidia_behavioral_audit",
+                    risk_level="low",
+                    decision=ReviewDecision.PASS,
+                    reasons_json={"reason_codes": [], "reasons": []},
+                    suggested_changes_json={},
+                    draft_version=1,
+                ),
+            ]
+        )
+        db.commit()
 
     def override_get_db():
         db = testing_session()

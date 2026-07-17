@@ -2,8 +2,7 @@ import httpx
 
 from app.schemas.drafts import ProductDraftCreate
 from app.schemas.reviews import ReviewResponse
-from app.services.ai.review_policy import review_draft_locally
-from app.services.ai.provider_utils import parse_review_json, review_prompt
+from app.services.ai.provider_utils import AIProviderError, parse_review_json, review_prompt
 
 
 class NvidiaReviewClient:
@@ -19,8 +18,7 @@ class NvidiaReviewClient:
 
     async def pre_screen_draft(self, draft: ProductDraftCreate) -> ReviewResponse:
         if not self.api_key:
-            result = review_draft_locally(draft)
-            return result.model_copy(update={"provider": "nvidia_fallback"})
+            raise AIProviderError("nvidia", "api_key_required")
         payload = {
             "model": self.model,
             "messages": [
@@ -45,12 +43,10 @@ class NvidiaReviewClient:
                 )
                 response.raise_for_status()
                 data = response.json()
-        except Exception:
-            result = review_draft_locally(draft)
-            return result.model_copy(update={"provider": "nvidia_fallback"})
+        except Exception as exc:
+            raise AIProviderError("nvidia", "request_failed") from exc
         text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         try:
             return parse_review_json("nvidia", text)
-        except Exception:
-            result = review_draft_locally(draft)
-            return result.model_copy(update={"provider": "nvidia_fallback"})
+        except Exception as exc:
+            raise AIProviderError("nvidia", "invalid_response") from exc

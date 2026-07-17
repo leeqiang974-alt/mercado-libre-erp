@@ -25,6 +25,8 @@ class ProductDraft(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     brand: Mapped[str] = mapped_column(String(120), default="")
     condition: Mapped[str] = mapped_column(String(40), default="new")
+    source_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source_currency: Mapped[str] = mapped_column(String(8), default="")
     price: Mapped[float | None] = mapped_column(Float, nullable=True)
     currency: Mapped[str] = mapped_column(String(8), default="")
     stock: Mapped[int] = mapped_column(Integer, default=0)
@@ -33,3 +35,4 @@ class ProductDraft(Base):
     image_urls_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[ProductDraftStatus] = mapped_column(default=ProductDraftStatus.DRAFT)
     risk_status: Mapped[str] = mapped_column(String(40), default="unreviewed")
+    content_version: Mapped[int] = mapped_column(Integer, default=1)

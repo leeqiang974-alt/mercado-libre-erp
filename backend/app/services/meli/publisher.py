@@ -3,12 +3,22 @@ from app.schemas.publishing import ListingChoice, PublishExecutionResult, Publis
 from app.schemas.reviews import ReviewResponse
 from app.services.meli.client import MercadoLibreClient
 from app.services.meli.payload_builder import build_item_payload
+from app.services.meli.sites import expected_currency
+
+SUPPORTED_LISTING_TYPE_IDS = {"gold_special", "gold_pro"}
 
 
 def validate_store_site_match(store_site_id: str, listing_site_id: str) -> list[str]:
     if store_site_id.strip().upper() == listing_site_id.strip().upper():
         return []
     return ["store_site_mismatch"]
+
+
+def validate_site_currency(site_id: str, currency: str) -> list[str]:
+    required = expected_currency(site_id)
+    if required and currency.strip().upper() != required:
+        return ["target_currency_mismatch"]
+    return []
 
 
 def validate_publish_request(
@@ -21,14 +31,17 @@ def validate_publish_request(
     errors: list[str] = []
     if not human_approved:
         errors.append("human_approval_required")
-    if listing_choice.fulfillment.lower() == "full":
+    if listing_choice.fulfillment.strip().lower() == "full":
         errors.append("full_fulfillment_excluded")
+    if listing_choice.listing_type_id not in SUPPORTED_LISTING_TYPE_IDS:
+        errors.append("listing_type_not_supported")
     if listing_choice.listing_type_id not in valid_listing_type_ids:
         errors.append("listing_type_not_available")
     if review.decision == "block":
         errors.append("ai_review_blocked")
     if review.decision == "needs_human_review" and not human_approved:
         errors.append("ai_review_needs_human_review")
+    errors.extend(validate_site_currency(listing_choice.site_id, draft.currency))
     try:
         build_item_payload(draft, listing_choice)
     except ValueError as exc:

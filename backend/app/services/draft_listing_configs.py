@@ -38,6 +38,8 @@ def upsert_draft_listing_config(
     draft.target_site_id = payload.site_id
     draft.target_category_id = payload.category_id
     draft.listing_type_id = payload.listing_type_id
+    draft.content_version += 1
+    draft.risk_status = "unreviewed"
     db.commit()
     db.refresh(config)
     return config
@@ -72,6 +74,7 @@ def build_configured_draft(db: Session, product_draft_id: int) -> tuple[ProductD
             stock=draft.stock,
             listing_type_id=config.listing_type_id,
             image_urls=draft.image_urls_json or [],
+            attributes=config.attributes_json or [],
         ),
         ListingChoice(
             site_id=config.site_id,

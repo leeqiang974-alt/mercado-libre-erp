@@ -18,9 +18,10 @@ class DraftListingConfigUpsert(BaseModel):
     @field_validator("fulfillment")
     @classmethod
     def reject_full_fulfillment(cls, value: str) -> str:
-        if value.lower() == "full":
+        normalized = value.strip().lower()
+        if normalized == "full":
             raise ValueError("FULL fulfillment is excluded from this system.")
-        return value
+        return normalized
 
 
 class DraftListingConfigRead(DraftListingConfigUpsert):

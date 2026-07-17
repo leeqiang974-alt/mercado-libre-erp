@@ -1,5 +1,6 @@
 .worktrees/
 .env
+artifacts/
 *.pyc
 *.egg-info/
 __pycache__/

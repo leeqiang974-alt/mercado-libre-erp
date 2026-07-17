@@ -1,5 +1,6 @@
 from collections.abc import Awaitable, Callable
 from enum import Enum
+from urllib.parse import urlparse
 
 from pydantic import BaseModel
 
@@ -34,6 +35,33 @@ CHALLENGE_MARKERS = [
     "captcha",
 ]
 
+AMAZON_DOMAINS = {
+    "amazon.com",
+    "amazon.ca",
+    "amazon.com.mx",
+    "amazon.com.br",
+    "amazon.co.uk",
+    "amazon.de",
+    "amazon.fr",
+    "amazon.it",
+    "amazon.es",
+    "amazon.nl",
+    "amazon.co.jp",
+    "amazon.in",
+    "amazon.com.au",
+    "amazon.sg",
+    "amazon.ae",
+    "amazon.sa",
+}
+
+
+def is_allowed_amazon_url(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+    host = parsed.hostname.lower().rstrip(".")
+    return any(host == domain or host.endswith(f".{domain}") for domain in AMAZON_DOMAINS)
+
 
 def requires_manual_action(html: str) -> bool:
     lowered = html.lower()
@@ -54,6 +82,8 @@ async def fetch_amazon_html_with_playwright(url: str) -> str:
         )
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            if not is_allowed_amazon_url(page.url):
+                raise ValueError("Amazon navigation redirected to a disallowed host.")
             await page.wait_for_timeout(1_000)
             return await page.content()
         finally:
@@ -65,6 +95,12 @@ async def collect_amazon_page(
     target_site_id: str,
     html_fetcher: HtmlFetcher | None = None,
 ) -> CollectionResult:
+    if not is_allowed_amazon_url(source_url):
+        return CollectionResult(
+            status=CollectionStatus.FAILED,
+            source_url=source_url,
+            message="Only public Amazon product URLs are allowed.",
+        )
     fetcher = html_fetcher or fetch_amazon_html_with_playwright
     try:
         html = await fetcher(source_url)
@@ -81,6 +117,12 @@ async def collect_amazon_page(
             message="Amazon challenge detected; manual action required.",
         )
     parsed = parse_amazon_html(html, source_url)
+    if not parsed["title"] or parsed["price"]["amount"] is None or not parsed["images"]:
+        return CollectionResult(
+            status=CollectionStatus.NEEDS_MANUAL_ACTION,
+            source_url=source_url,
+            message="Amazon product page is incomplete; manual action required.",
+        )
     draft = normalize_amazon_product(parsed, target_site_id=target_site_id)
     return CollectionResult(
         status=CollectionStatus.COLLECTED,

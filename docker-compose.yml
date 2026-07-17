@@ -9,6 +9,10 @@ services:
         condition: service_healthy
     command: python -m alembic upgrade head
     restart: "no"
+    volumes:
+      - ./backend/app:/app/app:ro
+      - ./backend/alembic:/app/alembic:ro
+      - ./backend/alembic.ini:/app/alembic.ini:ro
 
   backend:
     build:
@@ -19,9 +23,11 @@ services:
       MELI_CLIENT_SECRET: ${MELI_CLIENT_SECRET:-}
       MELI_REDIRECT_URI: ${MELI_REDIRECT_URI:-http://localhost:8000/api/stores/meli/callback}
       CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-4-6}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      NVIDIA_MODEL: ${NVIDIA_MODEL:-meta/llama-3.1-70b-instruct}
       ALLOW_LIVE_PUBLISH: ${ALLOW_LIVE_PUBLISH:-false}
-      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-local-dev-token-key-change-me}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -29,6 +35,10 @@ services:
         condition: service_healthy
     ports:
       - "8000:8000"
+    volumes:
+      - ./backend/app:/app/app:ro
+      - ./backend/alembic:/app/alembic:ro
+      - ./backend/alembic.ini:/app/alembic.ini:ro
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     restart: unless-stopped
     healthcheck:
@@ -43,12 +53,14 @@ services:
       context: ./backend
     environment:
       DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
-      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-local-dev-token-key-change-me}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
     depends_on:
       migrate:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app:ro
     command: python -m app.worker --queue collection --loop --interval 30 --limit 10
     restart: unless-stopped
 
@@ -61,13 +73,27 @@ services:
       MELI_CLIENT_SECRET: ${MELI_CLIENT_SECRET:-}
       MELI_REDIRECT_URI: ${MELI_REDIRECT_URI:-http://localhost:8000/api/stores/meli/callback}
       ALLOW_LIVE_PUBLISH: ${ALLOW_LIVE_PUBLISH:-false}
-      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-local-dev-token-key-change-me}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
     depends_on:
       migrate:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app:ro
     command: python -m app.worker --queue publish --loop --interval 30 --limit 10
+    restart: unless-stopped
+
+  frontend:
+    image: python:3.12-slim
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "5173:80"
+    volumes:
+      - ./frontend/dist:/site:ro
+    command: python -m http.server 80 --directory /site
     restart: unless-stopped
 
   postgres:

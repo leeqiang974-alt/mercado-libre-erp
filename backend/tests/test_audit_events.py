@@ -9,6 +9,10 @@ from app.db.session import get_db
 from app.main import app
 from app.models.audit_event import AuditEvent
 from app.models.product_draft import ProductDraft
+from app.models.meli_metadata_cache import MeliMetadataCache
+from app.models.draft_listing_config import DraftListingConfig
+from app.models.product_draft_approval import ProductDraftApproval
+from app.models.review_result import ReviewDecision, ReviewResult
 from app.models.registry import import_all_models
 from app.models.store import Store
 from app.models.token_credential import TokenCredential
@@ -26,6 +30,7 @@ def make_client():
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with testing_session() as db:
+        db.add(MeliMetadataCache(cache_key="category_attributes:MLM123", payload_json={"attributes": []}))
         store = Store(
             site_id="MLM",
             seller_id="seller-1",
@@ -43,18 +48,46 @@ def make_client():
                 encrypted_refresh_token=encrypt_token_value("refresh-token", "test-secret"),
             )
         )
-        db.add(
-            ProductDraft(
+        draft = ProductDraft(
                 title="Bottle",
                 description="Leak proof.",
                 target_site_id="MLM",
                 target_category_id="MLM123",
                 price=9.99,
-                currency="USD",
+                currency="MXN",
                 stock=2,
                 listing_type_id="gold_special",
                 image_urls_json=["https://example.com/a.jpg"],
             )
+        db.add(draft)
+        db.flush()
+        db.add_all(
+            [
+                DraftListingConfig(
+                    product_draft_id=draft.id,
+                    site_id="MLM",
+                    category_id="MLM123",
+                    listing_type_id="gold_special",
+                    fulfillment="not_full",
+                    attributes_json=[],
+                ),
+                ProductDraftApproval(
+                    product_draft_id=draft.id,
+                    status="approved",
+                    approved_by="operator",
+                    draft_version=1,
+                ),
+                ReviewResult(
+                    id=1,
+                    product_draft_id=draft.id,
+                    provider="claude+nvidia_behavioral_audit",
+                    risk_level="low",
+                    decision=ReviewDecision.PASS,
+                    reasons_json={"reason_codes": [], "reasons": []},
+                    suggested_changes_json={},
+                    draft_version=1,
+                ),
+            ]
         )
         db.commit()
 
@@ -80,7 +113,7 @@ def draft_payload():
         "target_site_id": "MLM",
         "target_category_id": "MLM123",
         "price": 9.99,
-        "currency": "USD",
+        "currency": "MXN",
         "stock": 2,
         "listing_type_id": "gold_special",
         "image_urls": ["https://example.com/a.jpg"],
@@ -103,7 +136,8 @@ def execute_payload():
         "store_id": 1,
         "product_draft_id": 1,
         "draft": draft_payload(),
-        "review": review_payload(),
+        "review": review_payload()
+        | {"provider": "claude+nvidia_behavioral_audit", "review_result_id": 1},
         "listing_choice": {
             "site_id": "MLM",
             "listing_type_id": "gold_special",

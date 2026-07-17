@@ -2,15 +2,14 @@ import httpx
 
 from app.schemas.drafts import ProductDraftCreate
 from app.schemas.reviews import ReviewResponse
-from app.services.ai.review_policy import review_draft_locally
-from app.services.ai.provider_utils import parse_review_json, review_prompt
+from app.services.ai.provider_utils import AIProviderError, parse_review_json, review_prompt
 
 
 class ClaudeReviewClient:
     def __init__(
         self,
         api_key: str = "",
-        model: str = "claude-3-5-sonnet-latest",
+        model: str = "claude-sonnet-4-6",
         transport: httpx.AsyncBaseTransport | None = None,
     ):
         self.api_key = api_key
@@ -19,8 +18,7 @@ class ClaudeReviewClient:
 
     async def review_draft(self, draft: ProductDraftCreate) -> ReviewResponse:
         if not self.api_key:
-            result = review_draft_locally(draft)
-            return result.model_copy(update={"provider": "claude_fallback"})
+            raise AIProviderError("claude", "api_key_required")
         payload = {
             "model": self.model,
             "max_tokens": 800,
@@ -45,14 +43,12 @@ class ClaudeReviewClient:
                 )
                 response.raise_for_status()
                 data = response.json()
-        except Exception:
-            result = review_draft_locally(draft)
-            return result.model_copy(update={"provider": "claude_fallback"})
+        except Exception as exc:
+            raise AIProviderError("claude", "request_failed") from exc
         text = "\n".join(
             item.get("text", "") for item in data.get("content", []) if item.get("type") == "text"
         )
         try:
             return parse_review_json("claude", text)
-        except Exception:
-            result = review_draft_locally(draft)
-            return result.model_copy(update={"provider": "claude_fallback"})
+        except Exception as exc:
+            raise AIProviderError("claude", "invalid_response") from exc

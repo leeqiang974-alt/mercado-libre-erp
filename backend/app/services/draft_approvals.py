@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models.product_draft import ProductDraft
 from app.models.product_draft_approval import ProductDraftApproval
+from app.models.review_result import ReviewDecision, ReviewResult
 from app.schemas.draft_approvals import DraftApprovalCreate, DraftApprovalRead
 from app.services.audit_events import create_audit_event
 
@@ -17,6 +18,22 @@ def approve_product_draft(
     draft = db.get(ProductDraft, product_draft_id)
     if draft is None:
         raise HTTPException(status_code=404, detail="Product draft not found.")
+    behavioral_pass = (
+        db.query(ReviewResult)
+        .filter(
+            ReviewResult.product_draft_id == product_draft_id,
+            ReviewResult.draft_version == draft.content_version,
+            ReviewResult.provider == "claude+nvidia_behavioral_audit",
+            ReviewResult.decision == ReviewDecision.PASS,
+        )
+        .order_by(ReviewResult.id.desc())
+        .first()
+    )
+    if behavioral_pass is None:
+        raise HTTPException(
+            status_code=422,
+            detail="current_claude_nvidia_pass_required_before_approval",
+        )
 
     approval = (
         db.query(ProductDraftApproval)
@@ -29,6 +46,7 @@ def approve_product_draft(
     approval.status = "approved"
     approval.approved_by = payload.approved_by
     approval.note = payload.note
+    approval.draft_version = draft.content_version
     approval.approved_at = datetime.now(UTC)
     db.commit()
     db.refresh(approval)
@@ -60,7 +78,9 @@ def get_product_draft_approval(db: Session, product_draft_id: int) -> ProductDra
 
 
 def is_product_draft_approved(db: Session, product_draft_id: int) -> bool:
-    return get_product_draft_approval(db, product_draft_id) is not None
+    draft = db.get(ProductDraft, product_draft_id)
+    approval = get_product_draft_approval(db, product_draft_id)
+    return bool(draft and approval and approval.draft_version == draft.content_version)
 
 
 def to_approval_read(approval: ProductDraftApproval) -> DraftApprovalRead:

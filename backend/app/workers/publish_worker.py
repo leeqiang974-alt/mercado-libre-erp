@@ -12,14 +12,17 @@ from app.services.audit_events import create_audit_event
 from app.services.draft_approvals import is_product_draft_approved
 from app.services.draft_listing_configs import build_configured_draft
 from app.services.meli.client import MercadoLibreClient
+from app.services.meli.category_validation import validate_category_attributes
 from app.services.meli.oauth import MercadoLibreOAuthClient
 from app.services.meli.publisher import (
+    SUPPORTED_LISTING_TYPE_IDS,
     execute_publish,
     validate_publish_request,
     validate_store_site_match,
 )
 from app.services.meli.token_vault import resolve_fresh_store_access_token
-from app.services.publish_jobs import complete_publish_job, review_from_job_summary
+from app.services.publish_jobs import complete_publish_job
+from app.services.reviews import get_publish_review
 
 Publisher = Callable[..., Awaitable[PublishExecutionResult]]
 WorkerSummary = dict[str, int]
@@ -64,10 +67,18 @@ async def run_pending_publish_job(
     allow_live_publish: bool | None = None,
     token_encryption_key: str | None = None,
 ) -> PublishExecutionResult:
-    job = db.get(PublishJob, job_id)
+    job = db.scalar(
+        select(PublishJob)
+        .where(
+            PublishJob.id == job_id,
+            PublishJob.status == PublishJobStatus.PENDING,
+        )
+        .with_for_update(skip_locked=True)
+    )
     if job is None:
-        raise HTTPException(status_code=404, detail="Publish job not found.")
-    if job.status != PublishJobStatus.PENDING:
+        existing = db.get(PublishJob, job_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Publish job not found.")
         raise HTTPException(status_code=400, detail="Publish job is not pending.")
 
     job.status = PublishJobStatus.VALIDATING
@@ -76,11 +87,13 @@ async def run_pending_publish_job(
 
     try:
         draft, listing_choice = build_configured_draft(db, job.product_draft_id)
-        review = review_from_job_summary(job)
-        human_approved = is_product_draft_approved(db, job.product_draft_id)
-        valid_listing_type_ids = (job.request_summary_json or {}).get(
-            "valid_listing_type_ids", [listing_choice.listing_type_id]
+        review = get_publish_review(
+            db,
+            job.product_draft_id,
+            (job.request_summary_json or {}).get("review_result_id"),
         )
+        human_approved = is_product_draft_approved(db, job.product_draft_id)
+        valid_listing_type_ids = sorted(SUPPORTED_LISTING_TYPE_IDS)
         store = db.get(Store, job.store_id)
         if store is None:
             result = PublishExecutionResult(status="failed", errors=["store_not_found"])
@@ -94,6 +107,20 @@ async def run_pending_publish_job(
                 valid_listing_type_ids=valid_listing_type_ids,
                 human_approved=human_approved,
             )
+            category_errors = validate_category_attributes(
+                db,
+                draft.target_category_id,
+                listing_choice.attributes,
+                require_verified_metadata=(
+                    get_settings().allow_live_publish
+                    if allow_live_publish is None
+                    else allow_live_publish
+                ),
+            )
+            if category_errors:
+                validation = validation.model_copy(
+                    update={"allowed": False, "errors": [*validation.errors, *category_errors]}
+                )
             if not validation.allowed:
                 result = PublishExecutionResult(status="blocked", errors=validation.errors)
             else:

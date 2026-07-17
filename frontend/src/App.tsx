@@ -1,17 +1,18 @@
 import { useState } from "react";
 import { Layout } from "./components/Layout";
-import { importAmazonHtml, importAmazonUrl, reviewDraft, type ProductDraft } from "./api/client";
+import { importAmazonHtml, importAmazonUrl, type ProductDraft } from "./api/client";
 import { ImportPage } from "./pages/ImportPage";
 import { DraftsPage } from "./pages/DraftsPage";
 import { PublishingPage } from "./pages/PublishingPage";
 import { StoresPage } from "./pages/StoresPage";
 import { AuditPage } from "./pages/AuditPage";
+import { DashboardPage } from "./pages/DashboardPage";
 
 export function App() {
   const [draft, setDraft] = useState<ProductDraft | null>(null);
   const [draftId, setDraftId] = useState<number | null>(null);
   const [review, setReview] = useState<Record<string, unknown> | null>(null);
-  const [page, setPage] = useState("import");
+  const [page, setPage] = useState("dashboard");
   const [status, setStatus] = useState("");
 
   async function importAndReview(sourceUrl: string, html: string, targetSiteId: string, persist: boolean) {
@@ -21,10 +22,8 @@ export function App() {
     const nextDraftId = "draft" in importResult ? importResult.id : null;
     setDraft(nextDraft);
     setDraftId(nextDraftId);
-    setStatus("Running local review");
-    const nextReview = await reviewDraft(nextDraft, nextDraftId);
-    setReview(nextReview);
-    setStatus(`Review complete: ${nextReview.decision}`);
+    setReview(null);
+    setStatus("Draft saved. Select Claude, NVIDIA, or combined review.");
     setPage("drafts");
   }
 
@@ -39,15 +38,14 @@ export function App() {
     }
     setDraft(result.draft);
     setDraftId(result.draft_id);
-    setStatus("Running local review");
-    const nextReview = await reviewDraft(result.draft, result.draft_id);
-    setReview(nextReview);
-    setStatus(`Review complete: ${nextReview.decision}`);
+    setReview(null);
+    setStatus("Draft saved. Select Claude, NVIDIA, or combined review.");
     setPage("drafts");
   }
 
   return (
     <Layout page={page} onPageChange={setPage}>
+      {page === "dashboard" && <DashboardPage onNavigate={setPage} />}
       {page === "import" && (
         <ImportPage
           onImportHtml={importAndReview}
@@ -61,9 +59,24 @@ export function App() {
           draftId={draftId}
           review={review}
           onReviewChange={setReview}
+          onDraftChange={setDraft}
+          onSelectDraft={(selectedDraft) => {
+            setDraft(selectedDraft);
+            setDraftId(selectedDraft.id);
+            setReview(null);
+            setStatus(`Draft #${selectedDraft.id} selected`);
+          }}
         />
       )}
-      {page === "publishing" && <PublishingPage draft={draft} draftId={draftId} review={review} />}
+      {page === "publishing" && (
+        <PublishingPage
+          draft={draft}
+          draftId={draftId}
+          review={review}
+          onDraftChange={setDraft}
+          onReviewInvalidated={() => setReview(null)}
+        />
+      )}
       {page === "stores" && <StoresPage />}
       {page === "audit" && <AuditPage />}
     </Layout>

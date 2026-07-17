@@ -8,6 +8,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.product_draft import ProductDraft
+from app.models.draft_listing_config import DraftListingConfig
 from app.models.registry import import_all_models
 from app.models.review_result import ReviewResult
 from app.models.audit_event import AuditEvent
@@ -24,8 +25,7 @@ def make_client():
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with testing_session() as db:
-        db.add(
-            ProductDraft(
+        draft = ProductDraft(
                 title="Bottle",
                 target_site_id="MLM",
                 target_category_id="MLM123",
@@ -33,6 +33,17 @@ def make_client():
                 currency="USD",
                 stock=1,
                 image_urls_json=["https://example.com/a.jpg"],
+            )
+        db.add(draft)
+        db.flush()
+        db.add(
+            DraftListingConfig(
+                product_draft_id=draft.id,
+                site_id="MLM",
+                category_id="MLM123",
+                listing_type_id="gold_special",
+                fulfillment="not_full",
+                attributes_json=[],
             )
         )
         db.commit()
@@ -95,7 +106,7 @@ def test_review_history_can_be_listed_for_draft():
 
 def test_claude_review_can_persist_result_for_draft(monkeypatch):
     class FakeClaudeClient:
-        def __init__(self, api_key: str):
+        def __init__(self, api_key: str, model: str = ""):
             pass
 
         async def review_draft(self, draft):
@@ -122,7 +133,7 @@ def test_claude_review_can_persist_result_for_draft(monkeypatch):
 
 def test_nvidia_review_can_persist_result_for_draft(monkeypatch):
     class FakeNvidiaClient:
-        def __init__(self, api_key: str):
+        def __init__(self, api_key: str, model: str = ""):
             pass
 
         async def pre_screen_draft(self, draft):
@@ -151,7 +162,7 @@ def test_behavioral_audit_persists_both_provider_results_and_orchestration_audit
     class FakeClaudeClient:
         model = "claude-test"
 
-        def __init__(self, api_key: str):
+        def __init__(self, api_key: str, model: str = ""):
             pass
 
         async def review_draft(self, draft):
@@ -166,7 +177,7 @@ def test_behavioral_audit_persists_both_provider_results_and_orchestration_audit
     class FakeNvidiaClient:
         model = "nvidia-test"
 
-        def __init__(self, api_key: str):
+        def __init__(self, api_key: str, model: str = ""):
             pass
 
         async def pre_screen_draft(self, draft):
@@ -196,6 +207,8 @@ def test_behavioral_audit_persists_both_provider_results_and_orchestration_audit
         assert [(row.provider, row.model) for row in rows] == [
             ("nvidia", "nvidia-test"),
             ("claude", "claude-test"),
+            ("claude+nvidia_behavioral_audit", "nvidia-test+claude-test"),
         ]
+        assert body["aggregate"]["review_result_id"] == 3
         audit = db.query(AuditEvent).filter(AuditEvent.action == "review.behavioral_audit.completed").one()
         assert audit.actor_id == "claude+nvidia"

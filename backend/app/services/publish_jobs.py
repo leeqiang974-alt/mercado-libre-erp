@@ -1,4 +1,6 @@
 from datetime import UTC, datetime
+import hashlib
+import json
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -19,10 +21,26 @@ def create_publish_job(
     listing_choice: ListingChoice,
     valid_listing_type_ids: list[str] | None = None,
 ) -> PublishJob:
+    idempotency_key = _publish_idempotency_key(
+        product_draft_id,
+        store_id,
+        draft,
+        review,
+        listing_choice,
+    )
+    existing = (
+        db.query(PublishJob)
+        .filter(PublishJob.idempotency_key == idempotency_key)
+        .one_or_none()
+    )
+    if existing is not None:
+        existing._idempotent_replay = True
+        return existing
     job = PublishJob(
         product_draft_id=product_draft_id,
         store_id=store_id,
         requested_by=requested_by,
+        idempotency_key=idempotency_key,
         status=PublishJobStatus.PENDING,
         request_summary_json={
             "title": draft.title,
@@ -32,6 +50,7 @@ def create_publish_job(
             "valid_listing_type_ids": valid_listing_type_ids or [listing_choice.listing_type_id],
             "fulfillment": listing_choice.fulfillment,
             "review_provider": review.provider,
+            "review_result_id": review.review_result_id,
             "review_decision": review.decision,
             "review_risk_level": review.risk_level,
             "review_reason_codes": review.reason_codes,
@@ -43,6 +62,41 @@ def create_publish_job(
     db.commit()
     db.refresh(job)
     return job
+
+
+def _publish_idempotency_key(
+    product_draft_id: int,
+    store_id: int,
+    draft: ProductDraftCreate,
+    review: ReviewResponse,
+    listing_choice: ListingChoice,
+) -> str:
+    payload = {
+        "product_draft_id": product_draft_id,
+        "store_id": store_id,
+        "draft": draft.model_dump(mode="json"),
+        "review_result_id": review.review_result_id,
+        "listing_choice": listing_choice.model_dump(mode="json"),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def replay_publish_result(job: PublishJob) -> PublishExecutionResult:
+    if job.status in {PublishJobStatus.PENDING, PublishJobStatus.VALIDATING}:
+        return PublishExecutionResult(
+            status="blocked",
+            errors=["publish_already_in_progress"],
+            job_id=job.id,
+        )
+    summary = job.response_summary_json or {}
+    return PublishExecutionResult(
+        status=summary.get("status", job.status.value),
+        item_id=job.meli_item_id,
+        permalink=job.permalink,
+        errors=summary.get("errors", []),
+        job_id=job.id,
+    )
 
 
 def complete_publish_job(db: Session, job: PublishJob, result: PublishExecutionResult) -> PublishJob:

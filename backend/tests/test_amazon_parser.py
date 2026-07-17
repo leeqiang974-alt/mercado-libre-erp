@@ -32,5 +32,23 @@ def test_normalize_amazon_product_creates_draft_defaults():
     draft = normalize_amazon_product(parsed, target_site_id="MLM")
     assert draft.title == "Stainless Water Bottle"
     assert draft.target_site_id == "MLM"
-    assert draft.currency == "USD"
+    assert draft.source_price == 19.99
+    assert draft.source_currency == "USD"
+    assert draft.price is None
+    assert draft.currency == "MXN"
     assert draft.stock == 1
+
+
+def test_parse_amazon_price_handles_grouping_and_site_currency():
+    cases = [
+        ("$1,299.99", "https://amazon.com/dp/A", 1299.99, "USD"),
+        ("US$ 1,299.99", "https://amazon.com/dp/A", 1299.99, "USD"),
+        ("MX$1,299.00", "https://amazon.com.mx/dp/A", 1299.0, "MXN"),
+        ("1.299,99 €", "https://amazon.de/dp/A", 1299.99, "EUR"),
+        ("￥12,980", "https://amazon.co.jp/dp/A", 12980.0, "JPY"),
+        ("$49.90", "https://amazon.ca/dp/A", 49.9, "CAD"),
+    ]
+    for display, url, amount, currency in cases:
+        html = f'<span id="productTitle">Item</span><span class="a-price"><span class="a-offscreen">{display}</span></span>'
+        parsed = parse_amazon_html(html, url)
+        assert parsed["price"] == {"amount": amount, "currency": currency}

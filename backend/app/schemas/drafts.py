@@ -8,11 +8,14 @@ class ProductDraftCreate(BaseModel):
     target_site_id: str = "MLM"
     target_category_id: str = ""
     condition: str = "new"
+    source_price: float | None = None
+    source_currency: str = ""
     price: float | None = None
     currency: str = ""
     stock: int = 0
     listing_type_id: str = ""
     image_urls: list[str] = Field(default_factory=list)
+    attributes: list[dict] = Field(default_factory=list)
 
 
 class ProductDraftRead(ProductDraftCreate):

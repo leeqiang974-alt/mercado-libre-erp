@@ -1,4 +1,5 @@
 from app.schemas.drafts import ProductDraftCreate
+from app.services.meli.sites import expected_currency
 
 
 def normalize_amazon_product(parsed: dict, target_site_id: str) -> ProductDraftCreate:
@@ -17,8 +18,10 @@ def normalize_amazon_product(parsed: dict, target_site_id: str) -> ProductDraftC
         description="\n\n".join(description_parts),
         brand=parsed.get("brand", ""),
         target_site_id=target_site_id,
-        price=price.get("amount"),
-        currency=price.get("currency", ""),
+        source_price=price.get("amount"),
+        source_currency=price.get("currency", ""),
+        price=None,
+        currency=expected_currency(target_site_id),
         stock=1,
         image_urls=parsed.get("images", []),
     )

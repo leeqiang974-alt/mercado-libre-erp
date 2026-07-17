@@ -18,8 +18,10 @@ from app.services.draft_approvals import is_product_draft_approved
 from app.services.draft_listing_configs import build_configured_draft
 from app.services.audit_events import create_audit_event
 from app.services.meli.client import MercadoLibreClient
+from app.services.meli.category_validation import validate_category_attributes
 from app.services.meli.oauth import MercadoLibreOAuthClient
 from app.services.meli.publisher import (
+    SUPPORTED_LISTING_TYPE_IDS,
     execute_publish,
     validate_publish_request,
     validate_store_site_match,
@@ -30,12 +32,14 @@ from app.services.publish_jobs import (
     create_publish_job,
     get_publish_job_or_404,
     list_publish_jobs,
-    review_from_job_summary,
+    replay_publish_result,
     to_publish_job_read,
 )
+from app.services.reviews import get_publish_review
 
 router = APIRouter(prefix="/api/publishing", tags=["publishing"])
 settings = get_settings()
+SERVER_LISTING_TYPE_IDS = sorted(SUPPORTED_LISTING_TYPE_IDS)
 
 
 def create_oauth_client() -> MercadoLibreOAuthClient:
@@ -76,7 +80,7 @@ def publish_preview(payload: PublishPreviewRequest) -> PublishValidationResult:
         draft=payload.draft,
         review=payload.review,
         listing_choice=payload.listing_choice,
-        valid_listing_type_ids=payload.valid_listing_type_ids,
+        valid_listing_type_ids=SERVER_LISTING_TYPE_IDS,
         human_approved=payload.human_approved,
     )
 
@@ -87,29 +91,40 @@ def publish_preview_from_draft(
     db: Session = Depends(get_db),
 ) -> PublishValidationResult:
     draft, listing_choice = build_configured_draft(db, payload.product_draft_id)
+    review = get_publish_review(
+        db, payload.product_draft_id, payload.review.review_result_id
+    )
     human_approved = is_product_draft_approved(db, payload.product_draft_id)
-    return validate_publish_request(
+    validation = validate_publish_request(
         draft=draft,
-        review=payload.review,
+        review=review,
         listing_choice=listing_choice,
-        valid_listing_type_ids=payload.valid_listing_type_ids,
+        valid_listing_type_ids=SERVER_LISTING_TYPE_IDS,
         human_approved=human_approved,
     )
+    return _with_category_attribute_validation(db, draft, listing_choice, validation)
 
 
 @router.post("/execute", response_model=PublishExecutionResult)
 async def publish_execute(
     payload: PublishExecuteRequest, db: Session = Depends(get_db)
 ) -> PublishExecutionResult:
+    if not payload.product_draft_id:
+        raise HTTPException(status_code=422, detail="persisted_draft_required")
+    draft, listing_choice = build_configured_draft(db, payload.product_draft_id)
+    review = get_publish_review(
+        db, payload.product_draft_id, payload.review.review_result_id
+    )
+    human_approved = is_product_draft_approved(db, payload.product_draft_id)
     return await _execute_with_payload(
         db=db,
         store_id=payload.store_id,
-        product_draft_id=payload.product_draft_id or 0,
-        draft=payload.draft,
-        review=payload.review,
-        listing_choice=payload.listing_choice,
-        valid_listing_type_ids=payload.valid_listing_type_ids,
-        human_approved=payload.human_approved,
+        product_draft_id=payload.product_draft_id,
+        draft=draft,
+        review=review,
+        listing_choice=listing_choice,
+        valid_listing_type_ids=SERVER_LISTING_TYPE_IDS,
+        human_approved=human_approved,
     )
 
 
@@ -118,15 +133,18 @@ async def publish_execute_from_draft(
     payload: PublishFromDraftExecuteRequest, db: Session = Depends(get_db)
 ) -> PublishExecutionResult:
     draft, listing_choice = build_configured_draft(db, payload.product_draft_id)
+    review = get_publish_review(
+        db, payload.product_draft_id, payload.review.review_result_id
+    )
     human_approved = is_product_draft_approved(db, payload.product_draft_id)
     return await _execute_with_payload(
         db=db,
         store_id=payload.store_id,
         product_draft_id=payload.product_draft_id,
         draft=draft,
-        review=payload.review,
+        review=review,
         listing_choice=listing_choice,
-        valid_listing_type_ids=payload.valid_listing_type_ids,
+        valid_listing_type_ids=SERVER_LISTING_TYPE_IDS,
         human_approved=human_approved,
     )
 
@@ -139,18 +157,38 @@ def publish_enqueue_from_draft(
     if not store:
         raise HTTPException(status_code=404, detail="Store not found.")
     draft, listing_choice = build_configured_draft(db, payload.product_draft_id)
+    review = get_publish_review(
+        db, payload.product_draft_id, payload.review.review_result_id
+    )
+    human_approved = is_product_draft_approved(db, payload.product_draft_id)
+    validation = validate_publish_request(
+        draft=draft,
+        review=review,
+        listing_choice=listing_choice,
+        valid_listing_type_ids=SERVER_LISTING_TYPE_IDS,
+        human_approved=human_approved,
+    )
     site_errors = validate_store_site_match(store.site_id, listing_choice.site_id)
-    if site_errors:
-        raise HTTPException(status_code=422, detail=site_errors)
+    validation_errors = [*validation.errors, *site_errors]
+    validation_errors.extend(
+        validate_category_attributes(
+            db,
+            draft.target_category_id,
+            listing_choice.attributes,
+            require_verified_metadata=settings.allow_live_publish,
+        )
+    )
+    if validation_errors:
+        raise HTTPException(status_code=422, detail=validation_errors)
     job = create_publish_job(
         db=db,
         product_draft_id=payload.product_draft_id,
         store_id=payload.store_id,
         requested_by="operator",
         draft=draft,
-        review=payload.review,
+        review=review,
         listing_choice=listing_choice,
-        valid_listing_type_ids=payload.valid_listing_type_ids,
+        valid_listing_type_ids=SERVER_LISTING_TYPE_IDS,
     )
     return to_publish_job_read(job)
 
@@ -165,9 +203,10 @@ async def retry_publish_job(job_id: int, db: Session = Depends(get_db)) -> Publi
         )
 
     draft, listing_choice = build_configured_draft(db, job.product_draft_id)
-    review = review_from_job_summary(job)
-    valid_listing_type_ids = (job.request_summary_json or {}).get(
-        "valid_listing_type_ids", [listing_choice.listing_type_id]
+    review = get_publish_review(
+        db,
+        job.product_draft_id,
+        (job.request_summary_json or {}).get("review_result_id"),
     )
     human_approved = is_product_draft_approved(db, job.product_draft_id)
     create_audit_event(
@@ -195,7 +234,7 @@ async def retry_publish_job(job_id: int, db: Session = Depends(get_db)) -> Publi
         draft=draft,
         review=review,
         listing_choice=listing_choice,
-        valid_listing_type_ids=valid_listing_type_ids,
+        valid_listing_type_ids=SERVER_LISTING_TYPE_IDS,
         human_approved=human_approved,
     )
 
@@ -223,6 +262,12 @@ async def _execute_with_payload(
     validation_errors = [
         *validation.errors,
         *validate_store_site_match(store.site_id, listing_choice.site_id),
+        *validate_category_attributes(
+            db,
+            draft.target_category_id,
+            listing_choice.attributes,
+            require_verified_metadata=settings.allow_live_publish,
+        ),
     ]
     validation = validation.model_copy(
         update={"allowed": not validation_errors, "errors": validation_errors}
@@ -289,6 +334,8 @@ async def _execute_with_payload(
         listing_choice=listing_choice,
         valid_listing_type_ids=valid_listing_type_ids,
     )
+    if getattr(job, "_idempotent_replay", False):
+        return replay_publish_result(job)
     result = await execute_publish(
         client=MercadoLibreClient(access_token=access_token),
         draft=draft,
@@ -309,6 +356,24 @@ async def _execute_with_payload(
         result=result,
     )
     return result.model_copy(update={"job_id": job.id})
+
+
+def _with_category_attribute_validation(
+    db: Session,
+    draft: ProductDraftCreate,
+    listing_choice: ListingChoice,
+    validation: PublishValidationResult,
+) -> PublishValidationResult:
+    errors = [
+        *validation.errors,
+        *validate_category_attributes(
+            db,
+            draft.target_category_id,
+            listing_choice.attributes,
+            require_verified_metadata=settings.allow_live_publish,
+        ),
+    ]
+    return validation.model_copy(update={"allowed": not errors, "errors": errors})
 
 
 def _audit_publish_execution(

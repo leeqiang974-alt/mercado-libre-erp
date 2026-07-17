@@ -32,6 +32,7 @@ def persist_review_result(
             "reasons": response.reasons,
         },
         suggested_changes_json=response.suggested_changes,
+        draft_version=draft.content_version,
     )
     db.add(result)
     db.commit()
@@ -51,6 +52,32 @@ def persist_review_result(
         },
     )
     return result
+
+
+def get_publish_review(
+    db: Session, product_draft_id: int, review_result_id: int | None
+) -> ReviewResponse:
+    if review_result_id is None:
+        raise HTTPException(status_code=422, detail="persisted_behavioral_review_required")
+    draft = db.get(ProductDraft, product_draft_id)
+    result = db.get(ReviewResult, review_result_id)
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Product draft not found.")
+    if result is None or result.product_draft_id != product_draft_id:
+        raise HTTPException(status_code=422, detail="persisted_behavioral_review_required")
+    if result.draft_version != draft.content_version:
+        raise HTTPException(status_code=422, detail="review_for_stale_draft_version")
+    if result.provider != "claude+nvidia_behavioral_audit":
+        raise HTTPException(status_code=422, detail="claude_nvidia_behavioral_review_required")
+    return ReviewResponse(
+        provider=result.provider,
+        decision=result.decision.value,
+        risk_level=result.risk_level,
+        reason_codes=(result.reasons_json or {}).get("reason_codes", []),
+        reasons=(result.reasons_json or {}).get("reasons", []),
+        suggested_changes=result.suggested_changes_json or {},
+        review_result_id=result.id,
+    )
 
 
 def list_review_results(db: Session, product_draft_id: int) -> list[ReviewResultRead]:

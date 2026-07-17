@@ -1,14 +1,17 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.session import get_db
+from app.models.product_draft import ProductDraft
 from app.schemas.drafts import ProductDraftCreate
 from app.schemas.reviews import BehavioralAuditResponse, ReviewResponse, ReviewResultRead
 from app.services.ai.claude_client import ClaudeReviewClient
 from app.services.ai.nvidia_client import NvidiaReviewClient
+from app.services.ai.provider_utils import AIProviderError
 from app.services.ai.review_policy import review_draft_locally
 from app.services.audit_events import create_audit_event
+from app.services.draft_listing_configs import build_configured_draft
 from app.services.reviews import list_review_results, persist_review_result
 
 router = APIRouter(prefix="/api/reviews", tags=["reviews"])
@@ -21,6 +24,7 @@ def review_local(
     product_draft_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> ReviewResponse:
+    draft = _canonical_review_draft(db, product_draft_id, draft)
     response = review_draft_locally(draft)
     return _persist_if_requested(db, response, product_draft_id)
 
@@ -31,8 +35,12 @@ async def review_claude(
     product_draft_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> ReviewResponse:
-    client = ClaudeReviewClient(api_key=settings.claude_api_key)
-    response = await client.review_draft(draft)
+    draft = _canonical_review_draft(db, product_draft_id, draft)
+    client = ClaudeReviewClient(api_key=settings.claude_api_key, model=settings.claude_model)
+    try:
+        response = await client.review_draft(draft)
+    except AIProviderError as exc:
+        raise _provider_http_error(exc) from exc
     return _persist_if_requested(db, response, product_draft_id, model=getattr(client, "model", ""))
 
 
@@ -42,8 +50,12 @@ async def review_nvidia(
     product_draft_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> ReviewResponse:
-    client = NvidiaReviewClient(api_key=settings.nvidia_api_key)
-    response = await client.pre_screen_draft(draft)
+    draft = _canonical_review_draft(db, product_draft_id, draft)
+    client = NvidiaReviewClient(api_key=settings.nvidia_api_key, model=settings.nvidia_model)
+    try:
+        response = await client.pre_screen_draft(draft)
+    except AIProviderError as exc:
+        raise _provider_http_error(exc) from exc
     return _persist_if_requested(db, response, product_draft_id, model=getattr(client, "model", ""))
 
 
@@ -54,10 +66,18 @@ async def behavioral_audit(
     db: Session = Depends(get_db),
 ) -> BehavioralAuditResponse:
     """Run NVIDIA pre-screening and Claude deep review before publish approval."""
-    nvidia_client = NvidiaReviewClient(api_key=settings.nvidia_api_key)
-    claude_client = ClaudeReviewClient(api_key=settings.claude_api_key)
-    nvidia = await nvidia_client.pre_screen_draft(draft)
-    claude = await claude_client.review_draft(draft)
+    draft, _ = build_configured_draft(db, product_draft_id) if product_draft_id else (draft, None)
+    nvidia_client = NvidiaReviewClient(
+        api_key=settings.nvidia_api_key, model=settings.nvidia_model
+    )
+    claude_client = ClaudeReviewClient(
+        api_key=settings.claude_api_key, model=settings.claude_model
+    )
+    try:
+        nvidia = await nvidia_client.pre_screen_draft(draft)
+        claude = await claude_client.review_draft(draft)
+    except AIProviderError as exc:
+        raise _provider_http_error(exc) from exc
     if product_draft_id is not None:
         nvidia = _persist_if_requested(
             db, nvidia, product_draft_id, model=getattr(nvidia_client, "model", "")
@@ -68,6 +88,13 @@ async def behavioral_audit(
 
     aggregate = _aggregate_reviews(nvidia, claude)
     if product_draft_id is not None:
+        aggregate_result = persist_review_result(
+            db,
+            product_draft_id,
+            aggregate,
+            model=f"{getattr(nvidia_client, 'model', '')}+{getattr(claude_client, 'model', '')}",
+        )
+        aggregate = aggregate.model_copy(update={"review_result_id": aggregate_result.id})
         create_audit_event(
             db=db,
             actor_type="ai_orchestrator",
@@ -79,10 +106,47 @@ async def behavioral_audit(
                 "decision": aggregate.decision,
                 "risk_level": aggregate.risk_level,
                 "providers": [nvidia.provider, claude.provider],
-                "review_result_ids": [nvidia.review_result_id, claude.review_result_id],
+                "review_result_ids": [
+                    nvidia.review_result_id,
+                    claude.review_result_id,
+                    aggregate.review_result_id,
+                ],
             },
         )
     return BehavioralAuditResponse(nvidia=nvidia, claude=claude, aggregate=aggregate)
+
+
+def _canonical_review_draft(
+    db: Session,
+    product_draft_id: int | None,
+    submitted: ProductDraftCreate,
+) -> ProductDraftCreate:
+    if product_draft_id is None:
+        return submitted
+    model = db.get(ProductDraft, product_draft_id)
+    if model is None:
+        raise HTTPException(status_code=404, detail="Product draft not found.")
+    try:
+        draft, listing_choice = build_configured_draft(db, product_draft_id)
+        return draft.model_copy(update={"attributes": listing_choice.attributes})
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+    return ProductDraftCreate(
+        title=model.title,
+        description=model.description,
+        brand=model.brand,
+        target_site_id=model.target_site_id,
+        target_category_id=model.target_category_id,
+        condition=model.condition,
+        source_price=model.source_price,
+        source_currency=model.source_currency,
+        price=model.price,
+        currency=model.currency,
+        stock=model.stock,
+        listing_type_id=model.listing_type_id,
+        image_urls=model.image_urls_json or [],
+    )
 
 
 @router.get("/drafts/{product_draft_id}", response_model=list[ReviewResultRead])
@@ -140,3 +204,10 @@ def _unique_in_order(values):
             seen.add(value)
             result.append(value)
     return result
+
+
+def _provider_http_error(error: AIProviderError) -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail={"provider": error.provider, "code": error.code},
+    )

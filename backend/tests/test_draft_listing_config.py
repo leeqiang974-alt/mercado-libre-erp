@@ -7,7 +7,9 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.product_draft import ProductDraft
+from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.registry import import_all_models
+from app.models.review_result import ReviewDecision, ReviewResult
 
 
 def make_client():
@@ -27,7 +29,7 @@ def make_client():
                 target_site_id="MLM",
                 target_category_id="",
                 price=9.99,
-                currency="USD",
+                currency="MXN",
                 stock=2,
                 image_urls_json=["https://example.com/a.jpg"],
             )
@@ -73,6 +75,24 @@ def review_payload():
     }
 
 
+def seed_publish_review(testing_session) -> int:
+    with testing_session() as db:
+        draft = db.get(ProductDraft, 1)
+        row = ReviewResult(
+            product_draft_id=1,
+            provider="claude+nvidia_behavioral_audit",
+            risk_level="low",
+            decision=ReviewDecision.PASS,
+            reasons_json={"reason_codes": [], "reasons": []},
+            suggested_changes_json={},
+            draft_version=draft.content_version,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row.id
+
+
 def test_listing_config_can_be_saved_and_read_for_draft():
     client, testing_session = make_client()
 
@@ -97,7 +117,7 @@ def test_listing_config_can_be_saved_and_read_for_draft():
 
 def test_listing_config_rejects_full_fulfillment():
     client, _ = make_client()
-    payload = config_payload() | {"fulfillment": "full"}
+    payload = config_payload() | {"fulfillment": " FULL "}
 
     response = client.put("/api/drafts/1/listing-config", json=payload)
 
@@ -105,16 +125,26 @@ def test_listing_config_rejects_full_fulfillment():
     assert "FULL fulfillment is excluded" in response.text
 
 
-def test_publish_preview_from_saved_draft_config():
+def test_missing_listing_config_can_be_read_as_optional():
     client, _ = make_client()
+
+    response = client.get("/api/drafts/1/listing-config?optional=true")
+
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+def test_publish_preview_from_saved_draft_config():
+    client, testing_session = make_client()
     client.put("/api/drafts/1/listing-config", json=config_payload())
+    review_result_id = seed_publish_review(testing_session)
     client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
 
     response = client.post(
         "/api/publishing/preview-from-draft",
         json={
             "product_draft_id": 1,
-            "review": review_payload(),
+            "review": review_payload() | {"review_result_id": review_result_id},
             "valid_listing_type_ids": ["gold_special"],
             "human_approved": True,
         },
@@ -139,3 +169,39 @@ def test_publish_preview_from_saved_config_requires_existing_config():
 
     assert response.status_code == 404
     assert "Listing config not found" in response.text
+
+
+def test_publish_preview_blocks_missing_required_category_attribute():
+    client, testing_session = make_client()
+    client.put("/api/drafts/1/listing-config", json=config_payload())
+    review_result_id = seed_publish_review(testing_session)
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+    with testing_session() as db:
+        db.add(
+            MeliMetadataCache(
+                cache_key="category_attributes:MLM123",
+                payload_json={
+                    "attributes": [
+                        {"id": "BRAND", "tags": {"required": True}},
+                        {"id": "GTIN", "tags": {"required": True}},
+                    ]
+                },
+            )
+        )
+        db.commit()
+
+    response = client.post(
+        "/api/publishing/preview-from-draft",
+        json={
+            "product_draft_id": 1,
+            "review": review_payload() | {"review_result_id": review_result_id},
+            "valid_listing_type_ids": ["gold_special"],
+            "human_approved": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "allowed": False,
+        "errors": ["required_category_attribute_missing:GTIN"],
+    }

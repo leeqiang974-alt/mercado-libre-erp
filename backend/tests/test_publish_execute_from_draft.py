@@ -8,8 +8,10 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.product_draft import ProductDraft
+from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.publish_job import PublishJob, PublishJobStatus
 from app.models.registry import import_all_models
+from app.models.review_result import ReviewDecision, ReviewResult
 from app.models.store import Store
 from app.models.token_credential import TokenCredential
 from app.schemas.publishing import PublishExecutionResult
@@ -26,6 +28,7 @@ def make_client(with_config: bool = True):
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with testing_session() as db:
+        db.add(MeliMetadataCache(cache_key="category_attributes:MLM123", payload_json={"attributes": []}))
         store = Store(
             site_id="MLM",
             seller_id="seller-1",
@@ -50,7 +53,7 @@ def make_client(with_config: bool = True):
                 target_site_id="MLM",
                 target_category_id="",
                 price=9.99,
-                currency="USD",
+                currency="MXN",
                 stock=2,
                 image_urls_json=["https://example.com/a.jpg"],
             )
@@ -95,11 +98,29 @@ def review_payload():
     }
 
 
-def execute_payload():
+def seed_publish_review(testing_session) -> int:
+    with testing_session() as db:
+        draft = db.get(ProductDraft, 1)
+        row = ReviewResult(
+            product_draft_id=1,
+            provider="claude+nvidia_behavioral_audit",
+            risk_level="low",
+            decision=ReviewDecision.PASS,
+            reasons_json={"reason_codes": [], "reasons": []},
+            suggested_changes_json={},
+            draft_version=draft.content_version,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row.id
+
+
+def execute_payload(review_result_id: int):
     return {
         "store_id": 1,
         "product_draft_id": 1,
-        "review": review_payload(),
+        "review": review_payload() | {"review_result_id": review_result_id},
         "valid_listing_type_ids": ["gold_special"],
         "human_approved": True,
     }
@@ -121,9 +142,12 @@ def test_publish_execute_from_draft_uses_saved_config_and_persists_job(monkeypat
     monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
     monkeypatch.setattr(publishing, "execute_publish", fake_execute_publish)
     client, testing_session = make_client()
+    review_result_id = seed_publish_review(testing_session)
     client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
 
-    response = client.post("/api/publishing/execute-from-draft", json=execute_payload())
+    response = client.post(
+        "/api/publishing/execute-from-draft", json=execute_payload(review_result_id)
+    )
 
     assert response.status_code == 200
     body = response.json()
@@ -141,8 +165,12 @@ def test_publish_execute_from_draft_uses_saved_config_and_persists_job(monkeypat
 def test_publish_enqueue_from_draft_creates_pending_job(monkeypatch):
     monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
     client, testing_session = make_client()
+    review_result_id = seed_publish_review(testing_session)
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
 
-    response = client.post("/api/publishing/enqueue-from-draft", json=execute_payload())
+    response = client.post(
+        "/api/publishing/enqueue-from-draft", json=execute_payload(review_result_id)
+    )
 
     assert response.status_code == 200
     body = response.json()
@@ -153,15 +181,86 @@ def test_publish_enqueue_from_draft_creates_pending_job(monkeypatch):
     with testing_session() as db:
         job = db.query(PublishJob).one()
         assert job.status == PublishJobStatus.PENDING
-        assert job.request_summary_json["review_provider"] == "local_policy"
+        assert job.request_summary_json["review_provider"] == "claude+nvidia_behavioral_audit"
         assert job.request_summary_json["listing_type_id"] == "gold_special"
+
+
+def test_publish_enqueue_from_draft_rejects_unapproved_job(monkeypatch):
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    client, testing_session = make_client()
+    review_result_id = seed_publish_review(testing_session)
+
+    response = client.post(
+        "/api/publishing/enqueue-from-draft", json=execute_payload(review_result_id)
+    )
+
+    assert response.status_code == 422
+    assert "human_approval_required" in response.text
+    with testing_session() as db:
+        assert db.query(PublishJob).count() == 0
 
 
 def test_publish_execute_from_draft_requires_saved_config(monkeypatch):
     monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
     client, _ = make_client(with_config=False)
 
-    response = client.post("/api/publishing/execute-from-draft", json=execute_payload())
+    response = client.post(
+        "/api/publishing/execute-from-draft", json=execute_payload(999)
+    )
 
     assert response.status_code == 404
     assert "Listing config not found" in response.text
+
+
+def test_publish_execute_replays_existing_result_without_duplicate_item(monkeypatch):
+    calls = 0
+
+    async def fake_execute_publish(**kwargs):
+        nonlocal calls
+        calls += 1
+        return PublishExecutionResult(status="published", item_id="MLM-IDEMPOTENT")
+
+    monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing, "execute_publish", fake_execute_publish)
+    client, testing_session = make_client()
+    review_result_id = seed_publish_review(testing_session)
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+    body = execute_payload(review_result_id)
+
+    first = client.post("/api/publishing/execute-from-draft", json=body)
+    second = client.post("/api/publishing/execute-from-draft", json=body)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["job_id"] == second.json()["job_id"]
+    assert second.json()["item_id"] == "MLM-IDEMPOTENT"
+    assert calls == 1
+    with testing_session() as db:
+        assert db.query(PublishJob).count() == 1
+
+
+def test_listing_change_invalidates_existing_review_and_approval(monkeypatch):
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    client, testing_session = make_client()
+    review_result_id = seed_publish_review(testing_session)
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+    changed = client.put(
+        "/api/drafts/1/listing-config",
+        json={
+            "site_id": "MLM",
+            "category_id": "MLM456",
+            "listing_type_id": "gold_pro",
+            "fulfillment": "not_full",
+            "attributes": [],
+        },
+    )
+    assert changed.status_code == 200
+
+    response = client.post(
+        "/api/publishing/execute-from-draft",
+        json=execute_payload(review_result_id),
+    )
+
+    assert response.status_code == 422
+    assert "review_for_stale_draft_version" in response.text

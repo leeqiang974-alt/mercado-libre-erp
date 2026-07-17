@@ -9,9 +9,13 @@ from app.db.session import get_db
 from app.main import app
 from app.models.audit_event import AuditEvent
 from app.models.product_draft import ProductDraft
+from app.models.meli_metadata_cache import MeliMetadataCache
+from app.models.draft_listing_config import DraftListingConfig
+from app.models.product_draft_approval import ProductDraftApproval
 from app.models.publish_job import PublishJob, PublishJobStatus
 from app.models.registry import import_all_models
 from app.models.store import Store
+from app.models.review_result import ReviewDecision, ReviewResult
 from app.models.token_credential import TokenCredential
 from app.schemas.publishing import PublishExecutionResult
 from app.services.meli.token_vault import encrypt_token_value
@@ -27,6 +31,7 @@ def make_client(with_token: bool = True):
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with testing_session() as db:
+        db.add(MeliMetadataCache(cache_key="category_attributes:MLM123", payload_json={"attributes": []}))
         store = Store(
             site_id="MLM",
             seller_id="seller-1",
@@ -45,16 +50,44 @@ def make_client(with_token: bool = True):
                     encrypted_refresh_token=encrypt_token_value("refresh-token", "test-secret"),
                 )
             )
-        db.add(
-            ProductDraft(
+        draft = ProductDraft(
                 title="Persisted Bottle",
                 target_site_id="MLM",
                 target_category_id="MLM123",
                 price=9.99,
-                currency="USD",
+                currency="MXN",
                 stock=2,
                 image_urls_json=["https://example.com/a.jpg"],
             )
+        db.add(draft)
+        db.flush()
+        db.add_all(
+            [
+                DraftListingConfig(
+                    product_draft_id=draft.id,
+                    site_id="MLM",
+                    category_id="MLM123",
+                    listing_type_id="gold_special",
+                    fulfillment="not_full",
+                    attributes_json=[],
+                ),
+                ProductDraftApproval(
+                    product_draft_id=draft.id,
+                    status="approved",
+                    approved_by="operator",
+                    draft_version=1,
+                ),
+                ReviewResult(
+                    id=1,
+                    product_draft_id=draft.id,
+                    provider="claude+nvidia_behavioral_audit",
+                    risk_level="low",
+                    decision=ReviewDecision.PASS,
+                    reasons_json={"reason_codes": [], "reasons": []},
+                    suggested_changes_json={},
+                    draft_version=1,
+                ),
+            ]
         )
         db.commit()
 
@@ -82,17 +115,18 @@ def payload():
             "target_site_id": "MLM",
             "target_category_id": "MLM123",
             "price": 9.99,
-            "currency": "USD",
+            "currency": "MXN",
             "stock": 2,
             "image_urls": ["https://example.com/a.jpg"],
         },
         "review": {
-            "provider": "local_policy",
+            "provider": "claude+nvidia_behavioral_audit",
             "decision": "pass",
             "risk_level": "low",
             "reason_codes": [],
             "reasons": [],
             "suggested_changes": {},
+            "review_result_id": 1,
         },
         "listing_choice": {
             "site_id": "MLM",
@@ -178,6 +212,14 @@ def test_publish_execute_blocks_when_draft_site_does_not_match_authorized_store(
 
     monkeypatch.setattr(publishing, "execute_publish", unexpected_publish)
     client, testing_session = make_client()
+    with testing_session() as db:
+        config = db.query(DraftListingConfig).one()
+        config.site_id = "MLA"
+        config.category_id = "MLA123"
+        draft = db.get(ProductDraft, 1)
+        draft.target_site_id = "MLA"
+        draft.currency = "ARS"
+        db.commit()
     body = payload()
     body["draft"]["target_site_id"] = "MLA"
     body["listing_choice"]["site_id"] = "MLA"

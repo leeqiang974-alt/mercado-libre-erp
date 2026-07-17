@@ -10,9 +10,11 @@ from app.main import app
 from app.models.audit_event import AuditEvent
 from app.models.draft_listing_config import DraftListingConfig
 from app.models.product_draft import ProductDraft
+from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.product_draft_approval import ProductDraftApproval
 from app.models.publish_job import PublishJob, PublishJobStatus
 from app.models.registry import import_all_models
+from app.models.review_result import ReviewDecision, ReviewResult
 from app.models.store import Store
 from app.models.token_credential import TokenCredential
 from app.schemas.publishing import PublishExecutionResult
@@ -29,6 +31,7 @@ def make_client():
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with testing_session() as db:
+        db.add(MeliMetadataCache(cache_key="category_attributes:MLM123", payload_json={"attributes": []}))
         store = Store(
             site_id="MLM",
             seller_id="seller-1",
@@ -54,7 +57,7 @@ def make_client():
                 target_site_id="MLM",
                 target_category_id="MLM123",
                 price=9.99,
-                currency="USD",
+                currency="MXN",
                 stock=2,
                 image_urls_json=["https://example.com/a.jpg"],
             )
@@ -76,6 +79,18 @@ def make_client():
                 status="approved",
                 approved_by="operator",
                 note="approved",
+            )
+        )
+        db.add(
+            ReviewResult(
+                id=1,
+                product_draft_id=1,
+                provider="claude+nvidia_behavioral_audit",
+                risk_level="low",
+                decision=ReviewDecision.PASS,
+                reasons_json={"reason_codes": [], "reasons": []},
+                suggested_changes_json={},
+                draft_version=1,
             )
         )
         db.commit()
@@ -101,7 +116,8 @@ def job_summary():
         "site_id": "MLM",
         "category_id": "MLM123",
         "listing_type_id": "gold_special",
-        "review_provider": "claude",
+        "review_provider": "claude+nvidia_behavioral_audit",
+        "review_result_id": 1,
         "review_decision": "pass",
         "review_risk_level": "low",
         "review_reason_codes": [],
@@ -115,7 +131,7 @@ def test_blocked_publish_job_can_be_retried_from_saved_draft_config(monkeypatch)
         assert kwargs["client"].access_token == "access-token"
         assert kwargs["listing_choice"].listing_type_id == "gold_special"
         assert kwargs["listing_choice"].fulfillment == "classic"
-        assert kwargs["review"].provider == "claude"
+        assert kwargs["review"].provider == "claude+nvidia_behavioral_audit"
         assert kwargs["review"].decision == "pass"
         assert kwargs["human_approved"] is True
         return PublishExecutionResult(
@@ -156,7 +172,7 @@ def test_blocked_publish_job_can_be_retried_from_saved_draft_config(monkeypatch)
         assert original.status == PublishJobStatus.BLOCKED
         assert retry.status == PublishJobStatus.PUBLISHED
         assert retry.meli_item_id == "MLM999"
-        assert retry.request_summary_json["review_provider"] == "claude"
+        assert retry.request_summary_json["review_provider"] == "claude+nvidia_behavioral_audit"
         assert retry_audit.entity_id == "1"
         assert retry_audit.after_json["retry_store_id"] == 1
 

@@ -19,7 +19,7 @@ def draft_payload():
 
 def test_claude_review_route_uses_client_without_echoing_key(monkeypatch):
     class FakeClaudeClient:
-        def __init__(self, api_key: str):
+        def __init__(self, api_key: str, model: str = ""):
             assert api_key == "claude-secret"
 
         async def review_draft(self, draft):
@@ -44,7 +44,7 @@ def test_claude_review_route_uses_client_without_echoing_key(monkeypatch):
 
 def test_nvidia_review_route_uses_client_without_echoing_key(monkeypatch):
     class FakeNvidiaClient:
-        def __init__(self, api_key: str):
+        def __init__(self, api_key: str, model: str = ""):
             assert api_key == "nvidia-secret"
 
         async def pre_screen_draft(self, draft):
@@ -71,7 +71,7 @@ def test_behavioral_audit_runs_both_providers_and_aggregates_the_strictest_resul
     calls = []
 
     class FakeClaudeClient:
-        def __init__(self, api_key: str):
+        def __init__(self, api_key: str, model: str = ""):
             assert api_key == "claude-secret"
 
         async def review_draft(self, draft):
@@ -85,7 +85,7 @@ def test_behavioral_audit_runs_both_providers_and_aggregates_the_strictest_resul
             )
 
     class FakeNvidiaClient:
-        def __init__(self, api_key: str):
+        def __init__(self, api_key: str, model: str = ""):
             assert api_key == "nvidia-secret"
 
         async def pre_screen_draft(self, draft):
@@ -114,3 +114,16 @@ def test_behavioral_audit_runs_both_providers_and_aggregates_the_strictest_resul
     assert body["aggregate"]["decision"] == "block"
     assert body["aggregate"]["risk_level"] == "high"
     assert body["aggregate"]["reason_codes"] == ["restricted_item", "brand_risk"]
+
+
+def test_provider_route_reports_missing_key_instead_of_local_fallback(monkeypatch):
+    monkeypatch.setattr(reviews.settings, "claude_api_key", "")
+
+    response = TestClient(app).post("/api/reviews/claude", json=draft_payload())
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "provider": "claude",
+        "code": "api_key_required",
+    }
+    assert "fallback" not in response.text

@@ -1,7 +1,8 @@
-import { ClipboardList, FileText, Send, Store, Upload } from "lucide-react";
+import { ClipboardList, FileText, Gauge, Send, Store, Upload } from "lucide-react";
 import type { ReactNode } from "react";
 
 const tabs = [
+  { id: "dashboard", label: "Overview", icon: Gauge },
   { id: "import", label: "Import", icon: Upload },
   { id: "drafts", label: "Drafts", icon: FileText },
   { id: "publishing", label: "Publish", icon: Send },

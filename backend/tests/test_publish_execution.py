@@ -15,7 +15,7 @@ def valid_draft():
         target_site_id="MLM",
         target_category_id="MLM123",
         price=19.99,
-        currency="USD",
+        currency="MXN",
         stock=3,
         image_urls=["https://example.com/a.jpg"],
     )

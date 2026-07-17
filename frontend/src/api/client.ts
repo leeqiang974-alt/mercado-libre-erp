@@ -7,6 +7,8 @@ export type ProductDraft = {
   target_site_id: string;
   target_category_id: string;
   condition: string;
+  source_price: number | null;
+  source_currency: string;
   price: number | null;
   currency: string;
   stock: number;
@@ -108,6 +110,47 @@ export type AuditEventRecord = {
   created_at: string;
 };
 
+export type SystemReadiness = {
+  database: boolean;
+  amazon_collector: boolean;
+  mercado_libre: {
+    credentials_configured: boolean;
+    connected_stores: number;
+    live_publish_enabled: boolean;
+  };
+  ai: {
+    claude_configured: boolean;
+    nvidia_configured: boolean;
+  };
+  counts: {
+    drafts: number;
+    collection_jobs: number;
+    publish_jobs: number;
+  };
+};
+
+export type DraftPricingInput = {
+  source_price: number;
+  source_currency: string;
+  target_currency: string;
+  exchange_rate: number;
+  purchase_extra_cost: number;
+  shipping_cost: number;
+  platform_fee_rate: number;
+  tax_rate: number;
+  profit_margin_rate: number;
+  rounding_increment: number;
+};
+
+export type DraftPricing = DraftPricingInput & {
+  id: number;
+  product_draft_id: number;
+  landed_cost: number;
+  target_price: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export async function importAmazonHtml(
   sourceUrl: string,
   html: string,
@@ -148,10 +191,32 @@ export async function importAmazonUrl(sourceUrl: string, targetSiteId: string) {
   const response = await fetch(`${API_BASE}/api/imports/amazon-url`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source_url: sourceUrl, target_site_id: targetSiteId }),
+    body: JSON.stringify({ source_url: sourceUrl, target_site_id: targetSiteId, persist: true }),
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<CollectionResult>;
+}
+
+export async function getSystemReadiness() {
+  const response = await fetch(`${API_BASE}/api/system/readiness`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<SystemReadiness>;
+}
+
+export async function saveDraftPricing(productDraftId: number, payload: DraftPricingInput) {
+  const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/pricing`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<DraftPricing>;
+}
+
+export async function getDraftPricing(productDraftId: number) {
+  const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/pricing?optional=true`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<DraftPricing | null>;
 }
 
 export async function createCollectionJob(sourceUrl: string, targetSiteId: string) {
@@ -246,7 +311,11 @@ export async function listStores() {
 export async function getListingTypes(siteId: string) {
   const response = await fetch(`${API_BASE}/api/metadata/sites/${siteId}/listing-types`);
   if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<{ listing_type_ids: string[] }>;
+  return response.json() as Promise<{
+    listing_type_ids: string[];
+    source: "mercado_libre_api" | "cache" | "standard_catalog";
+    verified: boolean;
+  }>;
 }
 
 export async function refreshListingTypes(siteId: string) {
@@ -254,7 +323,11 @@ export async function refreshListingTypes(siteId: string) {
     method: "POST",
   });
   if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<{ listing_type_ids: string[] }>;
+  return response.json() as Promise<{
+    listing_type_ids: string[];
+    source: "mercado_libre_api" | "cache" | "standard_catalog";
+    verified: boolean;
+  }>;
 }
 
 export async function getCategoryPredictions(siteId: string, query: string) {
@@ -313,9 +386,9 @@ export async function saveDraftListingConfig(
 }
 
 export async function getDraftListingConfig(productDraftId: number) {
-  const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/listing-config`);
+  const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/listing-config?optional=true`);
   if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<DraftListingConfig>;
+  return response.json() as Promise<DraftListingConfig | null>;
 }
 
 export async function approveDraft(productDraftId: number, approvedBy = "operator", note = "") {

@@ -3,6 +3,13 @@ import json
 from app.schemas.reviews import ReviewResponse
 
 
+class AIProviderError(RuntimeError):
+    def __init__(self, provider: str, code: str):
+        self.provider = provider
+        self.code = code
+        super().__init__(f"{provider}:{code}")
+
+
 def parse_review_json(provider: str, text: str) -> ReviewResponse:
     data = json.loads(text)
     return ReviewResponse(

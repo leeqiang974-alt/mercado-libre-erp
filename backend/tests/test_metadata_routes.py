@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import httpx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -43,10 +44,23 @@ def test_metadata_routes_proxy_listing_types(monkeypatch):
     monkeypatch.setattr(metadata, "fetch_listing_type_ids", fake_fetch)
     client = make_client()
 
-    response = client.get("/api/metadata/sites/MLM/listing-types")
+    response = client.post("/api/metadata/sites/MLM/listing-types/refresh")
 
     assert response.status_code == 200
     assert response.json()["listing_type_ids"] == ["gold_special", "gold_pro"]
+
+
+def test_metadata_listing_types_default_to_non_blocking_standard_catalog():
+    client = make_client()
+
+    response = client.get("/api/metadata/sites/MLM/listing-types")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "listing_type_ids": ["gold_special", "gold_pro"],
+        "source": "standard_catalog",
+        "verified": False,
+    }
 
 
 def test_metadata_routes_proxy_category_prediction(monkeypatch):
@@ -62,6 +76,23 @@ def test_metadata_routes_proxy_category_prediction(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["predictions"][0]["category_id"] == "MLM123"
+
+
+def test_metadata_routes_expose_upstream_prediction_failure_as_503(monkeypatch):
+    async def failed_predict(client, site_id: str, query: str):
+        raise httpx.HTTPStatusError(
+            "forbidden",
+            request=httpx.Request("GET", "https://api.mercadolibre.com"),
+            response=httpx.Response(403),
+        )
+
+    monkeypatch.setattr(metadata, "predict_category", failed_predict)
+    client = make_client()
+
+    response = client.get("/api/metadata/sites/MLM/category-predictions?q=bottle")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "meli_metadata_unavailable"
 
 
 def test_metadata_routes_proxy_category_attributes(monkeypatch):

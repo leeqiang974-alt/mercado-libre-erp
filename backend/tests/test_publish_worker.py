@@ -6,9 +6,11 @@ from sqlalchemy.pool import StaticPool
 from app.db.base import Base
 from app.models.draft_listing_config import DraftListingConfig
 from app.models.product_draft import ProductDraft
+from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.product_draft_approval import ProductDraftApproval
 from app.models.publish_job import PublishJob, PublishJobStatus
 from app.models.registry import import_all_models
+from app.models.review_result import ReviewDecision, ReviewResult
 from app.models.store import Store
 from app.models.token_credential import TokenCredential
 from app.schemas.publishing import PublishExecutionResult
@@ -26,6 +28,7 @@ def make_session():
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with testing_session() as db:
+        db.add(MeliMetadataCache(cache_key="category_attributes:MLM123", payload_json={"attributes": []}))
         store = Store(
             site_id="MLM",
             seller_id="seller-1",
@@ -51,7 +54,7 @@ def make_session():
                 target_site_id="MLM",
                 target_category_id="MLM123",
                 price=9.99,
-                currency="USD",
+                currency="MXN",
                 stock=2,
                 image_urls_json=["https://example.com/a.jpg"],
             )
@@ -75,6 +78,18 @@ def make_session():
                 note="approved",
             )
         )
+        db.add(
+            ReviewResult(
+                id=1,
+                product_draft_id=1,
+                provider="claude+nvidia_behavioral_audit",
+                risk_level="low",
+                decision=ReviewDecision.PASS,
+                reasons_json={"reason_codes": [], "reasons": []},
+                suggested_changes_json={},
+                draft_version=1,
+            )
+        )
         db.commit()
     return testing_session
 
@@ -86,6 +101,7 @@ def job_summary(title: str = "Worker Bottle"):
         "category_id": "MLM123",
         "listing_type_id": "gold_special",
         "review_provider": "claude",
+        "review_result_id": 1,
         "review_decision": "pass",
         "review_risk_level": "low",
         "review_reason_codes": [],
@@ -121,7 +137,7 @@ async def test_worker_publishes_pending_publish_jobs_up_to_limit():
     async def fake_publisher(**kwargs):
         assert kwargs["client"].access_token == "access-token"
         assert kwargs["listing_choice"].listing_type_id == "gold_special"
-        assert kwargs["review"].provider == "claude"
+        assert kwargs["review"].provider == "claude+nvidia_behavioral_audit"
         return PublishExecutionResult(
             status="published",
             item_id="MLM-WORKER-1",
@@ -182,7 +198,7 @@ async def test_worker_rechecks_saved_listing_type_catalog_before_publisher():
     testing_session = make_session()
     with testing_session() as db:
         config = db.query(DraftListingConfig).one()
-        config.listing_type_id = "gold_pro"
+        config.listing_type_id = "gold_full"
         summary = job_summary()
         summary["valid_listing_type_ids"] = ["gold_special"]
         db.add(
@@ -212,4 +228,4 @@ async def test_worker_rechecks_saved_listing_type_catalog_before_publisher():
     with testing_session() as db:
         job = db.query(PublishJob).one()
         assert job.status == PublishJobStatus.BLOCKED
-        assert "listing_type_not_available" in job.response_summary_json["errors"]
+        assert "listing_type_not_supported" in job.response_summary_json["errors"]

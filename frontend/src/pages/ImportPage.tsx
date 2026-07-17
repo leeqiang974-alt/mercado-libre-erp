@@ -5,6 +5,7 @@ import {
   runCollectionJob,
   type CollectionJobRecord,
 } from "../api/client";
+import { MERCADO_LIBRE_SITES } from "../domain/sites";
 
 export function ImportPage({
   onImportHtml,
@@ -20,11 +21,9 @@ export function ImportPage({
   onCollectUrl: (sourceUrl: string, targetSiteId: string) => Promise<void>;
   status: string;
 }) {
-  const [sourceUrl, setSourceUrl] = useState("https://www.amazon.com/dp/B000TEST");
+  const [sourceUrl, setSourceUrl] = useState("");
   const [targetSiteId, setTargetSiteId] = useState("MLM");
-  const [html, setHtml] = useState(
-    "<span id='productTitle'>Bottle</span><span class='a-price'><span class='a-offscreen'>$9.99</span></span><img id='landingImage' src='https://example.com/a.jpg' />",
-  );
+  const [html, setHtml] = useState("");
   const [persist, setPersist] = useState(true);
   const [collectionJobs, setCollectionJobs] = useState<CollectionJobRecord[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
@@ -91,12 +90,16 @@ export function ImportPage({
         <input value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} />
       </label>
       <label>
-        Site
-        <input value={targetSiteId} onChange={(event) => setTargetSiteId(event.target.value)} />
+        Target Mercado Libre site
+        <select value={targetSiteId} onChange={(event) => setTargetSiteId(event.target.value)}>
+          {MERCADO_LIBRE_SITES.map((site) => (
+            <option key={site.id} value={site.id}>{site.country} ({site.id}) · {site.currency}</option>
+          ))}
+        </select>
       </label>
       <div className="button-row">
-        <button onClick={runUrlCollection}>Collect URL and Review</button>
-        <button onClick={queueCollectionJob}>Queue URL Job</button>
+        <button disabled={!sourceUrl.trim()} onClick={runUrlCollection}>Collect and save</button>
+        <button disabled={!sourceUrl.trim()} onClick={queueCollectionJob}>Add to collection queue</button>
         <button onClick={refreshCollectionJobs}>Refresh Jobs</button>
         <button disabled={!selectedJobId} onClick={runSelectedCollectionJob}>
           Run Selected Job
@@ -120,8 +123,10 @@ export function ImportPage({
           <pre>{JSON.stringify(collectionJobs, null, 2)}</pre>
         </>
       )}
+      <details className="advanced-section">
+        <summary>Advanced: import saved HTML</summary>
       <label>
-        HTML Snapshot
+        Amazon HTML snapshot
         <textarea value={html} onChange={(event) => setHtml(event.target.value)} />
       </label>
       <label className="check-row">
@@ -133,8 +138,9 @@ export function ImportPage({
         Save snapshot import as draft
       </label>
       <div className="button-row">
-        <button onClick={runHtmlImport}>Import Snapshot and Review</button>
+        <button disabled={!sourceUrl.trim() || !html.trim()} onClick={runHtmlImport}>Import and save snapshot</button>
       </div>
+      </details>
       <p>{status}</p>
       {error && <p className="error">{error}</p>}
     </section>

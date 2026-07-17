@@ -10,7 +10,9 @@ from app.main import app
 from app.models.product_draft import ProductDraft
 from app.models.publish_job import PublishJob, PublishJobStatus
 from app.models.registry import import_all_models
+from app.models.review_result import ReviewDecision, ReviewResult
 from app.models.store import Store
+from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.token_credential import TokenCredential
 from app.schemas.publishing import PublishExecutionResult
 from app.services.meli.token_vault import encrypt_token_value
@@ -39,6 +41,7 @@ def make_client():
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with testing_session() as db:
+        db.add(MeliMetadataCache(cache_key="category_attributes:MLM123", payload_json={"attributes": []}))
         store = Store(
             site_id="MLM",
             seller_id="seller-e2e",
@@ -73,6 +76,32 @@ def teardown_function():
     app.dependency_overrides.clear()
 
 
+def seed_publish_review(testing_session, draft_id: int) -> dict:
+    with testing_session() as db:
+        draft = db.get(ProductDraft, draft_id)
+        row = ReviewResult(
+            product_draft_id=draft_id,
+            provider="claude+nvidia_behavioral_audit",
+            risk_level="low",
+            decision=ReviewDecision.PASS,
+            reasons_json={"reason_codes": [], "reasons": []},
+            suggested_changes_json={},
+            draft_version=draft.content_version,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return {
+            "provider": row.provider,
+            "decision": "pass",
+            "risk_level": "low",
+            "reason_codes": [],
+            "reasons": [],
+            "suggested_changes": {},
+            "review_result_id": row.id,
+        }
+
+
 @pytest.mark.asyncio
 async def test_amazon_to_pre_listing_queue_and_worker_flow():
     client, testing_session = make_client()
@@ -90,23 +119,33 @@ async def test_amazon_to_pre_listing_queue_and_worker_flow():
     draft_id = imported.json()["id"]
     assert imported.json()["draft"]["title"] == "TrailPro Stainless Bottle"
 
-    reviewed = client.post(f"/api/reviews/local?product_draft_id={draft_id}", json=imported.json()["draft"])
-    assert reviewed.status_code == 200
-    assert reviewed.json()["decision"] == "pass"
-    assert reviewed.json()["review_result_id"] == 1
-
+    priced = client.put(
+        f"/api/drafts/{draft_id}/pricing",
+        json={
+            "source_price": imported.json()["draft"]["source_price"],
+            "source_currency": imported.json()["draft"]["source_currency"],
+            "target_currency": "MXN",
+            "exchange_rate": 18,
+            "shipping_cost": 60,
+            "platform_fee_rate": 0.15,
+            "profit_margin_rate": 0.2,
+            "rounding_increment": 10,
+        },
+    )
+    assert priced.status_code == 200
     configured = client.put(
         f"/api/drafts/{draft_id}/listing-config",
         json={
             "site_id": "MLM",
             "category_id": "MLM123",
             "listing_type_id": "gold_pro",
-            "fulfillment": "pre",
+            "fulfillment": "not_full",
             "attributes": [{"id": "BRAND", "value_name": "TrailPro"}],
         },
     )
     assert configured.status_code == 200
-    assert configured.json()["fulfillment"] == "pre"
+    assert configured.json()["fulfillment"] == "not_full"
+    reviewed = seed_publish_review(testing_session, draft_id)
 
     approved = client.post(
         f"/api/drafts/{draft_id}/approval",
@@ -120,7 +159,7 @@ async def test_amazon_to_pre_listing_queue_and_worker_flow():
         json={
             "product_draft_id": draft_id,
             "store_id": 1,
-            "review": reviewed.json(),
+            "review": reviewed,
             "valid_listing_type_ids": ["gold_pro"],
             "human_approved": False,
         },
@@ -131,7 +170,7 @@ async def test_amazon_to_pre_listing_queue_and_worker_flow():
     async def fake_publisher(**kwargs):
         assert kwargs["client"].access_token == "e2e-access-token"
         assert kwargs["listing_choice"].listing_type_id == "gold_pro"
-        assert kwargs["listing_choice"].fulfillment == "pre"
+        assert kwargs["listing_choice"].fulfillment == "not_full"
         assert kwargs["review"].decision == "pass"
         return PublishExecutionResult(status="published", item_id="MLM-E2E-1")
 
@@ -176,7 +215,7 @@ def test_full_fulfillment_is_rejected_before_queueing():
 
 
 def test_selected_site_requires_matching_authorized_store_before_queueing():
-    client, _ = make_client()
+    client, testing_session = make_client()
     imported = client.post(
         "/api/imports/amazon-html",
         json={
@@ -192,25 +231,20 @@ def test_selected_site_requires_matching_authorized_store_before_queueing():
             "site_id": "MLA",
             "category_id": "MLA123",
             "listing_type_id": "gold_special",
-            "fulfillment": "classic",
+            "fulfillment": "not_full",
             "attributes": [],
         },
     )
     assert configured.status_code == 200
+    reviewed = seed_publish_review(testing_session, draft_id)
+    client.post(f"/api/drafts/{draft_id}/approval", json={"approved_by": "operator"})
 
     response = client.post(
         "/api/publishing/enqueue-from-draft",
         json={
             "product_draft_id": draft_id,
             "store_id": 1,
-            "review": {
-                "provider": "local_policy",
-                "decision": "pass",
-                "risk_level": "low",
-                "reason_codes": [],
-                "reasons": [],
-                "suggested_changes": {},
-            },
+            "review": reviewed,
             "valid_listing_type_ids": ["gold_special"],
             "human_approved": True,
         },

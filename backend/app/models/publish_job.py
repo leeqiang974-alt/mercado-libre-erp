@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from enum import Enum
+import secrets
 
 from sqlalchemy import DateTime, ForeignKey, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column
@@ -22,6 +23,9 @@ class PublishJob(Base):
     product_draft_id: Mapped[int] = mapped_column(ForeignKey("product_drafts.id"))
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"))
     requested_by: Mapped[str] = mapped_column(String(120))
+    idempotency_key: Mapped[str] = mapped_column(
+        String(64), unique=True, index=True, default=lambda: secrets.token_hex(32)
+    )
     status: Mapped[PublishJobStatus] = mapped_column(default=PublishJobStatus.PENDING)
     request_summary_json: Mapped[dict] = mapped_column(JSON, default=dict)
     response_summary_json: Mapped[dict] = mapped_column(JSON, default=dict)

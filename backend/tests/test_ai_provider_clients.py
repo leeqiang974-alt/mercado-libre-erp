@@ -6,6 +6,7 @@ import pytest
 from app.schemas.drafts import ProductDraftCreate
 from app.services.ai.claude_client import ClaudeReviewClient
 from app.services.ai.nvidia_client import NvidiaReviewClient
+from app.services.ai.provider_utils import AIProviderError
 
 
 def draft():
@@ -96,12 +97,11 @@ async def test_nvidia_client_posts_chat_completion_and_parses_review_json():
 
 
 @pytest.mark.asyncio
-async def test_provider_clients_fall_back_when_api_key_missing():
+async def test_provider_clients_report_missing_api_key_without_fallback():
     claude = ClaudeReviewClient(api_key="")
     nvidia = NvidiaReviewClient(api_key="")
 
-    claude_result = await claude.review_draft(draft())
-    nvidia_result = await nvidia.pre_screen_draft(draft())
-
-    assert claude_result.provider == "claude_fallback"
-    assert nvidia_result.provider == "nvidia_fallback"
+    with pytest.raises(AIProviderError, match="claude:api_key_required"):
+        await claude.review_draft(draft())
+    with pytest.raises(AIProviderError, match="nvidia:api_key_required"):
+        await nvidia.pre_screen_draft(draft())
