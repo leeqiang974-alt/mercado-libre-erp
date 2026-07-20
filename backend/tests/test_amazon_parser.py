@@ -2,7 +2,7 @@ import pytest
 
 from app.services.amazon.collector import validate_amazon_snapshot
 from app.services.amazon.normalizer import normalize_amazon_product
-from app.services.amazon.parser import parse_amazon_html
+from app.services.amazon.parser import _normalize_measurement_label, parse_amazon_html
 
 
 HTML = """
@@ -104,6 +104,136 @@ def test_parse_amazon_measurements_preserves_three_decimal_values():
         "width": 0.125,
         "height": 0.25,
     } == parsed["measurements"]["product_dimensions"]
+
+
+@pytest.mark.parametrize(
+    (
+        "source_url",
+        "weight_label",
+        "weight",
+        "dimension_label",
+        "dimensions",
+        "field",
+        "expected_weight",
+        "expected_weight_unit",
+        "expected_length",
+    ),
+    [
+        (
+            "https://amazon.es/dp/B000TEST01",
+            "Peso del producto",
+            "1,5 kilogramos",
+            "Dimensiones del producto",
+            "30 x 20 x 10 centímetros",
+            "item_weight",
+            1.5,
+            "kg",
+            30.0,
+        ),
+        (
+            "https://amazon.com.br/dp/B000TEST01",
+            "Peso da embalagem",
+            "750 gramas",
+            "Dimensões da embalagem",
+            "40 x 30 x 20 centímetros",
+            "package_weight",
+            750.0,
+            "g",
+            40.0,
+        ),
+        (
+            "https://amazon.de/dp/B000TEST01",
+            "Artikelgewicht",
+            "1,25 Pfund",
+            "Produktabmessungen",
+            "12,5 x 8,5 x 4,5 Zentimeter",
+            "item_weight",
+            1.25,
+            "lb",
+            12.5,
+        ),
+        (
+            "https://amazon.fr/dp/B000TEST01",
+            "Poids du colis",
+            "2,5 kilogrammes",
+            "Dimensions du colis",
+            "35 x 25 x 15 centimètres",
+            "package_weight",
+            2.5,
+            "kg",
+            35.0,
+        ),
+        (
+            "https://amazon.it/dp/B000TEST01",
+            "Peso articolo",
+            "500 grammi",
+            "Dimensioni del prodotto",
+            "28 x 18 x 8 centimetri",
+            "item_weight",
+            500.0,
+            "g",
+            28.0,
+        ),
+        (
+            "https://amazon.nl/dp/B000TEST01",
+            "Productgewicht",
+            "600 gram",
+            "Productafmetingen",
+            "25 x 15 x 5 centimeter",
+            "item_weight",
+            600.0,
+            "g",
+            25.0,
+        ),
+        (
+            "https://amazon.co.jp/dp/B000TEST01",
+            "商品の重量",
+            "500 グラム",
+            "製品サイズ",
+            "30 x 20 x 10 センチメートル",
+            "item_weight",
+            500.0,
+            "g",
+            30.0,
+        ),
+    ],
+)
+def test_parse_amazon_localized_measurements(
+    source_url: str,
+    weight_label: str,
+    weight: str,
+    dimension_label: str,
+    dimensions: str,
+    field: str,
+    expected_weight: float,
+    expected_weight_unit: str,
+    expected_length: float,
+):
+    html = f"""
+    <span id="productTitle">Localized details</span>
+    <table id="productDetails_techSpec_section_1">
+      <tr><th>{weight_label}</th><td>{weight}</td></tr>
+      <tr><th>{dimension_label}</th><td>{dimensions}</td></tr>
+    </table>
+    """
+
+    parsed = parse_amazon_html(html, source_url)
+    dimension_field = "package_dimensions" if field == "package_weight" else "product_dimensions"
+
+    parsed_weight = parsed["measurements"][field]
+    parsed_dimensions = parsed["measurements"][dimension_field]
+
+    assert parsed_weight["source_label"] == weight_label
+    assert parsed_weight["value"] == expected_weight
+    assert parsed_weight["unit"] == expected_weight_unit
+    assert parsed_dimensions["source_label"] == dimension_label
+    assert parsed_dimensions["length"] == expected_length
+    assert parsed_dimensions["unit"] == "cm"
+
+
+def test_measurement_label_normalization_preserves_non_latin_case():
+    assert _normalize_measurement_label("Σ 商品") == "Σ商品"
+    assert _normalize_measurement_label("DIMENSÕES DO PRODUTO") == "dimensoesdoproduto"
 
 
 def test_normalize_amazon_product_creates_draft_defaults():

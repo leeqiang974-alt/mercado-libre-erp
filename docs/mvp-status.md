@@ -23,6 +23,7 @@ Implemented:
 - Saved drafts expose their Amazon ASIN and variant attributes so operators can distinguish otherwise identical titles.
 - Amazon specification tables and detail bullets produce structured item/package weights and product/package dimensions while retaining the original label/value; source review exposes this evidence on desktop and mobile.
 - Every numbered Amazon technical-specification table is scanned. Composite dimension rows can also supply an inline item/package weight, while a dedicated weight row always takes precedence regardless of HTML row order.
+- Structured measurements recognize conservative localized labels and units for Spanish, Brazilian Portuguese, German, French, Italian, Dutch, and Japanese Amazon detail tables. Latin diacritics are normalized without altering non-Latin scripts.
 - Selected-page measurements can suggest explicit Mercado Libre weight and dimension attributes only for the selected Amazon ASIN, preventing a sibling variant from inheriting unverified logistics data.
 - Verified Mercado Libre category metadata produces conservative Amazon-to-Mercado Libre attribute suggestions; exact enumerated matches preserve `value_id`, ambiguous list values require manual entry, and mapped optional attributes remain editable.
 - Listing configuration and publish validation enforce both `required` and `catalog_required` attributes, reject unknown category IDs and invalid enumerated value IDs when verified definitions are present, and translate common attribute failures into operator-facing messages.
@@ -79,7 +80,7 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 230 passed, with 5 PostgreSQL-only tests skipped in the default run.
+- Backend suite: 238 passed, with 5 PostgreSQL-only tests skipped in the default run.
 - Docker PostgreSQL integration run: 5 passed, including concurrent collection, publish-job, and source-variant draft deduplication plus atomic draft-version invalidation under simultaneous edits.
 - PostgreSQL migrations through `20260720_0021` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, review execution metadata, structured source snapshots, source-variant draft bindings, structured source measurements, provider usage/request telemetry, and encrypted integration credentials.
 - The complete Alembic chain upgraded to head and downgraded to base successfully on a disposable D-drive SQLite database.

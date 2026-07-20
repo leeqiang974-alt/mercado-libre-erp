@@ -18,7 +18,7 @@ The repository contains an operational local workflow for Amazon URL collection 
 
 ## Missing or Misleading Behavior
 
-- Amazon collection now reads high-resolution `colorImages` galleries and binds `colorToAsin` groups without cross-variant image leakage, including JSON5-style script objects. Discovered variants can be independently queued to obtain their own page evidence, and composite technical rows retain inline weights. Complete evidence still cannot be guaranteed for undocumented embedded formats or localized labels; selected-page measurements are never copied to sibling variants.
+- Amazon collection now reads high-resolution `colorImages` galleries and binds `colorToAsin` groups without cross-variant image leakage, including JSON5-style script objects. Discovered variants can be independently queued to obtain their own page evidence, composite technical rows retain inline weights, and major regional labels/units are normalized conservatively. Complete evidence still cannot be guaranteed for undocumented embedded formats or unrecognized locale-specific labels; selected-page measurements are never copied to sibling variants.
 - Amazon page structure and anti-automation challenges can still require an operator-provided HTML snapshot.
 - Store authorization, live metadata, AI providers, and live publishing are unconfigured in the running environment; encrypted credentials can now be entered from the Stores workspace without restarting API or workers.
 - Automated end-to-end tests mock external Amazon, AI, and Mercado Libre behavior; they prove internal orchestration, not live integration.
@@ -29,4 +29,4 @@ The repository contains an operational local workflow for Amazon URL collection 
 1. Configure a test Mercado Libre application and authorize one seller account for a controlled non-FULL publication.
 2. Configure Claude and NVIDIA credentials, run a real combined review, and retain provider/audit evidence.
 3. Verify live listing-type, category-attribute, shipping-preference, and post-publication responses for every target site used by the operator.
-4. Continue expanding Amazon fidelity for undocumented embedded formats, localized technical labels/units, and page-specific per-variant evidence.
+4. Continue expanding Amazon fidelity for undocumented embedded formats, remaining locale-specific labels/units, and page-specific per-variant evidence.

@@ -1,5 +1,6 @@
 import json
 import re
+import unicodedata
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
@@ -60,6 +61,17 @@ WEIGHT_UNITS = {
     "oz": "oz", "ounce": "oz", "ounces": "oz",
     "kg": "kg", "kilogram": "kg", "kilograms": "kg",
     "g": "g", "gram": "g", "grams": "g",
+    "libra": "lb", "libras": "lb", "livre": "lb", "livres": "lb",
+    "libbra": "lb", "libbre": "lb", "pfund": "lb",
+    "onza": "oz", "onzas": "oz", "onça": "oz", "onças": "oz",
+    "once": "oz", "onces": "oz", "oncia": "oz", "unzen": "oz",
+    "kilogramo": "kg", "kilogramos": "kg", "quilograma": "kg",
+    "quilogramas": "kg", "kilogramm": "kg", "kilogramme": "kg",
+    "kilogrammes": "kg", "chilogrammo": "kg", "chilogrammi": "kg",
+    "gramo": "g", "gramos": "g", "grama": "g", "gramas": "g",
+    "gramm": "g", "gramme": "g", "grammes": "g", "grammo": "g",
+    "grammi": "g", "ポンド": "lb", "オンス": "oz", "キログラム": "kg",
+    "グラム": "g",
 }
 DIMENSION_UNITS = {
     "in": "in", "inch": "in", "inches": "in",
@@ -67,7 +79,27 @@ DIMENSION_UNITS = {
     "mm": "mm", "millimeter": "mm", "millimeters": "mm",
     "ft": "ft", "foot": "ft", "feet": "ft",
     "m": "m", "meter": "m", "meters": "m",
+    "pulgada": "in", "pulgadas": "in", "polegada": "in", "polegadas": "in",
+    "zoll": "in", "pouce": "in", "pouces": "in", "pollice": "in",
+    "pollici": "in",
+    "centímetro": "cm", "centímetros": "cm", "centimetro": "cm",
+    "centimetri": "cm", "centimètre": "cm", "centimètres": "cm",
+    "zentimeter": "cm",
+    "milímetro": "mm", "milímetros": "mm", "millimetro": "mm",
+    "millimetri": "mm", "millimètre": "mm", "millimètres": "mm",
+    "pie": "ft", "pies": "ft", "pé": "ft", "pés": "ft", "fuss": "ft",
+    "fuß": "ft", "pied": "ft", "pieds": "ft", "piede": "ft", "piedi": "ft",
+    "voet": "ft", "voeten": "ft",
+    "metro": "m", "metros": "m", "mètre": "m", "mètres": "m",
+    "metri": "m", "インチ": "in", "センチメートル": "cm",
+    "ミリメートル": "mm", "フィート": "ft", "メートル": "m",
 }
+WEIGHT_UNIT_PATTERN = "|".join(
+    re.escape(unit) for unit in sorted(WEIGHT_UNITS, key=len, reverse=True)
+)
+DIMENSION_UNIT_PATTERN = "|".join(
+    re.escape(unit) for unit in sorted(DIMENSION_UNITS, key=len, reverse=True)
+)
 COMMA_DECIMAL_DOMAINS = {
     "amazon.com.br",
     "amazon.de",
@@ -582,13 +614,13 @@ def _extract_variants(
 
 def _parse_weight(raw: str, decimal_separator: str = ".") -> dict | None:
     match = re.search(
-        r"(?P<value>\d+(?:[.,]\d+)?)\s*(?P<unit>lb|lbs|pounds?|oz|ounces?|kg|kilograms?|g|grams?)\b",
+        rf"(?P<value>\d+(?:[.,]\d+)?)\s*(?P<unit>{WEIGHT_UNIT_PATTERN})\b",
         raw,
         re.IGNORECASE,
     )
     if not match:
         return None
-    unit = WEIGHT_UNITS.get(match.group("unit").lower())
+    unit = WEIGHT_UNITS.get(match.group("unit").casefold())
     if not unit:
         return None
     return {
@@ -603,13 +635,13 @@ def _parse_dimensions(raw: str, decimal_separator: str = ".") -> dict | None:
         r"(?P<length>\d+(?:[.,]\d+)?)\s*[x×]\s*"
         r"(?P<width>\d+(?:[.,]\d+)?)\s*[x×]\s*"
         r"(?P<height>\d+(?:[.,]\d+)?)\s*"
-        r"(?P<unit>inches?|in|centimeters?|cm|millimeters?|mm|feet|foot|ft|meters?|m)\b",
+        rf"(?P<unit>{DIMENSION_UNIT_PATTERN})\b",
         raw,
         re.IGNORECASE,
     )
     if not match:
         return None
-    unit = DIMENSION_UNITS.get(match.group("unit").lower())
+    unit = DIMENSION_UNITS.get(match.group("unit").casefold())
     if not unit:
         return None
     return {
@@ -636,6 +668,21 @@ def _parse_measurement_number(value: str, decimal_separator: str) -> float:
     return float("".join(parts))
 
 
+def _normalize_measurement_label(value: str) -> str:
+    normalized: list[str] = []
+    for character in value:
+        if "LATIN" in unicodedata.name(character, ""):
+            for folded in character.casefold():
+                normalized.extend(
+                    part
+                    for part in unicodedata.normalize("NFKD", folded)
+                    if part.isascii() and part.isalnum()
+                )
+        elif character.isalnum():
+            normalized.append(character)
+    return "".join(normalized)
+
+
 def _extract_measurements(
     technical_details: dict[str, str], source_url: str
 ) -> dict[str, dict]:
@@ -647,16 +694,57 @@ def _extract_measurements(
     weight_aliases = {
         "itemweight": ("item_weight", _parse_weight),
         "productweight": ("item_weight", _parse_weight),
+        "pesodelproducto": ("item_weight", _parse_weight),
+        "pesodelarticulo": ("item_weight", _parse_weight),
+        "pesodoitem": ("item_weight", _parse_weight),
+        "pesodoproduto": ("item_weight", _parse_weight),
+        "artikelgewicht": ("item_weight", _parse_weight),
+        "produktgewicht": ("item_weight", _parse_weight),
+        "poidsdelarticle": ("item_weight", _parse_weight),
+        "poidsduproduit": ("item_weight", _parse_weight),
+        "pesoarticolo": ("item_weight", _parse_weight),
+        "pesodelprodotto": ("item_weight", _parse_weight),
+        "productgewicht": ("item_weight", _parse_weight),
+        "gewichtvanitem": ("item_weight", _parse_weight),
+        "商品の重量": ("item_weight", _parse_weight),
         "packageweight": ("package_weight", _parse_weight),
         "shippingweight": ("package_weight", _parse_weight),
+        "pesodelpaquete": ("package_weight", _parse_weight),
+        "pesodaembalagem": ("package_weight", _parse_weight),
+        "paketgewicht": ("package_weight", _parse_weight),
+        "verpackungsgewicht": ("package_weight", _parse_weight),
+        "poidsducolis": ("package_weight", _parse_weight),
+        "pesodelpacco": ("package_weight", _parse_weight),
+        "pakketgewicht": ("package_weight", _parse_weight),
+        "梱包重量": ("package_weight", _parse_weight),
     }
     dimension_aliases = {
         "productdimensions": ("product_dimensions", _parse_dimensions),
         "itemdimensionslxwxh": ("product_dimensions", _parse_dimensions),
+        "dimensionesdelproducto": ("product_dimensions", _parse_dimensions),
+        "dimensionesdelarticulo": ("product_dimensions", _parse_dimensions),
+        "dimensoesdoproduto": ("product_dimensions", _parse_dimensions),
+        "dimensoesdoitem": ("product_dimensions", _parse_dimensions),
+        "produktabmessungen": ("product_dimensions", _parse_dimensions),
+        "artikelabmessungen": ("product_dimensions", _parse_dimensions),
+        "dimensionsduproduit": ("product_dimensions", _parse_dimensions),
+        "dimensionsdelarticle": ("product_dimensions", _parse_dimensions),
+        "dimensionidelprodotto": ("product_dimensions", _parse_dimensions),
+        "dimensioniarticolo": ("product_dimensions", _parse_dimensions),
+        "productafmetingen": ("product_dimensions", _parse_dimensions),
+        "製品寸法": ("product_dimensions", _parse_dimensions),
+        "製品サイズ": ("product_dimensions", _parse_dimensions),
         "packagedimensions": ("package_dimensions", _parse_dimensions),
+        "dimensionesdelpaquete": ("package_dimensions", _parse_dimensions),
+        "dimensoesdaembalagem": ("package_dimensions", _parse_dimensions),
+        "verpackungsabmessungen": ("package_dimensions", _parse_dimensions),
+        "dimensionsducolis": ("package_dimensions", _parse_dimensions),
+        "dimensionidelpacco": ("package_dimensions", _parse_dimensions),
+        "afmetingenpakket": ("package_dimensions", _parse_dimensions),
+        "梱包サイズ": ("package_dimensions", _parse_dimensions),
     }
     normalized_details = [
-        (label, raw, re.sub(r"[^a-z0-9]", "", label.lower()))
+        (label, raw, _normalize_measurement_label(label))
         for label, raw in technical_details.items()
     ]
     for aliases in (weight_aliases, dimension_aliases):
@@ -670,9 +758,8 @@ def _extract_measurements(
                 measurements[field] = {**parsed, "source_label": label}
 
     inline_weight_fields = {
-        "productdimensions": "item_weight",
-        "itemdimensionslxwxh": "item_weight",
-        "packagedimensions": "package_weight",
+        **{label: "item_weight" for label in dimension_aliases if dimension_aliases[label][0] == "product_dimensions"},
+        **{label: "package_weight" for label in dimension_aliases if dimension_aliases[label][0] == "package_dimensions"},
     }
     for label, raw, normalized_label in normalized_details:
         weight_field = inline_weight_fields.get(normalized_label)
