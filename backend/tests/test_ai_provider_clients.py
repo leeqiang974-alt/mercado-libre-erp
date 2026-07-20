@@ -6,7 +6,7 @@ import pytest
 from app.schemas.drafts import ProductDraftCreate
 from app.services.ai.claude_client import ClaudeReviewClient
 from app.services.ai.nvidia_client import NvidiaReviewClient
-from app.services.ai.provider_utils import AIProviderError
+from app.services.ai.provider_utils import AIProviderError, REVIEW_PROMPT_VERSION
 
 
 def draft():
@@ -63,6 +63,10 @@ async def test_claude_client_posts_messages_request_and_parses_review_json():
     assert requests[0].url == "https://api.anthropic.com/v1/messages"
     assert requests[0].headers["x-api-key"] == "claude-secret"
     assert requests[0].headers["anthropic-version"]
+    request_body = json.loads(requests[0].content)
+    assert REVIEW_PROMPT_VERSION == "meli-safety-v2"
+    assert "Never invent product facts" in request_body["messages"][0]["content"]
+    assert "Use pass only" in request_body["messages"][0]["content"]
 
 
 @pytest.mark.asyncio
@@ -183,6 +187,86 @@ async def test_provider_clients_classify_malformed_success_as_invalid_response(
     assert caught.value.http_status == 200
     assert caught.value.retryable is False
     assert caught.value.request_id == f"req_{provider}_malformed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "review_payload",
+    [
+        {
+            "risk_level": "low",
+            "reason_codes": [],
+            "reasons": [],
+            "suggested_changes": {},
+        },
+        {
+            "decision": "approve",
+            "risk_level": "low",
+            "reason_codes": [],
+            "reasons": [],
+            "suggested_changes": {},
+        },
+        {
+            "decision": "pass",
+            "risk_level": "unknown",
+            "reason_codes": [],
+            "reasons": [],
+            "suggested_changes": {},
+        },
+        {
+            "decision": "pass",
+            "risk_level": "low",
+            "reason_codes": [],
+            "reasons": [],
+            "suggested_changes": {},
+            "unexpected": True,
+        },
+        {
+            "decision": "pass",
+            "risk_level": "high",
+            "reason_codes": ["contradictory"],
+            "reasons": ["This must not pass."],
+            "suggested_changes": {},
+        },
+        {
+            "decision": "needs_human_review",
+            "risk_level": "low",
+            "reason_codes": ["contradictory"],
+            "reasons": ["This is not low risk."],
+            "suggested_changes": {},
+        },
+    ],
+)
+@pytest.mark.parametrize(
+    ("provider", "client_factory", "method_name"),
+    [
+        ("claude", ClaudeReviewClient, "review_draft"),
+        ("nvidia", NvidiaReviewClient, "pre_screen_draft"),
+    ],
+)
+async def test_provider_clients_fail_closed_on_invalid_review_contract(
+    review_payload, provider, client_factory, method_name
+):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        content = json.dumps(review_payload)
+        if provider == "claude":
+            body = {"content": [{"type": "text", "text": content}]}
+        else:
+            body = {"choices": [{"message": {"content": content}}]}
+        return httpx.Response(
+            200,
+            headers={"request-id": f"req_{provider}_invalid_contract"},
+            json=body,
+        )
+
+    client = client_factory(api_key="secret", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(AIProviderError) as caught:
+        await getattr(client, method_name)(draft())
+
+    assert caught.value.code == "invalid_response"
+    assert caught.value.http_status == 200
+    assert caught.value.request_id == f"req_{provider}_invalid_contract"
 
 
 @pytest.mark.asyncio

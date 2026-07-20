@@ -11,7 +11,7 @@ from app.schemas.drafts import ProductDraftCreate
 from app.schemas.reviews import BehavioralAuditResponse, ReviewResponse, ReviewResultRead
 from app.services.ai.claude_client import ClaudeReviewClient
 from app.services.ai.nvidia_client import NvidiaReviewClient
-from app.services.ai.provider_utils import AIProviderError
+from app.services.ai.provider_utils import AIProviderError, BEHAVIORAL_AUDIT_PROMPT_VERSION
 from app.services.ai.review_policy import review_draft_locally
 from app.services.audit_events import create_audit_event
 from app.services.draft_listing_configs import build_configured_draft
@@ -170,10 +170,7 @@ async def behavioral_audit(
                         f"{getattr(nvidia_client, 'model', '')}+"
                         f"{getattr(claude_client, 'model', '')}"
                     ),
-                    prompt_version=(
-                        f"{getattr(nvidia_client, 'prompt_version', '')}+"
-                        f"{getattr(claude_client, 'prompt_version', '')}"
-                    ),
+                    prompt_version=BEHAVIORAL_AUDIT_PROMPT_VERSION,
                     duration_ms=nvidia_duration_ms + claude_duration_ms,
                 ),
             ],

@@ -115,6 +115,7 @@ def seed_publish_review(testing_session) -> int:
         row = ReviewResult(
             product_draft_id=1,
             provider="claude+nvidia_behavioral_audit",
+            prompt_version="meli-behavioral-audit-v2",
             risk_level="low",
             decision=ReviewDecision.PASS,
             reasons_json={"reason_codes": [], "reasons": []},
@@ -175,6 +176,30 @@ def test_draft_approval_requires_current_claude_nvidia_pass():
         assert db.query(ProductDraftApproval).count() == 0
 
 
+def test_draft_approval_rejects_pass_from_obsolete_review_contract():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        draft = db.get(ProductDraft, 1)
+        db.add(
+            ReviewResult(
+                product_draft_id=1,
+                provider="claude+nvidia_behavioral_audit",
+                prompt_version="meli-safety-v1+meli-safety-v1",
+                risk_level="low",
+                decision=ReviewDecision.PASS,
+                reasons_json={"reason_codes": [], "reasons": []},
+                suggested_changes_json={},
+                draft_version=draft.content_version,
+            )
+        )
+        db.commit()
+
+    response = client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+
+    assert response.status_code == 422
+    assert "current_claude_nvidia_pass_required_before_approval" in response.text
+
+
 def test_draft_approval_requires_latest_behavioral_review_to_pass():
     client, testing_session = make_client()
     seed_publish_review(testing_session)
@@ -184,6 +209,7 @@ def test_draft_approval_requires_latest_behavioral_review_to_pass():
             ReviewResult(
                 product_draft_id=1,
                 provider="claude+nvidia_behavioral_audit",
+                prompt_version="meli-behavioral-audit-v2",
                 risk_level="high",
                 decision=ReviewDecision.BLOCK,
                 reasons_json={"reason_codes": ["restricted"], "reasons": ["blocked"]},
@@ -216,6 +242,7 @@ def test_newer_behavioral_review_invalidates_old_review_and_approval(monkeypatch
             ReviewResult(
                 product_draft_id=1,
                 provider="claude+nvidia_behavioral_audit",
+                prompt_version="meli-behavioral-audit-v2",
                 risk_level="high",
                 decision=ReviewDecision.BLOCK,
                 reasons_json={"reason_codes": ["restricted"], "reasons": ["blocked"]},

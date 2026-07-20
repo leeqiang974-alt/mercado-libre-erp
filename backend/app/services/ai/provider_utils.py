@@ -1,12 +1,25 @@
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 import json
+from typing import Literal
 
 import httpx
+from pydantic import BaseModel, ConfigDict
 
 from app.schemas.reviews import ReviewResponse
 
-REVIEW_PROMPT_VERSION = "meli-safety-v1"
+REVIEW_PROMPT_VERSION = "meli-safety-v2"
+BEHAVIORAL_AUDIT_PROMPT_VERSION = "meli-behavioral-audit-v2"
+
+
+class ProviderReviewPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    decision: Literal["pass", "needs_human_review", "block"]
+    risk_level: Literal["low", "medium", "high"]
+    reason_codes: list[str]
+    reasons: list[str]
+    suggested_changes: dict[str, object]
 
 
 class AIProviderError(RuntimeError):
@@ -110,21 +123,35 @@ def _retry_after_seconds(value: str | None) -> int | None:
 
 
 def parse_review_json(provider: str, text: str) -> ReviewResponse:
-    data = json.loads(text)
+    data = ProviderReviewPayload.model_validate(json.loads(text))
     return ReviewResponse(
         provider=provider,
-        decision=data.get("decision", "needs_human_review"),
-        risk_level=data.get("risk_level", "medium"),
-        reason_codes=data.get("reason_codes", []),
-        reasons=data.get("reasons", []),
-        suggested_changes=data.get("suggested_changes", {}),
+        decision=data.decision,
+        risk_level=data.risk_level,
+        reason_codes=data.reason_codes,
+        reasons=data.reasons,
+        suggested_changes=data.suggested_changes,
     )
 
 
 def review_prompt(draft_json: str) -> str:
     return (
-        "Review this marketplace product draft for Mercado Libre listing safety. "
-        "Return only JSON with keys: decision, risk_level, reason_codes, reasons, suggested_changes. "
-        "Allowed decision values: pass, needs_human_review, block.\n\n"
+        "You are a conservative pre-publication safety reviewer for a Mercado Libre listing.\n"
+        "Assess only evidence present in the draft. Never invent product facts, certifications, "
+        "brand authorization, image contents, or legal conclusions from URLs alone.\n"
+        "Check for: prohibited or restricted goods; unsupported medical, safety, performance, or "
+        "guarantee claims; trademark, counterfeit, replica, and authorization risk; contradictions "
+        "between source and target fields; missing or misleading identity, price, currency, stock, "
+        "category, description, or pictures; personal data; and content that needs local-market "
+        "or category-specific human verification.\n"
+        "Use block for clearly prohibited content, material contradictions, or missing publish-critical "
+        "evidence. Use needs_human_review whenever material safety or compliance cannot be proven from "
+        "the supplied evidence. Use pass only when no material issue or uncertainty is identified.\n"
+        "Return exactly one JSON object with all five keys and no markdown or extra keys: "
+        "decision, risk_level, reason_codes, reasons, suggested_changes. "
+        "decision must be pass, needs_human_review, or block. risk_level must be low, medium, or high. "
+        "The only valid decision/risk combinations are pass/low, needs_human_review/medium, "
+        "needs_human_review/high, and block/high. "
+        "reason_codes and reasons must be arrays of strings. suggested_changes must be an object.\n\n"
         f"Draft JSON:\n{draft_json}"
     )

@@ -251,7 +251,7 @@ def test_behavioral_audit_persists_both_provider_results_and_orchestration_audit
         assert [row.prompt_version for row in rows] == [
             "nvidia-prompt-v3",
             "claude-prompt-v2",
-            "nvidia-prompt-v3+claude-prompt-v2",
+            "meli-behavioral-audit-v2",
         ]
         assert all(row.duration_ms >= 0 for row in rows)
         assert all(row.provider_status == "completed" for row in rows)

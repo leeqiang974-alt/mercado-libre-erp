@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.models.product_draft import ProductDraft
 from app.models.review_result import ReviewDecision, ReviewResult
 from app.schemas.reviews import ReviewResponse, ReviewResultRead
+from app.services.ai.provider_utils import BEHAVIORAL_AUDIT_PROMPT_VERSION
 from app.services.audit_events import create_audit_event
 
 
@@ -255,6 +256,7 @@ def get_latest_behavioral_review(db: Session, draft: ProductDraft) -> ReviewResu
             ReviewResult.product_draft_id == draft.id,
             ReviewResult.draft_version == draft.content_version,
             ReviewResult.provider == "claude+nvidia_behavioral_audit",
+            ReviewResult.prompt_version == BEHAVIORAL_AUDIT_PROMPT_VERSION,
         )
         .order_by(ReviewResult.id.desc())
         .limit(1)

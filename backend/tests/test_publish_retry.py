@@ -97,6 +97,7 @@ def make_client():
                 id=1,
                 product_draft_id=1,
                 provider="claude+nvidia_behavioral_audit",
+                prompt_version="meli-behavioral-audit-v2",
                 risk_level="low",
                 decision=ReviewDecision.PASS,
                 reasons_json={"reason_codes": [], "reasons": []},
@@ -304,6 +305,7 @@ def test_retry_preflight_failure_keeps_terminal_job_state():
             ReviewResult(
                 product_draft_id=1,
                 provider="claude+nvidia_behavioral_audit",
+                prompt_version="meli-behavioral-audit-v2",
                 risk_level="high",
                 decision=ReviewDecision.BLOCK,
                 reasons_json={"reason_codes": ["new_block"], "reasons": ["blocked"]},

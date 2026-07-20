@@ -28,6 +28,7 @@
 - Treat Mercado Libre category attributes as verified only when the cache explicitly records `verified: true`; cache presence, non-empty definitions, and legacy saved configurations must never bypass category validation at save, review, preview, queue, retry, worker, or execute boundaries.
 - Treat a lost or ambiguous Mercado Libre create-item response as an unknown outcome that requires store reconciliation; never retry it automatically.
 - For local Mercado Libre marketplace items, create `/items` without `description`, then upload plain text through `/items/{item_id}/description`. Reconcile ambiguous description responses with GET; if the approved description cannot be proven, close the new item, retain its item id, and never create a replacement automatically.
+- Claude and NVIDIA review responses are a publish gate, so parse them through a versioned strict schema. Missing fields, extra fields, unknown decisions or risk levels, and wrong value types must fail as `invalid_response`; never default an unrecognized provider result to `pass` or `low`.
 - Treat operator-provided Amazon HTML as a manual source. Require the requested ASIN to match a strong page identity signal, and never label it as independently collected.
 - Preserve Amazon measurement labels and raw values as source evidence. Never copy selected-page measurements to a different ASIN variant; only map dimensions or weights when the draft is bound to the page's selected ASIN.
 - Live publishing requires PostgreSQL row locking. SQLite is allowed only while live publishing is disabled.

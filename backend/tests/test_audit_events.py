@@ -92,6 +92,7 @@ def make_client():
                     id=1,
                     product_draft_id=draft.id,
                     provider="claude+nvidia_behavioral_audit",
+                    prompt_version="meli-behavioral-audit-v2",
                     risk_level="low",
                     decision=ReviewDecision.PASS,
                     reasons_json={"reason_codes": [], "reasons": []},

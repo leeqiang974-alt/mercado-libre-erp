@@ -14,6 +14,7 @@ The repository contains an operational local workflow for Amazon URL collection 
 - Mercado Libre publishing supports all configured sites and Classic/Premium offers while excluding FULL logistics before and after item creation.
 - Publish outcomes that may have created an item but cannot be confirmed are quarantined for manual reconciliation and cannot be retried automatically.
 - Claude and NVIDIA failures are explicit. Only the latest persisted combined behavioral audit can satisfy approval and publishing gates.
+- Claude and NVIDIA output follows a versioned strict schema. Unknown decisions or risk levels, missing/extra fields, and wrong types fail closed instead of being aggregated as a pass.
 - PostgreSQL and clean SQLite migrations, backend tests, frontend production build, and desktop/mobile browser smoke checks pass.
 
 ## Missing or Misleading Behavior
