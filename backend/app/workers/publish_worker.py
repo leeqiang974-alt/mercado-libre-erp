@@ -1,4 +1,5 @@
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -21,7 +22,7 @@ from app.services.meli.publisher import (
     validate_store_site_match,
 )
 from app.services.meli.token_vault import resolve_fresh_store_access_token
-from app.services.publish_jobs import complete_publish_job
+from app.services.publish_jobs import complete_publish_job, recover_stale_publish_jobs
 from app.services.reviews import get_publish_review
 
 Publisher = Callable[..., Awaitable[PublishExecutionResult]]
@@ -35,21 +36,34 @@ async def run_pending_publish_jobs(
     allow_live_publish: bool | None = None,
     token_encryption_key: str | None = None,
 ) -> WorkerSummary:
+    recovered = recover_stale_publish_jobs(db, get_settings().job_stale_after_seconds)
     jobs = db.scalars(
         select(PublishJob)
         .where(PublishJob.status == PublishJobStatus.PENDING)
         .order_by(PublishJob.id)
         .limit(limit)
     ).all()
-    summary = {"processed": 0, "published": 0, "blocked": 0, "failed": 0}
+    summary = {
+        "processed": 0,
+        "published": 0,
+        "blocked": 0,
+        "failed": 0,
+        "recovered": recovered,
+    }
     for job in jobs:
-        result = await run_pending_publish_job(
-            db=db,
-            job_id=job.id,
-            publisher=publisher,
-            allow_live_publish=allow_live_publish,
-            token_encryption_key=token_encryption_key,
-        )
+        try:
+            result = await run_pending_publish_job(
+                db=db,
+                job_id=job.id,
+                publisher=publisher,
+                allow_live_publish=allow_live_publish,
+                token_encryption_key=token_encryption_key,
+            )
+        except HTTPException as exc:
+            if exc.status_code != 409:
+                raise
+            db.rollback()
+            continue
         summary["processed"] += 1
         if result.status == "published":
             summary["published"] += 1
@@ -79,9 +93,10 @@ async def run_pending_publish_job(
         existing = db.get(PublishJob, job_id)
         if existing is None:
             raise HTTPException(status_code=404, detail="Publish job not found.")
-        raise HTTPException(status_code=400, detail="Publish job is not pending.")
+        raise HTTPException(status_code=409, detail="Publish job was claimed by another worker.")
 
     job.status = PublishJobStatus.VALIDATING
+    job.started_at = datetime.now(UTC)
     db.commit()
     db.refresh(job)
 
@@ -170,18 +185,24 @@ async def _publish_job(
     if not access_token:
         return PublishExecutionResult(status="blocked", errors=["store_access_token_required"])
     publish = publisher or execute_publish
-    return await publish(
-        client=MercadoLibreClient(access_token=access_token),
-        seller_id=store.seller_id,
-        draft=draft,
-        review=review,
-        listing_choice=listing_choice,
-        valid_listing_type_ids=valid_listing_type_ids,
-        human_approved=human_approved,
-        allow_live_publish=(
-            settings.allow_live_publish if allow_live_publish is None else allow_live_publish
-        ),
-    )
+    try:
+        return await publish(
+            client=MercadoLibreClient(access_token=access_token),
+            seller_id=store.seller_id,
+            draft=draft,
+            review=review,
+            listing_choice=listing_choice,
+            valid_listing_type_ids=valid_listing_type_ids,
+            human_approved=human_approved,
+            allow_live_publish=(
+                settings.allow_live_publish if allow_live_publish is None else allow_live_publish
+            ),
+        )
+    except Exception:
+        return PublishExecutionResult(
+            status="blocked",
+            errors=["publish_outcome_unknown_manual_reconciliation_required"],
+        )
 
 
 def _create_oauth_client() -> MercadoLibreOAuthClient:
@@ -212,6 +233,7 @@ def _audit_publish_job(db: Session, job: PublishJob, result: PublishExecutionRes
             "item_id": result.item_id,
             "permalink": result.permalink,
             "shipping_mode": result.shipping_mode,
+            "shipping_logistic_type": result.shipping_logistic_type,
             "errors": result.errors,
             "store_id": job.store_id,
         },

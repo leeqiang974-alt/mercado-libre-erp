@@ -7,7 +7,11 @@ from pydantic import BaseModel
 
 from app.schemas.drafts import ProductDraftCreate
 from app.services.amazon.normalizer import normalize_amazon_product
-from app.services.amazon.parser import parse_amazon_html
+from app.services.amazon.parser import (
+    extract_amazon_asin,
+    extract_snapshot_asins,
+    parse_amazon_html,
+)
 
 
 class CollectionStatus(str, Enum):
@@ -61,12 +65,38 @@ def is_allowed_amazon_url(url: str) -> bool:
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return False
     host = parsed.hostname.lower().rstrip(".")
-    return any(host == domain or host.endswith(f".{domain}") for domain in AMAZON_DOMAINS)
+    return bool(
+        extract_amazon_asin(url)
+        and any(host == domain or host.endswith(f".{domain}") for domain in AMAZON_DOMAINS)
+    )
 
 
 def requires_manual_action(html: str) -> bool:
     lowered = html.lower()
     return any(marker in lowered for marker in CHALLENGE_MARKERS)
+
+
+def validate_amazon_snapshot(source_url: str, html: str) -> dict:
+    if not is_allowed_amazon_url(source_url):
+        raise ValueError("only_public_amazon_product_urls_allowed")
+    if requires_manual_action(html):
+        raise ValueError("amazon_challenge_snapshot_rejected")
+    parsed = parse_amazon_html(html, source_url)
+    missing: list[str] = []
+    if not parsed["title"]:
+        missing.append("title")
+    if parsed["price"]["amount"] is None:
+        missing.append("price")
+    elif not parsed["price"]["currency"]:
+        missing.append("source_currency")
+    if not parsed["images"]:
+        missing.append("image")
+    if missing:
+        raise ValueError(f"amazon_snapshot_incomplete:{','.join(missing)}")
+    expected_asin = extract_amazon_asin(source_url)
+    if expected_asin not in extract_snapshot_asins(html):
+        raise ValueError("amazon_snapshot_identity_mismatch")
+    return parsed
 
 
 async def fetch_amazon_html_with_playwright(url: str) -> str:
@@ -128,9 +158,18 @@ async def collect_amazon_page(
                 source_url=source_url,
                 message="Amazon challenge detected; manual action required.",
             )
-        parsed = parse_amazon_html(html, source_url)
-        if parsed["title"] and parsed["price"]["amount"] is not None and parsed["images"]:
+        try:
+            parsed = validate_amazon_snapshot(source_url, html)
             break
+        except ValueError as exc:
+            if str(exc).startswith("amazon_snapshot_incomplete:"):
+                parsed = parse_amazon_html(html, source_url)
+                continue
+            return CollectionResult(
+                status=CollectionStatus.FAILED,
+                source_url=source_url,
+                message=f"Amazon page identity validation failed: {exc}",
+            )
     else:
         if last_error and parsed is None:
             return CollectionResult(

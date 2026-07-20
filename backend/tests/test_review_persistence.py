@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -212,3 +214,85 @@ def test_behavioral_audit_persists_both_provider_results_and_orchestration_audit
         assert body["aggregate"]["review_result_id"] == 3
         audit = db.query(AuditEvent).filter(AuditEvent.action == "review.behavioral_audit.completed").one()
         assert audit.actor_id == "claude+nvidia"
+
+
+def test_claude_review_rejects_result_when_draft_changes_while_provider_waits(monkeypatch):
+    client, testing_session = make_client()
+
+    class VersionChangingClaudeClient:
+        def __init__(self, api_key: str, model: str = ""):
+            pass
+
+        async def review_draft(self, draft):
+            await asyncio.sleep(0)
+            with testing_session() as other_db:
+                persisted = other_db.get(ProductDraft, 1)
+                persisted.content_version += 1
+                other_db.commit()
+            return ReviewResponse(
+                provider="claude",
+                decision="pass",
+                risk_level="low",
+                reason_codes=[],
+                reasons=[],
+            )
+
+    monkeypatch.setattr(reviews, "ClaudeReviewClient", VersionChangingClaudeClient)
+
+    response = client.post("/api/reviews/claude?product_draft_id=1", json=draft_payload())
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "draft_content_version_changed_during_review"
+    with testing_session() as db:
+        assert db.query(ReviewResult).count() == 0
+
+
+def test_behavioral_audit_rejects_all_results_when_draft_changes_while_provider_waits(
+    monkeypatch,
+):
+    client, testing_session = make_client()
+
+    class FakeNvidiaClient:
+        def __init__(self, api_key: str, model: str = ""):
+            pass
+
+        async def pre_screen_draft(self, draft):
+            return ReviewResponse(
+                provider="nvidia",
+                decision="pass",
+                risk_level="low",
+                reason_codes=[],
+                reasons=[],
+            )
+
+    class VersionChangingClaudeClient:
+        def __init__(self, api_key: str, model: str = ""):
+            pass
+
+        async def review_draft(self, draft):
+            await asyncio.sleep(0)
+            with testing_session() as other_db:
+                persisted = other_db.get(ProductDraft, 1)
+                persisted.content_version += 1
+                other_db.commit()
+            return ReviewResponse(
+                provider="claude",
+                decision="pass",
+                risk_level="low",
+                reason_codes=[],
+                reasons=[],
+            )
+
+    monkeypatch.setattr(reviews, "NvidiaReviewClient", FakeNvidiaClient)
+    monkeypatch.setattr(reviews, "ClaudeReviewClient", VersionChangingClaudeClient)
+
+    response = client.post(
+        "/api/reviews/behavioral-audit?product_draft_id=1",
+        json=draft_payload(),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "draft_content_version_changed_during_review"
+    with testing_session() as db:
+        assert db.query(ReviewResult).count() == 0
+        assert db.query(AuditEvent).count() == 0

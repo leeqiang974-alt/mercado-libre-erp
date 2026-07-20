@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import asyncio
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -45,14 +46,14 @@ def test_amazon_url_collection_job_can_be_created_and_listed():
 
     response = client.post(
         "/api/imports/amazon-url/jobs",
-        json={"source_url": "https://www.amazon.com/dp/B000TEST", "target_site_id": "MLM"},
+        json={"source_url": "https://www.amazon.com/dp/B000TEST01", "target_site_id": "MLM"},
     )
 
     assert response.status_code == 200
     assert response.json()["status"] == "pending"
     list_response = client.get("/api/imports/amazon-url/jobs")
     assert list_response.status_code == 200
-    assert list_response.json()[0]["source_url"] == "https://www.amazon.com/dp/B000TEST"
+    assert list_response.json()[0]["source_url"] == "https://www.amazon.com/dp/B000TEST01"
     with testing_session() as db:
         job = db.query(CollectionJob).one()
         assert job.status == CollectionJobStatus.PENDING
@@ -78,7 +79,7 @@ def test_running_collection_job_persists_source_and_draft(monkeypatch):
     client, testing_session = make_client()
     create_response = client.post(
         "/api/imports/amazon-url/jobs",
-        json={"source_url": "https://www.amazon.com/dp/B000TEST", "target_site_id": "MLM"},
+        json={"source_url": "https://www.amazon.com/dp/B000TEST01", "target_site_id": "MLM"},
     )
 
     response = client.post(f"/api/imports/amazon-url/jobs/{create_response.json()['id']}/run")
@@ -107,7 +108,7 @@ def test_running_collection_job_records_manual_action(monkeypatch):
     client, testing_session = make_client()
     create_response = client.post(
         "/api/imports/amazon-url/jobs",
-        json={"source_url": "https://www.amazon.com/dp/B000TEST", "target_site_id": "MLM"},
+        json={"source_url": "https://www.amazon.com/dp/B000TEST01", "target_site_id": "MLM"},
     )
 
     response = client.post(f"/api/imports/amazon-url/jobs/{create_response.json()['id']}/run")
@@ -121,3 +122,88 @@ def test_running_collection_job_records_manual_action(monkeypatch):
         assert source.raw_status == SourceProductStatus.NEEDS_MANUAL_ACTION
         assert "manual action" in source.collection_error
         assert db.query(ProductDraft).count() == 0
+
+
+def test_collection_job_records_unexpected_collector_failure(monkeypatch):
+    async def fake_collect(source_url: str, target_site_id: str):
+        raise RuntimeError("browser process exited")
+
+    monkeypatch.setattr(imports, "collect_amazon_page", fake_collect)
+    client, testing_session = make_client()
+    create_response = client.post(
+        "/api/imports/amazon-url/jobs",
+        json={"source_url": "https://www.amazon.com/dp/B000TEST01", "target_site_id": "MLM"},
+    )
+
+    response = client.post(f"/api/imports/amazon-url/jobs/{create_response.json()['id']}/run")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert "browser process exited" in response.json()["message"]
+    with testing_session() as db:
+        job = db.query(CollectionJob).one()
+        source = db.query(SourceProduct).one()
+        assert job.status == CollectionJobStatus.FAILED
+        assert job.completed_at is not None
+        assert source.raw_status == SourceProductStatus.FAILED
+
+
+def test_completed_collection_job_is_idempotent(monkeypatch):
+    calls = 0
+
+    async def fake_collect(source_url: str, target_site_id: str):
+        nonlocal calls
+        calls += 1
+        return CollectionResult(
+            status=CollectionStatus.COLLECTED,
+            source_url=source_url,
+            message="collected",
+            draft=ProductDraftCreate(
+                title="One Draft",
+                target_site_id=target_site_id,
+                price=10,
+                currency="USD",
+                stock=1,
+                image_urls=[],
+            ),
+        )
+
+    monkeypatch.setattr(imports, "collect_amazon_page", fake_collect)
+    client, testing_session = make_client()
+    create_response = client.post(
+        "/api/imports/amazon-url/jobs",
+        json={"source_url": "https://www.amazon.com/dp/B000TEST01", "target_site_id": "MLM"},
+    )
+    run_url = f"/api/imports/amazon-url/jobs/{create_response.json()['id']}/run"
+
+    first = client.post(run_url)
+    second = client.post(run_url)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["draft_id"] == first.json()["draft_id"]
+    assert calls == 1
+    with testing_session() as db:
+        assert db.query(ProductDraft).count() == 1
+        assert db.query(SourceProduct).count() == 1
+
+
+def test_collection_job_timeout_is_persisted_as_safe_failure(monkeypatch):
+    async def slow_collect(source_url: str, target_site_id: str):
+        await asyncio.sleep(1)
+
+    monkeypatch.setattr(imports, "collect_amazon_page", slow_collect)
+    monkeypatch.setattr(imports.settings, "job_execution_timeout_seconds", 0.01)
+    client, testing_session = make_client()
+    create_response = client.post(
+        "/api/imports/amazon-url/jobs",
+        json={"source_url": "https://www.amazon.com/dp/B000TEST01", "target_site_id": "MLM"},
+    )
+
+    response = client.post(f"/api/imports/amazon-url/jobs/{create_response.json()['id']}/run")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["message"] == "Collection timed out; retry is safe."
+    with testing_session() as db:
+        assert db.query(CollectionJob).one().status == CollectionJobStatus.FAILED

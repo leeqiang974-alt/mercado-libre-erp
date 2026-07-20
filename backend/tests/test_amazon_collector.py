@@ -4,6 +4,7 @@ from app.services.amazon.collector import CollectionStatus, collect_amazon_page
 
 
 NORMAL_HTML = """
+<input id="ASIN" value="B000TEST01" />
 <span id="productTitle">Collector Bottle</span>
 <span class="a-price"><span class="a-offscreen">$12.50</span></span>
 <img id="landingImage" src="https://example.com/bottle.jpg" />
@@ -13,11 +14,11 @@ NORMAL_HTML = """
 @pytest.mark.asyncio
 async def test_collect_amazon_page_uses_fetcher_and_returns_draft():
     async def fake_fetcher(url: str) -> str:
-        assert url == "https://www.amazon.com/dp/B000TEST"
+        assert url == "https://www.amazon.com/dp/B000TEST01"
         return NORMAL_HTML
 
     result = await collect_amazon_page(
-        "https://www.amazon.com/dp/B000TEST",
+        "https://www.amazon.com/dp/B000TEST01",
         target_site_id="MLM",
         html_fetcher=fake_fetcher,
     )
@@ -37,7 +38,7 @@ async def test_collect_amazon_page_marks_captcha_as_manual_action():
         return "<html><title>Robot Check</title><form action='/errors/validateCaptcha'></form></html>"
 
     result = await collect_amazon_page(
-        "https://www.amazon.com/dp/B000TEST",
+        "https://www.amazon.com/dp/B000TEST01",
         target_site_id="MLM",
         html_fetcher=fake_fetcher,
     )
@@ -68,7 +69,7 @@ async def test_collect_amazon_page_marks_incomplete_page_for_manual_action():
         return "<html><title>Sign in</title></html>"
 
     result = await collect_amazon_page(
-        "https://www.amazon.com/dp/B000TEST",
+        "https://www.amazon.com/dp/B000TEST01",
         target_site_id="MLM",
         html_fetcher=fake_fetcher,
     )
@@ -89,7 +90,7 @@ async def test_collect_amazon_page_retries_transient_incomplete_page():
         return NORMAL_HTML
 
     result = await collect_amazon_page(
-        "https://www.amazon.com/dp/B000TEST",
+        "https://www.amazon.com/dp/B000TEST01",
         target_site_id="MLM",
         html_fetcher=fake_fetcher,
     )

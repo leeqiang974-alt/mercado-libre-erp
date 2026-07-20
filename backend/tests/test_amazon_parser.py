@@ -18,7 +18,7 @@ HTML = """
 
 
 def test_parse_amazon_html_extracts_core_fields():
-    parsed = parse_amazon_html(HTML, "https://www.amazon.com/dp/B000TEST")
+    parsed = parse_amazon_html(HTML, "https://www.amazon.com/dp/B000TEST01")
     assert parsed["title"] == "Stainless Water Bottle"
     assert parsed["price"]["amount"] == 19.99
     assert parsed["brand"] == "TrailPro"
@@ -28,7 +28,7 @@ def test_parse_amazon_html_extracts_core_fields():
 
 
 def test_normalize_amazon_product_creates_draft_defaults():
-    parsed = parse_amazon_html(HTML, "https://www.amazon.com/dp/B000TEST")
+    parsed = parse_amazon_html(HTML, "https://www.amazon.com/dp/B000TEST01")
     draft = normalize_amazon_product(parsed, target_site_id="MLM")
     assert draft.title == "Stainless Water Bottle"
     assert draft.target_site_id == "MLM"

@@ -21,7 +21,16 @@ DOMAIN_CURRENCIES = {
     "amazon.nl": "EUR",
     "amazon.co.jp": "JPY",
     "amazon.com.au": "AUD",
+    "amazon.in": "INR",
+    "amazon.sg": "SGD",
+    "amazon.ae": "AED",
+    "amazon.sa": "SAR",
 }
+
+ASIN_PATTERN = re.compile(
+    r"/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})(?:[/?]|$)",
+    re.IGNORECASE,
+)
 
 EXPLICIT_CURRENCIES = {
     "US$": "USD",
@@ -51,6 +60,25 @@ def _currency_for_url(source_url: str) -> str:
         if host == domain or host.endswith(f".{domain}"):
             return currency
     return ""
+
+
+def extract_amazon_asin(source_url: str) -> str | None:
+    match = ASIN_PATTERN.search(urlparse(source_url).path)
+    return match.group(1).upper() if match else None
+
+
+def extract_snapshot_asins(html: str) -> set[str]:
+    soup = BeautifulSoup(html, "html.parser")
+    candidates: set[str] = set()
+    asin_input = soup.select_one("#ASIN")
+    if asin_input and asin_input.get("value"):
+        candidates.add(str(asin_input["value"]).strip().upper())
+    canonical = soup.select_one("link[rel='canonical']")
+    if canonical and canonical.get("href"):
+        canonical_asin = extract_amazon_asin(str(canonical["href"]))
+        if canonical_asin:
+            candidates.add(canonical_asin)
+    return {candidate for candidate in candidates if re.fullmatch(r"[A-Z0-9]{10}", candidate)}
 
 
 def _normalize_number(value: str) -> float:

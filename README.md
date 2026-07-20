@@ -94,4 +94,4 @@ python -m app.worker --queue publish --loop --interval 30 --limit 10
 - Persist local, Claude, and NVIDIA review results against saved product drafts.
 - Persist and list audit events for AI review and publish execution actions.
 - List review history for a saved product draft from the frontend.
-- Use Claude/NVIDIA provider adapters when `CLAUDE_API_KEY` or `NVIDIA_API_KEY` is configured; otherwise they safely fall back to local policy.
+- Use Claude/NVIDIA provider adapters only when their API keys are configured. Missing keys or provider failures are surfaced explicitly and cannot satisfy the combined publish-review gate.

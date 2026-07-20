@@ -33,3 +33,11 @@ class MercadoLibreClient:
             )
             response.raise_for_status()
             return response.json()
+
+    async def put(self, path: str, payload: dict) -> dict:
+        async with httpx.AsyncClient(transport=self.transport, timeout=self.timeout) as client:
+            response = await client.put(
+                f"{self.base_url}{path}", json=payload, headers=self._headers()
+            )
+            response.raise_for_status()
+            return response.json()

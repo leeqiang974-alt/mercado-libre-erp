@@ -32,4 +32,5 @@ class PublishJob(Base):
     meli_item_id: Mapped[str] = mapped_column(String(80), default="")
     permalink: Mapped[str] = mapped_column(String(500), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -76,6 +76,7 @@ def make_client():
                     status="approved",
                     approved_by="operator",
                     draft_version=1,
+                    review_result_id=1,
                 ),
                 ReviewResult(
                     id=1,

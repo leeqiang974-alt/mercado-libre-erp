@@ -79,6 +79,7 @@ def make_client():
                 status="approved",
                 approved_by="operator",
                 note="approved",
+                review_result_id=1,
             )
         )
         db.add(
@@ -162,14 +163,12 @@ def test_blocked_publish_job_can_be_retried_from_saved_draft_config(monkeypatch)
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "published"
-    assert body["job_id"] == 2
+    assert body["job_id"] == 1
     with testing_session() as db:
-        original = db.get(PublishJob, 1)
-        retry = db.get(PublishJob, 2)
+        retry = db.get(PublishJob, 1)
         retry_audit = (
             db.query(AuditEvent).filter(AuditEvent.action == "publish.retry_requested").one()
         )
-        assert original.status == PublishJobStatus.BLOCKED
         assert retry.status == PublishJobStatus.PUBLISHED
         assert retry.meli_item_id == "MLM999"
         assert retry.request_summary_json["review_provider"] == "claude+nvidia_behavioral_audit"
@@ -195,3 +194,60 @@ def test_published_publish_job_cannot_be_retried():
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Only blocked or failed publish jobs can be retried."
+
+
+def test_unknown_publish_outcome_cannot_be_retried():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        db.add(
+            PublishJob(
+                product_draft_id=1,
+                store_id=1,
+                requested_by="operator",
+                status=PublishJobStatus.BLOCKED,
+                request_summary_json=job_summary(),
+                response_summary_json={
+                    "errors": ["publish_outcome_unknown_manual_reconciliation_required"]
+                },
+            )
+        )
+        db.commit()
+
+    response = client.post("/api/publishing/jobs/1/retry")
+
+    assert response.status_code == 409
+    assert "reconcile the store" in response.json()["detail"]
+
+
+def test_retry_preflight_failure_keeps_terminal_job_state():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        db.add(
+            PublishJob(
+                product_draft_id=1,
+                store_id=1,
+                requested_by="operator",
+                status=PublishJobStatus.BLOCKED,
+                request_summary_json=job_summary(),
+                response_summary_json={"errors": ["live_publish_disabled"]},
+            )
+        )
+        db.add(
+            ReviewResult(
+                product_draft_id=1,
+                provider="claude+nvidia_behavioral_audit",
+                risk_level="high",
+                decision=ReviewDecision.BLOCK,
+                reasons_json={"reason_codes": ["new_block"], "reasons": ["blocked"]},
+                suggested_changes_json={},
+                draft_version=1,
+            )
+        )
+        db.commit()
+
+    response = client.post("/api/publishing/jobs/1/retry")
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "latest_behavioral_review_required"
+    with testing_session() as db:
+        assert db.get(PublishJob, 1).status == PublishJobStatus.BLOCKED

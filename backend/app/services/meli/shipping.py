@@ -1,7 +1,28 @@
+from dataclasses import dataclass
+
+
 NON_FULL_SHIPPING_MODE_PRIORITY = ("me2", "me1", "not_specified")
+NON_FULL_LOGISTIC_TYPE_PRIORITY = (
+    "drop_off",
+    "cross_docking",
+    "xd_drop_off",
+    "self_service",
+    "turbo",
+)
+
+
+@dataclass(frozen=True)
+class NonFullShippingSelection:
+    mode: str
+    logistic_type: str
 
 
 def resolve_non_full_shipping_mode(preferences: dict) -> str | None:
+    selection = resolve_non_full_shipping(preferences)
+    return selection.mode if selection else None
+
+
+def resolve_non_full_shipping(preferences: dict) -> NonFullShippingSelection | None:
     declared_modes = {
         str(mode).strip().lower()
         for mode in preferences.get("modes", [])
@@ -25,10 +46,13 @@ def resolve_non_full_shipping_mode(preferences: dict) -> str | None:
             if normalized:
                 types.append(normalized)
 
-    me2_types = logistics_by_mode.get("me2", [])
-    if "me2" in declared_modes and any(item != "fulfillment" for item in me2_types):
-        return "me2"
-    for mode in NON_FULL_SHIPPING_MODE_PRIORITY[1:]:
-        if mode in declared_modes:
-            return mode
+    me2_types = set(logistics_by_mode.get("me2", []))
+    if "me2" in declared_modes:
+        for logistic_type in NON_FULL_LOGISTIC_TYPE_PRIORITY:
+            if logistic_type in me2_types:
+                return NonFullShippingSelection("me2", logistic_type)
+    if "me1" in declared_modes:
+        return NonFullShippingSelection("me1", "default")
+    if "not_specified" in declared_modes:
+        return NonFullShippingSelection("not_specified", "not_specified")
     return None

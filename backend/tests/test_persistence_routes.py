@@ -51,8 +51,8 @@ def test_import_amazon_html_can_persist_and_list_draft():
     response = client.post(
         "/api/imports/amazon-html",
         json={
-            "source_url": "https://www.amazon.com/dp/B000TEST",
-            "html": "<span id='productTitle'>Persisted Bottle</span><span class='a-price'><span class='a-offscreen'>$9.99</span></span><img id='landingImage' src='https://example.com/a.jpg' />",
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
+            "html": "<input id='ASIN' value='B000TEST01' /><span id='productTitle'>Persisted Bottle</span><span class='a-price'><span class='a-offscreen'>$9.99</span></span><img id='landingImage' src='https://example.com/a.jpg' />",
             "target_site_id": "MLM",
             "persist": True,
         },
@@ -69,6 +69,77 @@ def test_import_amazon_html_can_persist_and_list_draft():
 
     with Session(testing_session.kw["bind"]) as session:
         assert session.query(ProductDraft).count() == 1
+        source = session.query(SourceProduct).one()
+        assert source.raw_status == SourceProductStatus.NEEDS_MANUAL_ACTION
+        assert "not independently fetched" in source.collection_error
+        assert session.query(ProductDraft).one().source_product_id == source.id
+
+
+def test_import_amazon_html_rejects_non_amazon_and_incomplete_snapshots():
+    client, _ = make_client()
+    valid_html = "<input id='ASIN' value='B000TEST01' /><span id='productTitle'>Bottle</span><span class='a-price'><span class='a-offscreen'>$9.99</span></span><img id='landingImage' src='https://example.com/a.jpg' />"
+
+    wrong_host = client.post(
+        "/api/imports/amazon-html",
+        json={
+            "source_url": "https://example.com/product/1",
+            "html": valid_html,
+            "target_site_id": "MLM",
+            "persist": True,
+        },
+    )
+    incomplete = client.post(
+        "/api/imports/amazon-html",
+        json={
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
+            "html": "<input id='ASIN' value='B000TEST01' /><span id='productTitle'>Bottle</span>",
+            "target_site_id": "MLM",
+            "persist": True,
+        },
+    )
+
+    assert wrong_host.status_code == 422
+    assert wrong_host.json()["detail"] == "only_public_amazon_product_urls_allowed"
+    assert incomplete.status_code == 422
+    assert incomplete.json()["detail"] == "amazon_snapshot_incomplete:price,image"
+
+
+def test_import_amazon_html_rejects_challenge_page():
+    client, testing_session = make_client()
+
+    response = client.post(
+        "/api/imports/amazon-html",
+        json={
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
+            "html": "<html><title>Robot Check</title><p>Enter the characters you see below</p></html>",
+            "target_site_id": "MLM",
+            "persist": True,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "amazon_challenge_snapshot_rejected"
+    with testing_session() as db:
+        assert db.query(SourceProduct).count() == 0
+        assert db.query(ProductDraft).count() == 0
+
+
+def test_import_amazon_html_rejects_asin_identity_mismatch():
+    client, _ = make_client()
+    html = "<input id='ASIN' value='B999OTHER1' /><span id='productTitle'>Bottle</span><span class='a-price'><span class='a-offscreen'>$9.99</span></span><img id='landingImage' src='https://example.com/a.jpg' />"
+
+    response = client.post(
+        "/api/imports/amazon-html",
+        json={
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
+            "html": html,
+            "target_site_id": "MLM",
+            "persist": True,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "amazon_snapshot_identity_mismatch"
 
 
 def test_oauth_callback_persists_store_without_returning_tokens(monkeypatch):
@@ -158,7 +229,7 @@ def test_import_amazon_url_can_persist_collected_draft(monkeypatch):
     response = client.post(
         "/api/imports/amazon-url",
         json={
-            "source_url": "https://www.amazon.com/dp/B000TEST",
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
             "target_site_id": "MLM",
             "persist": True,
         },
@@ -195,7 +266,7 @@ def test_import_amazon_url_persists_manual_action_without_draft(monkeypatch):
     response = client.post(
         "/api/imports/amazon-url",
         json={
-            "source_url": "https://www.amazon.com/dp/B000TEST",
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
             "target_site_id": "MLM",
             "persist": True,
         },

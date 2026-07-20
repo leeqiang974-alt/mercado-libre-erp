@@ -61,10 +61,12 @@ def test_build_item_payload_includes_me2_shipping_fields():
         draft=complete_draft(),
         listing_choice=ListingChoice(site_id="MLM", listing_type_id="gold_special"),
         shipping_mode="me2",
+        shipping_logistic_type="drop_off",
     )
 
     assert payload["shipping"] == {
         "mode": "me2",
+        "logistic_type": "drop_off",
         "local_pick_up": False,
         "free_shipping": False,
         "free_methods": [],
@@ -76,10 +78,12 @@ def test_build_item_payload_does_not_add_me2_fields_to_me1():
         draft=complete_draft(),
         listing_choice=ListingChoice(site_id="MLM", listing_type_id="gold_special"),
         shipping_mode="me1",
+        shipping_logistic_type="default",
     )
 
     assert payload["shipping"] == {
         "mode": "me1",
+        "logistic_type": "default",
         "local_pick_up": False,
         "free_shipping": False,
     }

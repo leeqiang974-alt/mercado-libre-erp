@@ -1,4 +1,6 @@
 import pytest
+from datetime import UTC, datetime, timedelta
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -11,6 +13,7 @@ from app.models.source_product import SourceProduct
 from app.schemas.drafts import ProductDraftCreate
 from app.services.amazon.collector import CollectionResult, CollectionStatus
 from app.workers.collection_worker import run_pending_collection_jobs
+from app.workers import collection_worker
 
 
 def make_session():
@@ -53,7 +56,7 @@ async def test_worker_runs_pending_collection_jobs_up_to_limit():
     with testing_session() as db:
         summary = await run_pending_collection_jobs(db, limit=2, collector=fake_collector)
 
-    assert summary == {"processed": 2, "completed": 2, "needs_manual_action": 0, "failed": 0}
+    assert summary == {"processed": 2, "completed": 2, "needs_manual_action": 0, "failed": 0, "recovered": 0}
     with testing_session() as db:
         jobs = db.query(CollectionJob).order_by(CollectionJob.id).all()
         assert [job.status for job in jobs] == [
@@ -84,4 +87,50 @@ async def test_worker_skips_non_pending_collection_jobs():
     with testing_session() as db:
         summary = await run_pending_collection_jobs(db, limit=10, collector=fake_collector)
 
-    assert summary == {"processed": 0, "completed": 0, "needs_manual_action": 0, "failed": 0}
+    assert summary == {"processed": 0, "completed": 0, "needs_manual_action": 0, "failed": 0, "recovered": 0}
+
+
+@pytest.mark.asyncio
+async def test_worker_skips_job_claimed_by_another_worker(monkeypatch):
+    testing_session = make_session()
+    with testing_session() as db:
+        db.add(CollectionJob(source_url="https://amazon.example/race", target_site_id="MLM"))
+        db.commit()
+
+    async def lost_claim(**kwargs):
+        raise HTTPException(status_code=409, detail="claimed")
+
+    monkeypatch.setattr(collection_worker, "run_collection_job", lost_claim)
+    with testing_session() as db:
+        summary = await run_pending_collection_jobs(db)
+
+    assert summary["processed"] == 0
+    assert summary["failed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_worker_recovers_stale_running_collection_job():
+    testing_session = make_session()
+    with testing_session() as db:
+        db.add(
+            CollectionJob(
+                source_url="https://www.amazon.com/dp/B000TEST01",
+                target_site_id="MLM",
+                status=CollectionJobStatus.RUNNING,
+                started_at=datetime.now(UTC) - timedelta(hours=1),
+            )
+        )
+        db.commit()
+
+    async def unexpected_collector(source_url: str, target_site_id: str):
+        raise AssertionError("recovered jobs must require an explicit retry")
+
+    with testing_session() as db:
+        summary = await run_pending_collection_jobs(db, collector=unexpected_collector)
+
+    assert summary["recovered"] == 1
+    assert summary["processed"] == 0
+    with testing_session() as db:
+        job = db.query(CollectionJob).one()
+        assert job.status == CollectionJobStatus.FAILED
+        assert job.message == "Collection worker interrupted; retry is safe."

@@ -13,6 +13,9 @@ class ProductDraftApproval(Base):
     product_draft_id: Mapped[int] = mapped_column(
         ForeignKey("product_drafts.id"), unique=True, index=True
     )
+    review_result_id: Mapped[int | None] = mapped_column(
+        ForeignKey("review_results.id"), nullable=True
+    )
     status: Mapped[str] = mapped_column(String(40), default="approved")
     approved_by: Mapped[str] = mapped_column(String(120))
     note: Mapped[str] = mapped_column(Text, default="")

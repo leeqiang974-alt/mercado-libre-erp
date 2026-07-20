@@ -61,6 +61,7 @@ export type PublishJobRecord = {
   item_id: string;
   permalink: string;
   shipping_mode: string;
+  shipping_logistic_type: string;
   errors: string[];
 };
 
@@ -95,6 +96,7 @@ export type PublishExecutionResult = {
   item_id: string;
   permalink: string;
   shipping_mode: string;
+  shipping_logistic_type: string;
   errors: string[];
   job_id: number | null;
 };

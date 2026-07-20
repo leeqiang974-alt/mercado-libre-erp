@@ -144,6 +144,7 @@ def test_draft_can_be_approved_and_audited():
     with testing_session() as db:
         approval = db.query(ProductDraftApproval).one()
         assert approval.note == "checked listing"
+        assert approval.review_result_id == 1
         event = db.query(AuditEvent).filter(AuditEvent.action == "draft.approved").one()
         assert event.entity_type == "product_draft"
         assert event.entity_id == "1"
@@ -162,6 +163,67 @@ def test_draft_approval_requires_current_claude_nvidia_pass():
     assert "current_claude_nvidia_pass_required_before_approval" in response.text
     with testing_session() as db:
         assert db.query(ProductDraftApproval).count() == 0
+
+
+def test_draft_approval_requires_latest_behavioral_review_to_pass():
+    client, testing_session = make_client()
+    seed_publish_review(testing_session)
+    with testing_session() as db:
+        draft = db.get(ProductDraft, 1)
+        db.add(
+            ReviewResult(
+                product_draft_id=1,
+                provider="claude+nvidia_behavioral_audit",
+                risk_level="high",
+                decision=ReviewDecision.BLOCK,
+                reasons_json={"reason_codes": ["restricted"], "reasons": ["blocked"]},
+                suggested_changes_json={},
+                draft_version=draft.content_version,
+            )
+        )
+        db.commit()
+
+    response = client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+
+    assert response.status_code == 422
+    assert "current_claude_nvidia_pass_required_before_approval" in response.text
+
+
+def test_newer_behavioral_review_invalidates_old_review_and_approval(monkeypatch):
+    async def unexpected_publish(**kwargs):
+        raise AssertionError("stale review must block before the publisher")
+
+    monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing, "execute_publish", unexpected_publish)
+    client, testing_session = make_client()
+    review_result_id = seed_publish_review(testing_session)
+    approval_response = client.post(
+        "/api/drafts/1/approval", json={"approved_by": "operator"}
+    )
+    assert approval_response.status_code == 200
+    with testing_session() as db:
+        draft = db.get(ProductDraft, 1)
+        db.add(
+            ReviewResult(
+                product_draft_id=1,
+                provider="claude+nvidia_behavioral_audit",
+                risk_level="high",
+                decision=ReviewDecision.BLOCK,
+                reasons_json={"reason_codes": ["restricted"], "reasons": ["blocked"]},
+                suggested_changes_json={},
+                draft_version=draft.content_version,
+            )
+        )
+        db.commit()
+
+    response = client.post(
+        "/api/publishing/execute-from-draft",
+        json=publish_from_draft_payload(review_result_id),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "latest_behavioral_review_required"
 
 
 def test_execute_from_draft_ignores_request_boolean_without_saved_approval(monkeypatch):

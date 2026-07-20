@@ -21,6 +21,23 @@ def select_first_draft(page: Page) -> None:
     page.locator(".product-summary").wait_for(state="visible")
 
 
+def inspect_import_workspace(page: Page) -> dict[str, object]:
+    page.get_by_role("button", name="Import", exact=True).click()
+    page.get_by_role("heading", name="Amazon import", exact=True).wait_for()
+    site_label = page.locator("label").filter(has_text="Target Mercado Libre site")
+    option_count = site_label.locator("select option").count()
+    assert option_count == 18, f"Expected 18 import target sites, got {option_count}"
+    page.get_by_role("tab", name="URL collector", exact=True).wait_for()
+    page.get_by_role("tab", name="HTML snapshot", exact=True).click()
+    page.get_by_label("Amazon HTML snapshot", exact=True).wait_for()
+    page.get_by_role("tab", name="URL collector", exact=True).click()
+    return {
+        "site_options": option_count,
+        "job_count": page.locator(".collection-job").count(),
+        "horizontal_overflow": page.evaluate("document.documentElement.scrollWidth > innerWidth"),
+    }
+
+
 def inspect_publish_workspace(page: Page) -> dict[str, object]:
     page.get_by_role("button", name="Publish", exact=True).click()
     page.get_by_role("heading", name="Publish workspace", exact=True).wait_for()
@@ -88,6 +105,8 @@ def main() -> None:
         desktop.goto(APP_URL, wait_until="networkidle")
         desktop.get_by_text("Integration readiness", exact=True).wait_for()
         desktop.screenshot(path=ARTIFACTS / "overview-desktop.png", full_page=True)
+        desktop_import = inspect_import_workspace(desktop)
+        desktop.screenshot(path=ARTIFACTS / "import-desktop.png", full_page=True)
         select_first_draft(desktop)
         desktop.screenshot(path=ARTIFACTS / "draft-desktop.png", full_page=True)
         desktop_result = inspect_publish_workspace(desktop)
@@ -109,6 +128,8 @@ def main() -> None:
             else None,
         )
         mobile.goto(APP_URL, wait_until="networkidle")
+        mobile_import = inspect_import_workspace(mobile)
+        mobile.screenshot(path=ARTIFACTS / "import-mobile.png", full_page=True)
         select_first_draft(mobile)
         mobile_result = inspect_publish_workspace(mobile)
         mobile.screenshot(path=ARTIFACTS / "publish-mobile.png", full_page=True)
@@ -119,6 +140,8 @@ def main() -> None:
 
     assert not desktop_result["horizontal_overflow"], "Desktop page overflows horizontally"
     assert not mobile_result["horizontal_overflow"], "Mobile page overflows horizontally"
+    assert not desktop_import["horizontal_overflow"], "Desktop import page overflows horizontally"
+    assert not mobile_import["horizontal_overflow"], "Mobile import page overflows horizontally"
     assert not desktop_stores["horizontal_overflow"], "Desktop stores page overflows horizontally"
     assert not mobile_stores["horizontal_overflow"], "Mobile stores page overflows horizontally"
     assert not console_errors, f"Browser console errors: {console_errors}"
@@ -127,6 +150,8 @@ def main() -> None:
         {
             "desktop": desktop_result,
             "mobile": mobile_result,
+            "desktop_import": desktop_import,
+            "mobile_import": mobile_import,
             "desktop_stores": desktop_stores,
             "mobile_stores": mobile_stores,
             "console_errors": console_errors,

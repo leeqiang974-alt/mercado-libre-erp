@@ -1,4 +1,6 @@
 import pytest
+from datetime import UTC, datetime, timedelta
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -16,6 +18,7 @@ from app.models.token_credential import TokenCredential
 from app.schemas.publishing import PublishExecutionResult
 from app.services.meli.token_vault import encrypt_token_value
 from app.workers.publish_worker import run_pending_publish_jobs
+from app.workers import publish_worker
 
 
 def make_session():
@@ -76,6 +79,7 @@ def make_session():
                 status="approved",
                 approved_by="operator",
                 note="approved",
+                review_result_id=1,
             )
         )
         db.add(
@@ -154,7 +158,7 @@ async def test_worker_publishes_pending_publish_jobs_up_to_limit():
             token_encryption_key="test-secret",
         )
 
-    assert summary == {"processed": 1, "published": 1, "blocked": 0, "failed": 0}
+    assert summary == {"processed": 1, "published": 1, "blocked": 0, "failed": 0, "recovered": 0}
     with testing_session() as db:
         jobs = db.query(PublishJob).order_by(PublishJob.id).all()
         assert [job.status for job in jobs] == [
@@ -191,7 +195,33 @@ async def test_worker_skips_non_pending_publish_jobs():
             token_encryption_key="test-secret",
         )
 
-    assert summary == {"processed": 0, "published": 0, "blocked": 0, "failed": 0}
+    assert summary == {"processed": 0, "published": 0, "blocked": 0, "failed": 0, "recovered": 0}
+
+
+@pytest.mark.asyncio
+async def test_worker_skips_job_claimed_by_another_worker(monkeypatch):
+    testing_session = make_session()
+    with testing_session() as db:
+        db.add(
+            PublishJob(
+                product_draft_id=1,
+                store_id=1,
+                requested_by="operator",
+                status=PublishJobStatus.PENDING,
+                request_summary_json=job_summary(),
+            )
+        )
+        db.commit()
+
+    async def lost_claim(**kwargs):
+        raise HTTPException(status_code=409, detail="claimed")
+
+    monkeypatch.setattr(publish_worker, "run_pending_publish_job", lost_claim)
+    with testing_session() as db:
+        summary = await run_pending_publish_jobs(db)
+
+    assert summary["processed"] == 0
+    assert summary["failed"] == 0
 
 
 @pytest.mark.asyncio
@@ -225,8 +255,45 @@ async def test_worker_rechecks_saved_listing_type_catalog_before_publisher():
             token_encryption_key="test-secret",
         )
 
-    assert summary == {"processed": 1, "published": 0, "blocked": 1, "failed": 0}
+    assert summary == {"processed": 1, "published": 0, "blocked": 1, "failed": 0, "recovered": 0}
     with testing_session() as db:
         job = db.query(PublishJob).one()
         assert job.status == PublishJobStatus.BLOCKED
         assert "listing_type_not_supported" in job.response_summary_json["errors"]
+
+
+@pytest.mark.asyncio
+async def test_worker_quarantines_stale_validating_publish_job():
+    testing_session = make_session()
+    with testing_session() as db:
+        db.add(
+            PublishJob(
+                product_draft_id=1,
+                store_id=1,
+                requested_by="operator",
+                status=PublishJobStatus.VALIDATING,
+                started_at=datetime.now(UTC) - timedelta(hours=1),
+                request_summary_json=job_summary(),
+            )
+        )
+        db.commit()
+
+    async def unexpected_publisher(**kwargs):
+        raise AssertionError("unknown publish outcomes must not be retried automatically")
+
+    with testing_session() as db:
+        summary = await run_pending_publish_jobs(
+            db,
+            publisher=unexpected_publisher,
+            allow_live_publish=True,
+            token_encryption_key="test-secret",
+        )
+
+    assert summary["recovered"] == 1
+    assert summary["processed"] == 0
+    with testing_session() as db:
+        job = db.query(PublishJob).one()
+        assert job.status == PublishJobStatus.BLOCKED
+        assert job.response_summary_json["errors"] == [
+            "publish_outcome_unknown_manual_reconciliation_required"
+        ]

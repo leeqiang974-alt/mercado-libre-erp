@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 
@@ -20,6 +20,7 @@ def create_publish_job(
     review: ReviewResponse,
     listing_choice: ListingChoice,
     valid_listing_type_ids: list[str] | None = None,
+    initial_status: PublishJobStatus = PublishJobStatus.PENDING,
 ) -> PublishJob:
     idempotency_key = _publish_idempotency_key(
         product_draft_id,
@@ -41,7 +42,8 @@ def create_publish_job(
         store_id=store_id,
         requested_by=requested_by,
         idempotency_key=idempotency_key,
-        status=PublishJobStatus.PENDING,
+        status=initial_status,
+        started_at=datetime.now(UTC) if initial_status == PublishJobStatus.VALIDATING else None,
         request_summary_json={
             "title": draft.title,
             "site_id": draft.target_site_id,
@@ -95,16 +97,19 @@ def replay_publish_result(job: PublishJob) -> PublishExecutionResult:
         item_id=job.meli_item_id,
         permalink=job.permalink,
         shipping_mode=summary.get("shipping_mode", ""),
+        shipping_logistic_type=summary.get("shipping_logistic_type", ""),
         errors=summary.get("errors", []),
         job_id=job.id,
     )
 
 
 def complete_publish_job(db: Session, job: PublishJob, result: PublishExecutionResult) -> PublishJob:
+    if result.item_id:
+        job.meli_item_id = result.item_id
+    if result.permalink:
+        job.permalink = result.permalink
     if result.status == "published":
         job.status = PublishJobStatus.PUBLISHED
-        job.meli_item_id = result.item_id
-        job.permalink = result.permalink
     elif result.status == "blocked":
         job.status = PublishJobStatus.BLOCKED
     else:
@@ -114,12 +119,40 @@ def complete_publish_job(db: Session, job: PublishJob, result: PublishExecutionR
         "item_id": result.item_id,
         "permalink": result.permalink,
         "shipping_mode": result.shipping_mode,
+        "shipping_logistic_type": result.shipping_logistic_type,
         "errors": result.errors,
     }
     job.completed_at = datetime.now(UTC)
     db.commit()
     db.refresh(job)
     return job
+
+
+def recover_stale_publish_jobs(db: Session, stale_after_seconds: int) -> int:
+    cutoff = datetime.now(UTC) - timedelta(seconds=stale_after_seconds)
+    jobs = (
+        db.query(PublishJob)
+        .filter(
+            PublishJob.status == PublishJobStatus.VALIDATING,
+            PublishJob.started_at.is_not(None),
+            PublishJob.started_at < cutoff,
+        )
+        .all()
+    )
+    for job in jobs:
+        job.status = PublishJobStatus.BLOCKED
+        job.response_summary_json = {
+            "status": "blocked",
+            "item_id": job.meli_item_id,
+            "permalink": job.permalink,
+            "shipping_mode": "",
+            "shipping_logistic_type": "",
+            "errors": ["publish_outcome_unknown_manual_reconciliation_required"],
+        }
+        job.completed_at = datetime.now(UTC)
+    if jobs:
+        db.commit()
+    return len(jobs)
 
 
 def to_publish_job_read(job: PublishJob) -> PublishJobRead:
@@ -132,6 +165,7 @@ def to_publish_job_read(job: PublishJob) -> PublishJobRead:
         item_id=job.meli_item_id,
         permalink=job.permalink,
         shipping_mode=response_summary.get("shipping_mode", ""),
+        shipping_logistic_type=response_summary.get("shipping_logistic_type", ""),
         errors=response_summary.get("errors", []),
     )
 

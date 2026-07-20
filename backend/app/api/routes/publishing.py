@@ -1,10 +1,13 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.session import get_db
-from app.models.publish_job import PublishJobStatus
+from app.models.publish_job import PublishJob, PublishJobStatus
 from app.models.store import Store
 from app.schemas.drafts import ProductDraftCreate
 from app.schemas.publishing import (
@@ -30,7 +33,6 @@ from app.services.meli.token_vault import resolve_fresh_store_access_token
 from app.services.publish_jobs import (
     complete_publish_job,
     create_publish_job,
-    get_publish_job_or_404,
     list_publish_jobs,
     replay_publish_result,
     to_publish_job_read,
@@ -195,11 +197,25 @@ def publish_enqueue_from_draft(
 
 @router.post("/jobs/{job_id}/retry", response_model=PublishExecutionResult)
 async def retry_publish_job(job_id: int, db: Session = Depends(get_db)) -> PublishExecutionResult:
-    job = get_publish_job_or_404(db, job_id)
+    job = db.scalar(select(PublishJob).where(PublishJob.id == job_id).with_for_update())
+    if job is None:
+        raise HTTPException(status_code=404, detail="Publish job not found.")
     if job.status not in {PublishJobStatus.BLOCKED, PublishJobStatus.FAILED}:
         raise HTTPException(
             status_code=400,
             detail="Only blocked or failed publish jobs can be retried.",
+        )
+    if job.meli_item_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Publish job already created an item; inspect it before another attempt.",
+        )
+    if "publish_outcome_unknown_manual_reconciliation_required" in (
+        job.response_summary_json or {}
+    ).get("errors", []):
+        raise HTTPException(
+            status_code=409,
+            detail="Publish outcome is unknown; reconcile the store before another attempt.",
         )
 
     draft, listing_choice = build_configured_draft(db, job.product_draft_id)
@@ -209,6 +225,12 @@ async def retry_publish_job(job_id: int, db: Session = Depends(get_db)) -> Publi
         (job.request_summary_json or {}).get("review_result_id"),
     )
     human_approved = is_product_draft_approved(db, job.product_draft_id)
+    previous_status = job.status
+    job.status = PublishJobStatus.VALIDATING
+    job.started_at = datetime.now(UTC)
+    job.completed_at = None
+    db.commit()
+    db.refresh(job)
     create_audit_event(
         db=db,
         actor_type="operator",
@@ -217,7 +239,9 @@ async def retry_publish_job(job_id: int, db: Session = Depends(get_db)) -> Publi
         entity_type="publish_job",
         entity_id=str(job.id),
         before={
-            "status": job.status.value if hasattr(job.status, "value") else str(job.status),
+            "status": (
+                previous_status.value if hasattr(previous_status, "value") else str(previous_status)
+            ),
             "product_draft_id": job.product_draft_id,
             "store_id": job.store_id,
         },
@@ -236,6 +260,7 @@ async def retry_publish_job(job_id: int, db: Session = Depends(get_db)) -> Publi
         listing_choice=listing_choice,
         valid_listing_type_ids=SERVER_LISTING_TYPE_IDS,
         human_approved=human_approved,
+        execution_job=job,
     )
 
 
@@ -248,10 +273,25 @@ async def _execute_with_payload(
     listing_choice: ListingChoice,
     valid_listing_type_ids: list[str],
     human_approved: bool,
+    execution_job: PublishJob | None = None,
 ) -> PublishExecutionResult:
     store = db.get(Store, store_id)
     if not store:
         raise HTTPException(status_code=404, detail="Store not found.")
+    job = execution_job or create_publish_job(
+        db=db,
+        product_draft_id=product_draft_id,
+        store_id=store_id,
+        requested_by="operator",
+        draft=draft,
+        review=review,
+        listing_choice=listing_choice,
+        valid_listing_type_ids=valid_listing_type_ids,
+        initial_status=PublishJobStatus.VALIDATING,
+    )
+    if execution_job is None and getattr(job, "_idempotent_replay", False):
+        return replay_publish_result(job)
+
     validation = validate_publish_request(
         draft=draft,
         review=review,
@@ -273,16 +313,6 @@ async def _execute_with_payload(
         update={"allowed": not validation_errors, "errors": validation_errors}
     )
     if not validation.allowed:
-        job = create_publish_job(
-            db=db,
-            product_draft_id=product_draft_id,
-            store_id=store_id,
-            requested_by="operator",
-            draft=draft,
-            review=review,
-            listing_choice=listing_choice,
-            valid_listing_type_ids=valid_listing_type_ids,
-        )
         result = PublishExecutionResult(status="blocked", errors=validation.errors)
         complete_publish_job(db, job, result)
         _audit_publish_execution(
@@ -302,16 +332,6 @@ async def _execute_with_payload(
         oauth_client=create_oauth_client(),
     )
     if not access_token:
-        job = create_publish_job(
-            db=db,
-            product_draft_id=product_draft_id,
-            store_id=store_id,
-            requested_by="operator",
-            draft=draft,
-            review=review,
-            listing_choice=listing_choice,
-            valid_listing_type_ids=valid_listing_type_ids,
-        )
         result = PublishExecutionResult(status="blocked", errors=["store_access_token_required"])
         complete_publish_job(db, job, result)
         _audit_publish_execution(
@@ -324,28 +344,22 @@ async def _execute_with_payload(
             result=result,
         )
         return result.model_copy(update={"job_id": job.id})
-    job = create_publish_job(
-        db=db,
-        product_draft_id=product_draft_id,
-        store_id=store_id,
-        requested_by="operator",
-        draft=draft,
-        review=review,
-        listing_choice=listing_choice,
-        valid_listing_type_ids=valid_listing_type_ids,
-    )
-    if getattr(job, "_idempotent_replay", False):
-        return replay_publish_result(job)
-    result = await execute_publish(
-        client=MercadoLibreClient(access_token=access_token),
-        seller_id=store.seller_id,
-        draft=draft,
-        review=review,
-        listing_choice=listing_choice,
-        valid_listing_type_ids=valid_listing_type_ids,
-        human_approved=human_approved,
-        allow_live_publish=settings.allow_live_publish,
-    )
+    try:
+        result = await execute_publish(
+            client=MercadoLibreClient(access_token=access_token),
+            seller_id=store.seller_id,
+            draft=draft,
+            review=review,
+            listing_choice=listing_choice,
+            valid_listing_type_ids=valid_listing_type_ids,
+            human_approved=human_approved,
+            allow_live_publish=settings.allow_live_publish,
+        )
+    except Exception:
+        result = PublishExecutionResult(
+            status="blocked",
+            errors=["publish_outcome_unknown_manual_reconciliation_required"],
+        )
     complete_publish_job(db, job, result)
     _audit_publish_execution(
         db=db,
@@ -404,6 +418,7 @@ def _audit_publish_execution(
             "item_id": result.item_id,
             "permalink": result.permalink,
             "shipping_mode": result.shipping_mode,
+            "shipping_logistic_type": result.shipping_logistic_type,
             "errors": result.errors,
             "store_id": store_id,
         },

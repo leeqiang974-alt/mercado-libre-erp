@@ -11,6 +11,7 @@ class DraftApprovalCreate(BaseModel):
 class DraftApprovalRead(BaseModel):
     id: int
     product_draft_id: int
+    review_result_id: int | None = None
     status: str
     approved_by: str
     note: str = ""

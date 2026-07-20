@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,8 +18,20 @@ class Settings(BaseSettings):
     default_site_id: str = "MLM"
     allow_live_publish: bool = False
     token_encryption_key: str = "local-dev-token-key-change-me"
+    job_stale_after_seconds: int = 900
+    job_execution_timeout_seconds: int = 840
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
+    @model_validator(mode="after")
+    def validate_runtime_safety(self):
+        if self.allow_live_publish and not self.database_url.lower().startswith(
+            ("postgresql://", "postgresql+")
+        ):
+            raise ValueError("Live publishing requires PostgreSQL task locking.")
+        if self.job_execution_timeout_seconds >= self.job_stale_after_seconds:
+            raise ValueError("Job execution timeout must be shorter than the stale-job threshold.")
+        return self
 
 
 @lru_cache

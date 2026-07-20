@@ -1,33 +1,32 @@
 # Product Gap Audit
 
-Updated: 2026-07-15
+Updated: 2026-07-20
 
 ## Honest Current State
 
-The repository contains a working technical skeleton: Amazon HTML parsing, persistent drafts and jobs, Mercado Libre OAuth and publishing adapters, AI provider adapters, and Docker services. It is not yet a usable end-to-end operator product.
+The repository contains an operational local workflow for Amazon URL collection and verified HTML snapshots, persisted draft review and approval, authorized Mercado Libre stores, guarded non-FULL publishing, and background jobs. Live external execution still depends on operator-supplied Mercado Libre, Claude, and NVIDIA credentials.
 
 ## Verified Real Behavior
 
-- Docker API, PostgreSQL, Redis, collection worker, and publish worker run.
-- A real Amazon URL produced a persisted draft with title, description, brand, price, and one image.
-- Database migrations and local validation tests pass.
+- Docker API, frontend, PostgreSQL, Redis, collection worker, and publish worker run with localhost-only ports.
+- PostgreSQL data is bind-mounted under the project on D drive; Docker Desktop's WSL disk is configured under `D:\\DockerDesktop\\wsl`.
+- Amazon URL jobs persist success, manual-action, timeout, and failure outcomes. Operator HTML snapshots require a matching Amazon ASIN and complete core product fields.
+- Mercado Libre publishing supports all configured sites and Classic/Premium offers while excluding FULL logistics before and after item creation.
+- Publish outcomes that may have created an item but cannot be confirmed are quarantined for manual reconciliation and cannot be retried automatically.
+- Claude and NVIDIA failures are explicit. Only the latest persisted combined behavioral audit can satisfy approval and publishing gates.
+- PostgreSQL and clean SQLite migrations, backend tests, frontend production build, and desktop/mobile browser smoke checks pass.
 
 ## Missing or Misleading Behavior
 
-- The default import screen is populated with a fake Amazon URL and Bottle HTML.
 - Amazon collection does not provide a reliable source market/currency contract, complete image set, variants, SKU dimensions, or shipping weight.
-- The collected source price is copied into a target draft without a conversion and pricing policy.
-- There is no operational pricing workflow for exchange rate, marketplace fees, shipping, tax, target margin, and rounding.
+- Amazon page structure and anti-automation challenges can still require an operator-provided HTML snapshot.
 - Store authorization, live metadata, AI providers, and live publishing are unconfigured in the running environment.
-- Claude and NVIDIA silently fall back to local rules, which can make provider review appear more complete than it is.
-- The UI is a set of forms and JSON blocks, not a queue-oriented workflow for bulk collection, mapping, approval, and publishing.
 - Automated end-to-end tests mock external Amazon, AI, and Mercado Libre behavior; they prove internal orchestration, not live integration.
+- No real Mercado Libre item has been published from this environment, so production credentials, seller shipping preferences, category metadata, and post-publication reconciliation still need a controlled account test.
 
 ## Recovery Priorities
 
-1. Replace the demo-first UI with an operational dashboard and integration readiness checks.
-2. Build real single and batch Amazon URL intake with persistent collection status and draft inspection.
-3. Introduce source-product fidelity and an explicit pricing calculation model.
-4. Bind mapping and listing choices to an authorized Mercado Libre store/site.
-5. Make AI provider identity, failures, and fallback behavior explicit.
-6. Complete one real non-FULL publication in a test-safe Mercado Libre account and retain evidence.
+1. Configure a test Mercado Libre application and authorize one seller account for a controlled non-FULL publication.
+2. Configure Claude and NVIDIA credentials, run a real combined review, and retain provider/audit evidence.
+3. Verify live listing-type, category-attribute, shipping-preference, and post-publication responses for every target site used by the operator.
+4. Expand Amazon fidelity for variants, dimensions, weight, and complete image sets where the source page exposes them.

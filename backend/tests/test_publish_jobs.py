@@ -76,6 +76,7 @@ def make_client(with_token: bool = True):
                     status="approved",
                     approved_by="operator",
                     draft_version=1,
+                    review_result_id=1,
                 ),
                 ReviewResult(
                     id=1,
@@ -159,6 +160,8 @@ def test_publish_execute_persists_blocked_job_by_default(monkeypatch):
 
 def test_publish_execute_persists_published_job(monkeypatch):
     async def fake_execute_publish(**kwargs):
+        with testing_session() as db:
+            assert db.query(PublishJob).one().status == PublishJobStatus.VALIDATING
         return PublishExecutionResult(
             status="published",
             item_id="MLM123",
@@ -181,6 +184,27 @@ def test_publish_execute_persists_published_job(monkeypatch):
         assert job.status == PublishJobStatus.PUBLISHED
         assert job.meli_item_id == "MLM123"
         assert job.permalink == "https://example.com/MLM123"
+
+
+def test_publish_execute_quarantines_unexpected_adapter_exception(monkeypatch):
+    async def failed_after_request(**kwargs):
+        raise RuntimeError("response parsing failed")
+
+    monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing, "execute_publish", failed_after_request)
+    client, testing_session = make_client()
+
+    response = client.post("/api/publishing/execute", json=payload())
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "blocked"
+    assert response.json()["errors"] == [
+        "publish_outcome_unknown_manual_reconciliation_required"
+    ]
+    with testing_session() as db:
+        job = db.query(PublishJob).one()
+        assert job.status == PublishJobStatus.BLOCKED
 
 
 def test_publish_execute_persists_blocked_job_when_store_token_is_missing(monkeypatch):

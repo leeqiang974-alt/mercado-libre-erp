@@ -26,7 +26,7 @@ def test_import_amazon_url_returns_draft(monkeypatch):
     client = TestClient(app)
     response = client.post(
         "/api/imports/amazon-url",
-        json={"source_url": "https://www.amazon.com/dp/B000TEST", "target_site_id": "MLM"},
+        json={"source_url": "https://www.amazon.com/dp/B000TEST01", "target_site_id": "MLM"},
     )
 
     assert response.status_code == 200
@@ -48,7 +48,7 @@ def test_import_amazon_url_returns_manual_action(monkeypatch):
     client = TestClient(app)
     response = client.post(
         "/api/imports/amazon-url",
-        json={"source_url": "https://www.amazon.com/dp/B000TEST", "target_site_id": "MLM"},
+        json={"source_url": "https://www.amazon.com/dp/B000TEST01", "target_site_id": "MLM"},
     )
 
     assert response.status_code == 200

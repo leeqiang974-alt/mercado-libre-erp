@@ -37,11 +37,14 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.l
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./
+RUN mkdir -p app \
+    && touch app/__init__.py \
+    && pip install --no-cache-dir --disable-pip-version-check -e ".[dev]" \
+    && python -m playwright install chromium \
+    && rm -rf app
+
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./alembic.ini
-
-RUN pip install --no-cache-dir --disable-pip-version-check -e ".[dev]" \
-    && python -m playwright install chromium
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

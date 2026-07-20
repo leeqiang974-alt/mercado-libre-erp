@@ -1,4 +1,4 @@
-from app.services.meli.shipping import resolve_non_full_shipping_mode
+from app.services.meli.shipping import resolve_non_full_shipping, resolve_non_full_shipping_mode
 
 
 def test_me2_is_selected_when_any_non_full_logistic_type_is_active():
@@ -16,6 +16,9 @@ def test_me2_is_selected_when_any_non_full_logistic_type_is_active():
     }
 
     assert resolve_non_full_shipping_mode(preferences) == "me2"
+    selection = resolve_non_full_shipping(preferences)
+    assert selection is not None
+    assert selection.logistic_type == "drop_off"
 
 
 def test_me1_is_selected_when_me2_only_has_full():

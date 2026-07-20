@@ -4,8 +4,11 @@ from app.schemas.drafts import ProductDraftCreate
 from app.schemas.publishing import ListingChoice, PublishExecutionResult, PublishValidationResult
 from app.schemas.reviews import ReviewResponse
 from app.services.meli.client import MercadoLibreClient
-from app.services.meli.payload_builder import build_item_payload
-from app.services.meli.shipping import resolve_non_full_shipping_mode
+from app.services.meli.payload_builder import (
+    SUPPORTED_NON_FULL_LOGISTIC_TYPES,
+    build_item_payload,
+)
+from app.services.meli.shipping import resolve_non_full_shipping
 from app.services.meli.sites import expected_currency
 
 SUPPORTED_LISTING_TYPE_IDS = {"gold_special", "gold_pro"}
@@ -85,31 +88,114 @@ async def execute_publish(
             status="blocked",
             errors=["shipping_preferences_unavailable"],
         )
-    shipping_mode = resolve_non_full_shipping_mode(shipping_preferences)
-    if not shipping_mode:
+    shipping = resolve_non_full_shipping(shipping_preferences)
+    if not shipping:
         return PublishExecutionResult(
             status="blocked",
             errors=["non_full_shipping_mode_unavailable"],
         )
-    payload = build_item_payload(draft, listing_choice, shipping_mode=shipping_mode)
+    payload = build_item_payload(
+        draft,
+        listing_choice,
+        shipping_mode=shipping.mode,
+        shipping_logistic_type=shipping.logistic_type,
+    )
     try:
         response = await client.post("/items", payload)
     except httpx.HTTPStatusError as exc:
+        if exc.response.status_code >= 500:
+            return PublishExecutionResult(
+                status="blocked",
+                shipping_mode=shipping.mode,
+                shipping_logistic_type=shipping.logistic_type,
+                errors=["publish_outcome_unknown_manual_reconciliation_required"],
+            )
         return PublishExecutionResult(
             status="failed",
-            shipping_mode=shipping_mode,
+            shipping_mode=shipping.mode,
+            shipping_logistic_type=shipping.logistic_type,
             errors=[f"meli_publish_failed:{exc.response.status_code}"],
+        )
+    except httpx.TransportError:
+        return PublishExecutionResult(
+            status="blocked",
+            shipping_mode=shipping.mode,
+            shipping_logistic_type=shipping.logistic_type,
+            errors=["publish_outcome_unknown_manual_reconciliation_required"],
         )
     except httpx.HTTPError:
         return PublishExecutionResult(
             status="failed",
-            shipping_mode=shipping_mode,
+            shipping_mode=shipping.mode,
+            shipping_logistic_type=shipping.logistic_type,
             errors=["meli_publish_unavailable"],
+        )
+    item_id = str(response.get("id", "")).strip()
+    permalink = str(response.get("permalink", "")).strip()
+    response_site_id = str(response.get("site_id", "")).strip().upper()
+    response_shipping = response.get("shipping") or {}
+    actual_mode = str(response_shipping.get("mode", "")).strip().lower()
+    actual_logistic_type = str(response_shipping.get("logistic_type", "")).strip().lower()
+    verification_errors: list[str] = []
+    if not item_id:
+        return PublishExecutionResult(
+            status="blocked",
+            permalink=permalink,
+            shipping_mode=actual_mode or shipping.mode,
+            shipping_logistic_type=actual_logistic_type or shipping.logistic_type,
+            errors=[
+                "publish_outcome_unknown_manual_reconciliation_required",
+                "meli_publish_response_missing_item_id",
+            ],
+        )
+    if response_site_id != draft.target_site_id.upper():
+        verification_errors.append("meli_publish_site_mismatch")
+    if actual_mode not in {"me2", "me1", "not_specified"}:
+        verification_errors.append("meli_publish_shipping_mode_unverified")
+    if actual_logistic_type == "fulfillment":
+        verification_errors.append("full_fulfillment_detected")
+    elif actual_logistic_type not in SUPPORTED_NON_FULL_LOGISTIC_TYPES:
+        verification_errors.append("meli_publish_logistic_type_unverified")
+    if verification_errors:
+        try:
+            close_response = await client.put(f"/items/{item_id}", {"status": "closed"})
+            close_status = (
+                str(close_response.get("status", "")).strip().lower()
+                if isinstance(close_response, dict)
+                else ""
+            )
+            if close_status != "closed":
+                verification_errors.extend(
+                    [
+                        "meli_item_close_unverified",
+                        "publish_outcome_unknown_manual_reconciliation_required",
+                    ]
+                )
+        except httpx.HTTPError:
+            verification_errors.extend(
+                [
+                    "meli_item_close_failed",
+                    "publish_outcome_unknown_manual_reconciliation_required",
+                ]
+            )
+        return PublishExecutionResult(
+            status=(
+                "blocked"
+                if "publish_outcome_unknown_manual_reconciliation_required"
+                in verification_errors
+                else "failed"
+            ),
+            item_id=item_id,
+            permalink=permalink,
+            shipping_mode=actual_mode or shipping.mode,
+            shipping_logistic_type=actual_logistic_type or shipping.logistic_type,
+            errors=verification_errors,
         )
     return PublishExecutionResult(
         status="published",
-        item_id=str(response.get("id", "")),
-        permalink=response.get("permalink", ""),
-        shipping_mode=shipping_mode,
+        item_id=item_id,
+        permalink=permalink,
+        shipping_mode=actual_mode,
+        shipping_logistic_type=actual_logistic_type,
         errors=[],
     )

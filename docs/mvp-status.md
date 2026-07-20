@@ -1,6 +1,6 @@
 # MVP Skeleton Status
 
-Verified on: 2026-07-07
+Verified on: 2026-07-20
 
 Implemented:
 
@@ -11,8 +11,8 @@ Implemented:
 - Backend collection worker CLI for processing pending Amazon URL collection jobs in batches.
 - Persisted Amazon URL collection results as source products, including manual-action and failed collection states.
 - Local AI review policy.
-- Claude Messages API review adapter with safe fallback when no API key or parse failure occurs.
-- NVIDIA NIM/OpenAI-compatible chat review adapter with safe fallback when no API key or parse failure occurs.
+- Claude Messages API review adapter that reports missing credentials or provider failures without local fallback.
+- NVIDIA NIM/OpenAI-compatible chat review adapter that reports missing credentials or provider failures without local fallback.
 - Mercado Libre OAuth authorization URL, callback, and token exchange skeleton.
 - Persisted connected stores with token references instead of exposing raw tokens.
 - Encrypted Mercado Libre access/refresh token credential storage for connected stores.

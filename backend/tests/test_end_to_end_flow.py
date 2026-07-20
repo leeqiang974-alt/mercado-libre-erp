@@ -21,6 +21,7 @@ from app.workers.publish_worker import run_pending_publish_jobs
 
 AMAZON_HTML = """
 <html>
+  <input id="ASIN" value="B000TEST01" />
   <span id="productTitle"> TrailPro Stainless Bottle </span>
   <span class="a-price"><span class="a-offscreen">$19.99</span></span>
   <div id="bylineInfo">Brand: TrailPro</div>
@@ -109,7 +110,7 @@ async def test_amazon_to_pre_listing_queue_and_worker_flow():
     imported = client.post(
         "/api/imports/amazon-html",
         json={
-            "source_url": "https://www.amazon.com/dp/B000E2E",
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
             "html": AMAZON_HTML,
             "target_site_id": "MLM",
             "persist": True,
@@ -183,7 +184,7 @@ async def test_amazon_to_pre_listing_queue_and_worker_flow():
             token_encryption_key="e2e-secret",
         )
 
-    assert summary == {"processed": 1, "published": 1, "blocked": 0, "failed": 0}
+    assert summary == {"processed": 1, "published": 1, "blocked": 0, "failed": 0, "recovered": 0}
     with testing_session() as db:
         job = db.query(PublishJob).one()
         assert job.status == PublishJobStatus.PUBLISHED
@@ -195,7 +196,7 @@ def test_full_fulfillment_is_rejected_before_queueing():
     client, _ = make_client()
     imported = client.post(
         "/api/imports/amazon-html",
-        json={"source_url": "https://www.amazon.com/dp/B000E2E", "html": AMAZON_HTML, "persist": True},
+        json={"source_url": "https://www.amazon.com/dp/B000TEST01", "html": AMAZON_HTML, "persist": True},
     )
     draft_id = imported.json()["id"]
 
@@ -219,7 +220,7 @@ def test_selected_site_requires_matching_authorized_store_before_queueing():
     imported = client.post(
         "/api/imports/amazon-html",
         json={
-            "source_url": "https://www.amazon.com/dp/B000E2E",
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
             "html": AMAZON_HTML,
             "persist": True,
         },

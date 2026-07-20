@@ -113,6 +113,7 @@ def make_client(with_store: bool = True, token_expires_in_seconds: int = 7200):
                     status="approved",
                     approved_by="operator",
                     draft_version=1,
+                    review_result_id=1,
                 ),
                 ReviewResult(
                     id=1,

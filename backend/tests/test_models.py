@@ -13,7 +13,7 @@ def test_domain_models_expose_expected_defaults():
     Base.metadata.create_all(engine)
 
     store = Store(site_id="MLM", seller_id="seller-1", display_name="Demo")
-    source = SourceProduct(source_url="https://www.amazon.com/dp/B000TEST")
+    source = SourceProduct(source_url="https://www.amazon.com/dp/B000TEST01")
     draft = ProductDraft(title="Demo", target_site_id="MLM")
     job = PublishJob(product_draft_id=1, store_id=1, requested_by="operator")
 

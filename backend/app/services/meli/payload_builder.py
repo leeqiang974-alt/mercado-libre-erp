@@ -3,12 +3,22 @@ from app.schemas.publishing import ListingChoice
 
 
 SUPPORTED_SHIPPING_MODES = {"me2", "me1", "not_specified"}
+SUPPORTED_NON_FULL_LOGISTIC_TYPES = {
+    "drop_off",
+    "cross_docking",
+    "xd_drop_off",
+    "self_service",
+    "turbo",
+    "default",
+    "not_specified",
+}
 
 
 def build_item_payload(
     draft: ProductDraftCreate,
     listing_choice: ListingChoice,
     shipping_mode: str | None = None,
+    shipping_logistic_type: str | None = None,
 ) -> dict:
     if listing_choice.fulfillment.lower() == "full":
         raise ValueError("FULL fulfillment is excluded from this system.")
@@ -28,6 +38,10 @@ def build_item_payload(
         raise ValueError("At least one picture is required.")
     if shipping_mode and shipping_mode not in SUPPORTED_SHIPPING_MODES:
         raise ValueError("Unsupported non-FULL shipping mode.")
+    if shipping_logistic_type and shipping_logistic_type not in SUPPORTED_NON_FULL_LOGISTIC_TYPES:
+        raise ValueError("Unsupported non-FULL logistic type.")
+    if bool(shipping_mode) != bool(shipping_logistic_type):
+        raise ValueError("Shipping mode and logistic type must be selected together.")
     payload = {
         "site_id": draft.target_site_id,
         "title": draft.title,
@@ -46,6 +60,7 @@ def build_item_payload(
     if shipping_mode:
         payload["shipping"] = {
             "mode": shipping_mode,
+            "logistic_type": shipping_logistic_type,
             "local_pick_up": False,
             "free_shipping": False,
         }

@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi import Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.routes import audit_events, drafts, imports, metadata, publishing, reviews, stores
@@ -45,14 +46,27 @@ def system_readiness(db: Session = Depends(get_db)) -> dict[str, object]:
     def count(model: type) -> int:
         return int(db.scalar(select(func.count()).select_from(model)) or 0)
 
+    database_ready = True
+    counts = {"stores": 0, "drafts": 0, "collection_jobs": 0, "publish_jobs": 0}
+    try:
+        counts = {
+            "stores": count(Store),
+            "drafts": count(ProductDraft),
+            "collection_jobs": count(CollectionJob),
+            "publish_jobs": count(PublishJob),
+        }
+    except SQLAlchemyError:
+        db.rollback()
+        database_ready = False
+
     return {
-        "database": True,
+        "database": database_ready,
         "amazon_collector": True,
         "mercado_libre": {
             "credentials_configured": bool(
                 settings.meli_client_id and settings.meli_client_secret
             ),
-            "connected_stores": count(Store),
+            "connected_stores": counts["stores"],
             "live_publish_enabled": settings.allow_live_publish,
         },
         "ai": {
@@ -60,8 +74,8 @@ def system_readiness(db: Session = Depends(get_db)) -> dict[str, object]:
             "nvidia_configured": bool(settings.nvidia_api_key),
         },
         "counts": {
-            "drafts": count(ProductDraft),
-            "collection_jobs": count(CollectionJob),
-            "publish_jobs": count(PublishJob),
+            "drafts": counts["drafts"],
+            "collection_jobs": counts["collection_jobs"],
+            "publish_jobs": counts["publish_jobs"],
         },
     }
