@@ -247,7 +247,7 @@ def fulfill_collection_jobs(route) -> None:
         return
     row = {
         "id": 7001,
-        "source_url": "https://amazon.com/dp/B000TEST01",
+        "source_url": "https://www.amazon.com/dp/B000TEST01",
         "target_site_id": "MLM",
         "status": "completed",
         "message": "collected",
@@ -272,7 +272,31 @@ def fulfill_collection_jobs(route) -> None:
             "collection_error": "",
         },
     }
-    route.fulfill(status=200, content_type="application/json", body=json.dumps([row]))
+    cross_domain_variant = {
+        **row,
+        "id": 7002,
+        "source_url": "https://amazon.ca/dp/B000TEST02",
+        "status": "pending",
+        "message": "",
+        "source_product_id": None,
+        "draft_id": None,
+        "source_product": None,
+    }
+    existing_variant = {
+        **row,
+        "id": 7003,
+        "source_url": "https://m.amazon.com/dp/B000TEST03",
+        "status": "failed",
+        "message": "retry from queue",
+        "source_product_id": None,
+        "draft_id": None,
+        "source_product": None,
+    }
+    route.fulfill(
+        status=200,
+        content_type="application/json",
+        body=json.dumps([row, cross_domain_variant, existing_variant]),
+    )
 
 
 def fulfill_source_product(route) -> None:
@@ -472,9 +496,15 @@ def inspect_import_workspace(page: Page) -> dict[str, object]:
     page.get_by_text("Blue · 32 oz SuperInsulatedOutdoorExpeditionEdition", exact=True).wait_for()
     source_images = page.locator(".source-image-gallery img").count()
     source_variants = page.locator(".source-variant-list > span").count()
+    collect_variant_actions = page.get_by_role("button", name="Collect variant", exact=True).count()
     source_measurements = page.locator(".source-measurements > span").count()
     assert source_images == 3, f"Expected 3 source images, got {source_images}"
     assert source_variants == 3, f"Expected 3 source variants, got {source_variants}"
+    assert collect_variant_actions == 1, (
+        f"Expected 1 domain-matched available variant action, got {collect_variant_actions}"
+    )
+    existing_variant_action = page.get_by_role("button", name="Failed #7003", exact=True)
+    assert existing_variant_action.is_disabled(), "Existing variant job action must be disabled"
     assert source_measurements == 2, f"Expected 2 source measurements, got {source_measurements}"
     page.get_by_role("button", name="Create MLM draft", exact=True).last.click()
     page.get_by_role("button", name="Draft #8103", exact=True).wait_for()
@@ -494,6 +524,8 @@ def inspect_import_workspace(page: Page) -> dict[str, object]:
         "batch_result_count": batch_result_count,
         "source_images": source_images,
         "source_variants": source_variants,
+        "collect_variant_actions": collect_variant_actions,
+        "existing_variant_job_disabled": existing_variant_action.is_disabled(),
         "source_measurements": source_measurements,
         "horizontal_overflow": page.evaluate("document.documentElement.scrollWidth > innerWidth"),
     }

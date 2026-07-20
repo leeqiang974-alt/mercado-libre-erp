@@ -81,3 +81,7 @@ class SourceProductSummaryRead(BaseModel):
 
 class SourceVariantDraftCreate(BaseModel):
     target_site_id: str = "MLM"
+
+
+class SourceVariantCollectionCreate(BaseModel):
+    target_site_id: str = "MLM"

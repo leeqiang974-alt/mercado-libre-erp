@@ -11,11 +11,13 @@ import {
   Play,
   RefreshCw,
   RotateCcw,
+  ScanSearch,
   Search,
   Upload,
 } from "lucide-react";
 import {
   createCollectionJobsBatch,
+  createSourceVariantCollectionJob,
   createSourceVariantDraft,
   getSourceProduct,
   listCollectionJobs,
@@ -49,6 +51,17 @@ const BATCH_DETAILS: Record<string, string> = {
   collection_job_already_exists: "A collection job already exists",
 };
 
+const AMAZON_DOMAINS = [
+  "amazon.com.mx", "amazon.com.br", "amazon.co.uk", "amazon.co.jp", "amazon.com.au",
+  "amazon.com", "amazon.ca", "amazon.de", "amazon.fr", "amazon.it", "amazon.es",
+  "amazon.nl", "amazon.in", "amazon.sg", "amazon.ae", "amazon.sa",
+];
+
+function canonicalAmazonDomain(hostname: string) {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  return AMAZON_DOMAINS.find((domain) => host === domain || host.endsWith(`.${domain}`)) ?? host;
+}
+
 function jobIcon(status: CollectionJobRecord["status"]) {
   if (status === "completed") return <CheckCircle2 size={16} />;
   if (status === "running") return <LoaderCircle className="spin" size={16} />;
@@ -63,6 +76,32 @@ function shortSource(sourceUrl: string) {
   } catch {
     return sourceUrl;
   }
+}
+
+function findVariantCollectionJob(
+  jobs: CollectionJobRecord[],
+  sourceUrl: string,
+  variantAsin: string,
+  targetSiteId: string,
+) {
+  let sourceHost = "";
+  try {
+    sourceHost = canonicalAmazonDomain(new URL(sourceUrl).hostname);
+  } catch {
+    return undefined;
+  }
+  return jobs.find((job) => {
+    if (job.target_site_id !== targetSiteId) return false;
+    try {
+      const jobUrl = new URL(job.source_url);
+      const jobHost = canonicalAmazonDomain(jobUrl.hostname);
+      const sameAmazonDomain = sourceHost === jobHost;
+      const match = jobUrl.pathname.match(/\/dp\/([a-z0-9]{10})(?:\/|$)/i);
+      return sameAmazonDomain && match?.[1].toUpperCase() === variantAsin.toUpperCase();
+    } catch {
+      return false;
+    }
+  });
 }
 
 export function ImportPage({
@@ -221,6 +260,28 @@ export function ImportPage({
       setVariantDraftIds((current) => ({ ...current, [key]: draft.id }));
     } catch (variantError) {
       setError(variantError instanceof Error ? variantError.message : "Failed to create variant draft");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function collectSourceVariant(
+    sourceProductId: number,
+    variantAsin: string,
+    variantTargetSiteId: string,
+  ) {
+    const key = `${sourceProductId}:${variantAsin}:${variantTargetSiteId}`;
+    setBusyAction(`collect-variant-${key}`);
+    setError("");
+    try {
+      await createSourceVariantCollectionJob(
+        sourceProductId,
+        variantAsin,
+        variantTargetSiteId,
+      );
+      await refreshCollectionJobs(false);
+    } catch (variantError) {
+      setError(variantError instanceof Error ? variantError.message : "Failed to collect variant");
     } finally {
       setBusyAction("");
     }
@@ -484,10 +545,38 @@ export function ImportPage({
                                 </div>
                               )}
                               <div className="source-variant-list">
-                                {sourceDetails[job.source_product.id].snapshot!.variants.map((variant) => (
+                                {sourceDetails[job.source_product.id].snapshot!.variants.map((variant) => {
+                                  const variantJob = findVariantCollectionJob(
+                                    collectionJobs,
+                                    job.source_url,
+                                    variant.asin,
+                                    job.target_site_id,
+                                  );
+                                  const variantKey = `${job.source_product!.id}:${variant.asin}:${job.target_site_id}`;
+                                  return (
                                   <span className={variant.selected ? "selected" : ""} key={variant.asin}>
                                     <strong>{Object.values(variant.attributes).join(" · ") || variant.asin}</strong>
                                     <small>{variant.asin}</small>
+                                    {!variant.selected && (
+                                      <button
+                                        className="icon-text-button"
+                                        disabled={isBusy || Boolean(variantJob)}
+                                        onClick={() => void collectSourceVariant(
+                                          job.source_product!.id,
+                                          variant.asin,
+                                          job.target_site_id,
+                                        )}
+                                      >
+                                        {busyAction === `collect-variant-${variantKey}` ? (
+                                          <LoaderCircle className="spin" size={14} />
+                                        ) : (
+                                          <ScanSearch size={14} />
+                                        )}
+                                        {variantJob
+                                          ? `${JOB_LABELS[variantJob.status]} #${variantJob.id}`
+                                          : "Collect variant"}
+                                      </button>
+                                    )}
                                     <button
                                       className="icon-text-button"
                                       disabled={isBusy}
@@ -497,7 +586,7 @@ export function ImportPage({
                                         job.target_site_id,
                                       )}
                                     >
-                                      {busyAction === `variant-${job.source_product!.id}:${variant.asin}:${job.target_site_id}` ? (
+                                      {busyAction === `variant-${variantKey}` ? (
                                         <LoaderCircle className="spin" size={14} />
                                       ) : (
                                         <FilePlus2 size={14} />
@@ -507,7 +596,8 @@ export function ImportPage({
                                         : `Create ${job.target_site_id} draft`}
                                     </button>
                                   </span>
-                                ))}
+                                  );
+                                })}
                               </div>
                             </div>
                           )}

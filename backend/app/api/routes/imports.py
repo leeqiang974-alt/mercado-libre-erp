@@ -1,4 +1,6 @@
 from typing import Annotated
+import re
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -37,7 +39,11 @@ from app.schemas.collection_jobs import (
 )
 from app.models.collection_job import CollectionJob
 from app.services.meli.sites import SITE_CURRENCIES
-from app.schemas.source_products import SourceProductRead, SourceVariantDraftCreate
+from app.schemas.source_products import (
+    SourceProductRead,
+    SourceVariantCollectionCreate,
+    SourceVariantDraftCreate,
+)
 
 router = APIRouter(prefix="/api/imports", tags=["imports"])
 settings = get_settings()
@@ -282,6 +288,45 @@ def create_source_variant_product_draft(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return to_draft_read(draft)
+
+
+@router.post(
+    "/source-products/{source_product_id}/variants/{variant_asin}/collection-job",
+    response_model=CollectionJobRead,
+)
+def create_source_variant_collection_job(
+    source_product_id: int,
+    variant_asin: str,
+    payload: SourceVariantCollectionCreate,
+    db: Session = Depends(get_db),
+) -> CollectionJobRead:
+    source = db.get(SourceProduct, source_product_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Source product not found.")
+    normalized_asin = variant_asin.strip().upper()
+    known_asins = {
+        str(variant.get("asin", "")).strip().upper()
+        for variant in (source.variants_json or [])
+        if isinstance(variant, dict)
+    }
+    if not re.fullmatch(r"[A-Z0-9]{10}", normalized_asin) or normalized_asin not in known_asins:
+        raise HTTPException(status_code=404, detail="source_variant_not_found")
+    target_site_id = _target_site_or_422(payload.target_site_id)
+    normalized_source_url = _normalized_amazon_url_or_422(source.source_url)
+    source_parts = urlparse(normalized_source_url)
+    variant_url = f"{source_parts.scheme}://{source_parts.netloc}/dp/{normalized_asin}"
+    db.rollback()
+    _lock_collection_site(db, target_site_id)
+    existing = _existing_collection_jobs(db, target_site_id, {variant_url}).get(variant_url)
+    if existing is not None:
+        existing_source = (
+            db.get(SourceProduct, existing.source_product_id)
+            if existing.source_product_id is not None
+            else None
+        )
+        return to_collection_job_read(existing, existing_source)
+    job = create_collection_job(db, variant_url, target_site_id)
+    return to_collection_job_read(job)
 
 
 @router.post("/amazon-url/jobs/{job_id}/run", response_model=CollectionJobRead)

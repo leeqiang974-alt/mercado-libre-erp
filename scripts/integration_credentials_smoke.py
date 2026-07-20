@@ -1,21 +1,26 @@
 import os
 from pathlib import Path
-import re
-import socket
 import subprocess
 import sys
-import time
 from uuid import uuid4
 
 import httpx
 from playwright.sync_api import Route, sync_playwright
-from sqlalchemy import create_engine, select, text
-from sqlalchemy.engine import make_url
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "backend"))
+
+from scripts.isolated_runtime import (  # noqa: E402
+    available_port,
+    build_isolated_database_url,
+    create_isolated_database,
+    drop_isolated_database,
+    stop_process,
+    wait_for_backend,
+)
 
 from app.models.audit_event import AuditEvent  # noqa: E402
 from app.models.integration_credential import IntegrationCredential  # noqa: E402
@@ -29,71 +34,6 @@ ADMIN_DATABASE_URL = os.getenv(
 APP_URL = os.getenv("INTEGRATION_CREDENTIAL_SMOKE_APP_URL", "http://127.0.0.1:5173")
 CHROME = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
 KEYS = ("meli_client_id", "meli_client_secret", "claude_api_key", "nvidia_api_key")
-
-
-def build_isolated_database_url(admin_database_url: str, database_name: str) -> str:
-    if not re.fullmatch(r"integration_credentials_smoke_[0-9a-f]{32}", database_name):
-        raise ValueError("Unsafe integration credential smoke database name.")
-    url = make_url(admin_database_url)
-    if not url.drivername.startswith("postgresql"):
-        raise ValueError("Credential smoke requires an isolated PostgreSQL database.")
-    return url.set(database=database_name).render_as_string(hide_password=False)
-
-
-def create_isolated_database(admin_database_url: str, database_name: str) -> None:
-    engine = create_engine(admin_database_url, isolation_level="AUTOCOMMIT")
-    try:
-        with engine.connect() as connection:
-            connection.execute(text(f'CREATE DATABASE "{database_name}"'))
-    finally:
-        engine.dispose()
-
-
-def drop_isolated_database(admin_database_url: str, database_name: str) -> None:
-    engine = create_engine(admin_database_url, isolation_level="AUTOCOMMIT")
-    try:
-        with engine.connect() as connection:
-            connection.execute(
-                text(
-                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                    "WHERE datname = :database_name AND pid <> pg_backend_pid()"
-                ),
-                {"database_name": database_name},
-            )
-            connection.execute(text(f'DROP DATABASE IF EXISTS "{database_name}"'))
-    finally:
-        engine.dispose()
-
-
-def available_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
-def wait_for_backend(api_url: str, process: subprocess.Popen, timeout: float = 30) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if process.poll() is not None:
-            raise RuntimeError("Isolated credential smoke backend exited before startup.")
-        try:
-            if httpx.get(f"{api_url}/health", timeout=1).status_code == 200:
-                return
-        except httpx.HTTPError:
-            pass
-        time.sleep(0.25)
-    raise TimeoutError("Isolated credential smoke backend did not become healthy.")
-
-
-def stop_process(process: subprocess.Popen | None) -> None:
-    if process is None or process.poll() is not None:
-        return
-    process.terminate()
-    try:
-        process.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=5)
 
 
 def main() -> None:

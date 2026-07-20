@@ -11,11 +11,13 @@ Implemented:
 - Batch intake persists and indexes canonical Amazon domain/ASIN identities, limits each request to 100 URLs, and serializes deduplication on both PostgreSQL and SQLite so concurrent operator requests reuse the same job by default.
 - Collection queue polling is bounded to the latest 100 jobs by default and supports limit/offset pagination; URL collection and manual HTML snapshot inputs keep independent state.
 - Backend collection worker CLI for processing pending Amazon URL collection jobs in batches.
+- The collection worker treats a candidate removed after queue selection as a lost claim, rolls back, and continues polling instead of restarting the process.
 - Persisted Amazon URL collection results as source products, including manual-action and failed collection states.
 - Structured Amazon source snapshots persist the full collected title, price, brand, bullets, description, image gallery, technical details, and discovered ASIN variants instead of reducing the source record to a URL/status shell.
 - Amazon `colorImages`/`colorToAsin` page data supplies high-resolution galleries before DOM thumbnails, including single-quoted JavaScript objects and maximum-area `main` image maps; displayed-ASIN validation prevents redirected pages from contaminating the requested product, and each discovered color ASIN receives only its own authoritative script gallery.
 - Collection history exposes a lightweight source summary and a lazy-loaded review panel for the full image gallery and variant evidence on desktop and mobile.
 - Operators can create an idempotent, site-specific draft from any discovered Amazon variant; the draft retains its source ASIN/attributes and prefers variant-specific images.
+- Non-selected Amazon variants can be queued for an independent page collection from the source review. The API preserves the Amazon country domain, validates snapshot membership, reuses the canonical site/ASIN/Mercado Libre-site task, and lets the resulting source and draft retain that variant's own price, images, and measurements.
 - Saved drafts expose their Amazon ASIN and variant attributes so operators can distinguish otherwise identical titles.
 - Amazon specification tables and detail bullets produce structured item/package weights and product/package dimensions while retaining the original label/value; source review exposes this evidence on desktop and mobile.
 - Selected-page measurements can suggest explicit Mercado Libre weight and dimension attributes only for the selected Amazon ASIN, preventing a sibling variant from inheriting unverified logistics data.
@@ -74,15 +76,16 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 216 passed, with 5 PostgreSQL-only tests skipped in the default run.
+- Backend suite: 224 passed, with 5 PostgreSQL-only tests skipped in the default run.
 - Docker PostgreSQL integration run: 5 passed, including concurrent collection, publish-job, and source-variant draft deduplication plus atomic draft-version invalidation under simultaneous edits.
 - PostgreSQL migrations through `20260720_0021` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, review execution metadata, structured source snapshots, source-variant draft bindings, structured source measurements, provider usage/request telemetry, and encrypted integration credentials.
 - The complete Alembic chain upgraded to head and downgraded to base successfully on a disposable D-drive SQLite database.
 - Frontend production build passed.
-- Desktop and mobile browser smoke passed for all 18 sites, Classic/Premium controls, two verified non-FULL shipping options, provider review metadata/token/request-ID rows, four write-only integration credential controls, credential-gated store authorization, batch result rows, three source images, three source variants, two source measurements, variant draft creation, three category attribute suggestions, required-attribute save gates, saved configuration readiness, overflow, console errors, and failed responses.
+- Desktop and mobile browser smoke passed for all 18 sites, Classic/Premium controls, two verified non-FULL shipping options, provider review metadata/token/request-ID rows, four write-only integration credential controls, credential-gated store authorization, batch result rows, three source images, three source variants, domain-aware independent variant collection actions, disabled existing-task states, two source measurements, variant draft creation, three category attribute suggestions, required-attribute save gates, saved configuration readiness, overflow, console errors, and failed responses.
 - A live local PostgreSQL/API/browser integration smoke inserted a temporary collected source, read its structured measurements through the running backend, rendered both cards in the real frontend, and removed the test records afterward.
 - A live local PostgreSQL/API/browser integration smoke persisted temporary provider token/request telemetry, read it through the running backend, rendered it in review history, and removed the draft, review, and audit records afterward.
 - A live local PostgreSQL/API/browser integration smoke creates a temporary database, applies all migrations, starts an isolated API, verifies four ciphertext-only credential rows and status-only UI rendering, then terminates the API and drops the database without touching production credential rows.
+- An isolated PostgreSQL/API smoke applies all migrations, creates a unique Amazon source variant, verifies country-domain preservation and idempotent task reuse through a temporary API, then drops the database without exposing the task to the production collection worker.
 
 Next production phase:
 

@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.db.base import Base
 from app.models.collection_job import CollectionJob, CollectionJobStatus
@@ -106,6 +107,36 @@ async def test_worker_skips_job_claimed_by_another_worker(monkeypatch):
 
     assert summary["processed"] == 0
     assert summary["failed"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "lost_claim",
+    [
+        HTTPException(status_code=404, detail="deleted"),
+        StaleDataError("row disappeared"),
+    ],
+)
+async def test_worker_skips_job_removed_after_candidate_selection(monkeypatch, lost_claim):
+    testing_session = make_session()
+    with testing_session() as db:
+        db.add(CollectionJob(source_url="https://amazon.example/removed", target_site_id="MLM"))
+        db.commit()
+
+    async def removed_job(**kwargs):
+        raise lost_claim
+
+    monkeypatch.setattr(collection_worker, "run_collection_job", removed_job)
+    with testing_session() as db:
+        summary = await run_pending_collection_jobs(db)
+
+    assert summary == {
+        "processed": 0,
+        "completed": 0,
+        "needs_manual_action": 0,
+        "failed": 0,
+        "recovered": 0,
+    }
 
 
 @pytest.mark.asyncio

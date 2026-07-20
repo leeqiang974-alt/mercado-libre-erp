@@ -34,6 +34,7 @@
 - Preserve provider-reported input/output/total token usage and request IDs as execution evidence. Do not infer monetary cost without an explicit versioned price configuration. Surface 429 retry timing to the operator and never automatically resend a paid review request.
 - Persist Mercado Libre, Claude, and NVIDIA integration credentials only as encrypted values. Read APIs and audit events may expose configured status and changed key names, never credential values. API routes and workers must resolve the same database-backed credentials at execution time; an explicitly saved empty value disables the environment fallback.
 - Run integration-credential smoke tests against a migrated temporary database and isolated API process. Never snapshot, overwrite, or restore credential rows in the operator database; verify isolation by comparing production row counts before and after and checking that no temporary database remains.
+- Run any smoke test that creates a consumable collection or publish job against a migrated temporary database and isolated API process. Never insert then delete test jobs in the operator queue because a live worker can claim them; verify the production worker restart count is unchanged and no temporary database remains.
 
 ## Verification
 

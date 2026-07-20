@@ -64,6 +64,142 @@ def test_amazon_url_collection_job_can_be_created_and_listed():
         assert job.status == CollectionJobStatus.PENDING
 
 
+def test_source_variant_collection_job_preserves_domain_and_reuses_existing_job():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        source = SourceProduct(
+            source_url="https://www.amazon.com.mx/dp/B000TEST01",
+            asin="B000TEST01",
+            raw_status=SourceProductStatus.COLLECTED,
+            variants_json=[
+                {"asin": "B000TEST01", "attributes": {"Color": "Black"}},
+                {"asin": "B000TEST02", "attributes": {"Color": "Blue"}},
+            ],
+        )
+        db.add(source)
+        db.commit()
+        source_id = source.id
+
+    first = client.post(
+        f"/api/imports/source-products/{source_id}/variants/B000TEST02/collection-job",
+        json={"target_site_id": "MLB"},
+    )
+    repeated = client.post(
+        f"/api/imports/source-products/{source_id}/variants/b000test02/collection-job",
+        json={"target_site_id": "MLB"},
+    )
+
+    assert first.status_code == 200
+    assert first.json()["source_url"] == "https://amazon.com.mx/dp/B000TEST02"
+    assert first.json()["target_site_id"] == "MLB"
+    assert first.json()["status"] == "pending"
+    assert repeated.status_code == 200
+    assert repeated.json()["id"] == first.json()["id"]
+    with testing_session() as db:
+        assert db.query(CollectionJob).count() == 1
+
+
+def test_source_variant_collection_job_rejects_unknown_variant():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        source = SourceProduct(
+            source_url="https://amazon.com/dp/B000TEST01",
+            asin="B000TEST01",
+            raw_status=SourceProductStatus.COLLECTED,
+            variants_json=[{"asin": "B000TEST01", "attributes": {}}],
+        )
+        db.add(source)
+        db.commit()
+        source_id = source.id
+
+    response = client.post(
+        f"/api/imports/source-products/{source_id}/variants/B000TEST99/collection-job",
+        json={"target_site_id": "MLM"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "source_variant_not_found"
+    with testing_session() as db:
+        assert db.query(CollectionJob).count() == 0
+
+
+def test_source_variant_collection_job_persists_variant_page_evidence(monkeypatch):
+    client, testing_session = make_client()
+    with testing_session() as db:
+        source = SourceProduct(
+            source_url="https://amazon.com/dp/B000TEST01",
+            asin="B000TEST01",
+            raw_status=SourceProductStatus.COLLECTED,
+            variants_json=[
+                {"asin": "B000TEST01", "attributes": {"Color": "Black"}},
+                {"asin": "B000TEST02", "attributes": {"Color": "Blue"}},
+            ],
+        )
+        db.add(source)
+        db.commit()
+        source_id = source.id
+
+    async def collect_variant(source_url: str, target_site_id: str):
+        assert source_url == "https://amazon.com/dp/B000TEST02"
+        assert target_site_id == "MLB"
+        return CollectionResult(
+            status=CollectionStatus.COLLECTED,
+            source_url=source_url,
+            message="collected",
+            draft=ProductDraftCreate(
+                title="Blue variant",
+                target_site_id="MLB",
+                source_price=31.5,
+                source_currency="USD",
+                currency="BRL",
+                stock=1,
+                image_urls=["https://example.com/blue-hires.jpg"],
+            ),
+            source_snapshot=AmazonSourceSnapshot(
+                source_url=source_url,
+                title="Blue variant",
+                price={"amount": 31.5, "currency": "USD"},
+                images=["https://example.com/blue-hires.jpg"],
+                variants=[
+                    {
+                        "asin": "B000TEST02",
+                        "attributes": {"Color": "Blue"},
+                        "image_urls": ["https://example.com/blue-hires.jpg"],
+                        "selected": True,
+                    }
+                ],
+                measurements={
+                    "package_weight": {
+                        "value": 2.0,
+                        "unit": "lb",
+                        "raw": "2 pounds",
+                        "source_label": "Shipping Weight",
+                    }
+                },
+            ),
+        )
+
+    monkeypatch.setattr(imports, "collect_amazon_page", collect_variant)
+    queued = client.post(
+        f"/api/imports/source-products/{source_id}/variants/B000TEST02/collection-job",
+        json={"target_site_id": "MLB"},
+    )
+    executed = client.post(f"/api/imports/amazon-url/jobs/{queued.json()['id']}/run")
+
+    assert queued.status_code == 200
+    assert executed.status_code == 200
+    assert executed.json()["status"] == "completed"
+    assert executed.json()["source_product"]["asin"] == "B000TEST02"
+    assert executed.json()["source_product"]["source_price"] == 31.5
+    with testing_session() as db:
+        collected_source = db.get(SourceProduct, executed.json()["source_product_id"])
+        assert collected_source.image_urls_json == ["https://example.com/blue-hires.jpg"]
+        assert collected_source.measurements_json["package_weight"]["value"] == 2.0
+        draft = db.get(ProductDraft, executed.json()["draft_id"])
+        assert draft.source_variant_asin == "B000TEST02"
+        assert draft.source_price == 31.5
+
+
 def test_single_amazon_url_job_creation_reuses_existing_normalized_job():
     client, testing_session = make_client()
 

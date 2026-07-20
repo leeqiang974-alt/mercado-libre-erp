@@ -1,6 +1,7 @@
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.core.config import get_settings
 from app.models.collection_job import CollectionJob, CollectionJobStatus
@@ -43,8 +44,11 @@ async def run_pending_collection_jobs(
                 timeout_seconds=get_settings().job_execution_timeout_seconds,
             )
         except HTTPException as exc:
-            if exc.status_code != 409:
+            if exc.status_code not in {404, 409}:
                 raise
+            db.rollback()
+            continue
+        except StaleDataError:
             db.rollback()
             continue
         summary["processed"] += 1

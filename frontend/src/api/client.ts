@@ -450,6 +450,23 @@ export async function createSourceVariantDraft(
   return response.json() as Promise<ProductDraftRead>;
 }
 
+export async function createSourceVariantCollectionJob(
+  sourceProductId: number,
+  variantAsin: string,
+  targetSiteId: string,
+) {
+  const response = await fetch(
+    `${API_BASE}/api/imports/source-products/${sourceProductId}/variants/${variantAsin}/collection-job`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_site_id: targetSiteId }),
+    },
+  );
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<CollectionJobRecord>;
+}
+
 export async function runCollectionJob(jobId: number) {
   const response = await fetch(`${API_BASE}/api/imports/amazon-url/jobs/${jobId}/run`, {
     method: "POST",
