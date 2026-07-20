@@ -200,6 +200,117 @@ def test_source_variant_collection_job_persists_variant_page_evidence(monkeypatc
         assert draft.source_price == 31.5
 
 
+def test_source_variant_batch_creates_missing_and_reuses_existing_jobs():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        source = SourceProduct(
+            source_url="https://www.amazon.com.mx/dp/B000TEST01",
+            asin="B000TEST01",
+            raw_status=SourceProductStatus.COLLECTED,
+            variants_json=[
+                {"asin": "B000TEST01", "selected": True},
+                {"asin": "B000TEST02", "selected": False},
+                {"asin": "B000TEST03", "selected": False},
+                {"asin": "B000TEST03", "selected": True},
+                {"asin": "B000TEST04", "selected": False},
+                {"asin": "B000TEST04", "selected": False},
+            ],
+        )
+        existing = CollectionJob(
+            source_url="https://amazon.com.mx/dp/B000TEST02",
+            source_identity="https://amazon.com.mx/dp/B000TEST02",
+            target_site_id="MLB",
+        )
+        db.add_all([source, existing])
+        db.commit()
+        source_id = source.id
+        existing_id = existing.id
+
+    first = client.post(
+        f"/api/imports/source-products/{source_id}/variants/collection-jobs",
+        json={"target_site_id": "MLB"},
+    )
+    repeated = client.post(
+        f"/api/imports/source-products/{source_id}/variants/collection-jobs",
+        json={"target_site_id": "MLB"},
+    )
+
+    assert first.status_code == 200
+    assert first.json()["created_count"] == 1
+    assert first.json()["reused_count"] == 1
+    assert first.json()["skipped_selected_count"] == 2
+    assert [job["source_url"] for job in first.json()["jobs"]] == [
+        "https://amazon.com.mx/dp/B000TEST02",
+        "https://amazon.com.mx/dp/B000TEST04",
+    ]
+    assert first.json()["jobs"][0]["id"] == existing_id
+    assert repeated.status_code == 200
+    assert repeated.json()["created_count"] == 0
+    assert repeated.json()["reused_count"] == 2
+    assert [job["id"] for job in repeated.json()["jobs"]] == [
+        job["id"] for job in first.json()["jobs"]
+    ]
+    with testing_session() as db:
+        assert db.query(CollectionJob).count() == 2
+
+
+def test_collection_job_status_lookup_returns_requested_jobs_and_limits_batch():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        jobs = [
+            CollectionJob(source_url=f"https://amazon.com/dp/S{index:09d}", target_site_id="MLM")
+            for index in range(3)
+        ]
+        db.add_all(jobs)
+        db.commit()
+        job_ids = [job.id for job in jobs]
+
+    response = client.get(
+        "/api/imports/amazon-url/jobs/status",
+        params=[
+            ("job_ids", job_ids[2]),
+            ("job_ids", job_ids[0]),
+            ("job_ids", job_ids[2]),
+            ("job_ids", 999_999),
+        ],
+    )
+    over_limit = client.get(
+        "/api/imports/amazon-url/jobs/status",
+        params=[("job_ids", index) for index in range(201)],
+    )
+
+    assert response.status_code == 200
+    assert [job["id"] for job in response.json()] == [job_ids[2], job_ids[0]]
+    assert over_limit.status_code == 422
+    assert over_limit.json()["detail"] == "collection_job_status_limit_exceeded"
+
+
+def test_source_variant_batch_rejects_more_than_100_variants():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        source = SourceProduct(
+            source_url="https://amazon.com/dp/B000TEST01",
+            asin="B000TEST01",
+            raw_status=SourceProductStatus.COLLECTED,
+            variants_json=[
+                {"asin": f"X{index:09d}", "selected": False} for index in range(101)
+            ],
+        )
+        db.add(source)
+        db.commit()
+        source_id = source.id
+
+    response = client.post(
+        f"/api/imports/source-products/{source_id}/variants/collection-jobs",
+        json={"target_site_id": "MLM"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "source_variant_batch_limit_exceeded"
+    with testing_session() as db:
+        assert db.query(CollectionJob).count() == 0
+
+
 def test_single_amazon_url_job_creation_reuses_existing_normalized_job():
     client, testing_session = make_client()
 

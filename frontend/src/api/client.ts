@@ -427,6 +427,22 @@ export async function listCollectionJobs(limit = 100, offset = 0) {
   return response.json() as Promise<CollectionJobRecord[]>;
 }
 
+export async function listCollectionJobStatuses(jobIds: number[]) {
+  const uniqueIds = [...new Set(jobIds)];
+  const chunks = Array.from(
+    { length: Math.ceil(uniqueIds.length / 200) },
+    (_, index) => uniqueIds.slice(index * 200, (index + 1) * 200),
+  );
+  const pages = await Promise.all(chunks.map(async (chunk) => {
+    const params = new URLSearchParams();
+    chunk.forEach((jobId) => params.append("job_ids", String(jobId)));
+    const response = await fetch(`${API_BASE}/api/imports/amazon-url/jobs/status?${params}`);
+    if (!response.ok) throw new Error(await response.text());
+    return response.json() as Promise<CollectionJobRecord[]>;
+  }));
+  return pages.flat();
+}
+
 export async function getSourceProduct(sourceProductId: number) {
   const response = await fetch(`${API_BASE}/api/imports/source-products/${sourceProductId}`);
   if (!response.ok) throw new Error(await response.text());
@@ -465,6 +481,29 @@ export async function createSourceVariantCollectionJob(
   );
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<CollectionJobRecord>;
+}
+
+export type SourceVariantCollectionBatchResult = {
+  created_count: number;
+  reused_count: number;
+  skipped_selected_count: number;
+  jobs: CollectionJobRecord[];
+};
+
+export async function createSourceVariantCollectionJobs(
+  sourceProductId: number,
+  targetSiteId: string,
+) {
+  const response = await fetch(
+    `${API_BASE}/api/imports/source-products/${sourceProductId}/variants/collection-jobs`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_site_id: targetSiteId }),
+    },
+  );
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<SourceVariantCollectionBatchResult>;
 }
 
 export async function runCollectionJob(jobId: number) {

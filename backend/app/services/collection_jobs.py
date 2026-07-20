@@ -66,6 +66,32 @@ def list_collection_jobs(
     ]
 
 
+def list_collection_jobs_by_ids(
+    db: Session, job_ids: list[int]
+) -> list[CollectionJobRead]:
+    if not job_ids:
+        return []
+    rows = (
+        db.query(CollectionJob)
+        .filter(CollectionJob.id.in_(job_ids))
+        .order_by(CollectionJob.id.desc())
+        .all()
+    )
+    source_ids = {row.source_product_id for row in rows if row.source_product_id is not None}
+    sources = (
+        {
+            source.id: source
+            for source in db.query(SourceProduct).filter(SourceProduct.id.in_(source_ids)).all()
+        }
+        if source_ids
+        else {}
+    )
+    return [
+        to_collection_job_read(row, sources.get(row.source_product_id))
+        for row in rows
+    ]
+
+
 def recover_stale_collection_jobs(db: Session, stale_after_seconds: int) -> int:
     cutoff = datetime.now(UTC) - timedelta(seconds=stale_after_seconds)
     jobs = (

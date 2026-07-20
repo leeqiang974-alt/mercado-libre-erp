@@ -29,4 +29,4 @@ The repository contains an operational local workflow for Amazon URL collection 
 1. Configure a test Mercado Libre application and authorize one seller account for a controlled non-FULL publication.
 2. Configure Claude and NVIDIA credentials, run a real combined review, and retain provider/audit evidence.
 3. Verify live listing-type, category-attribute, shipping-preference, and post-publication responses for every target site used by the operator.
-4. Continue expanding Amazon fidelity for alternate script formats and make bulk independent variant collection practical for large variation families.
+4. Continue expanding Amazon fidelity for alternate script formats and page-specific per-variant dimensions/weight.

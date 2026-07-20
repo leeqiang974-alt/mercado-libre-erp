@@ -34,3 +34,10 @@ class CollectionBatchRead(BaseModel):
     existing_count: int
     invalid_count: int
     items: list[CollectionBatchItemRead]
+
+
+class SourceVariantCollectionBatchRead(BaseModel):
+    created_count: int
+    reused_count: int
+    skipped_selected_count: int
+    jobs: list[CollectionJobRead]

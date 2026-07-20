@@ -29,6 +29,7 @@ from app.services.collection_jobs import (
     create_collection_job,
     create_collection_jobs,
     list_collection_jobs,
+    list_collection_jobs_by_ids,
     run_collection_job,
     to_collection_job_read,
 )
@@ -36,6 +37,7 @@ from app.schemas.collection_jobs import (
     CollectionBatchItemRead,
     CollectionBatchRead,
     CollectionJobRead,
+    SourceVariantCollectionBatchRead,
 )
 from app.models.collection_job import CollectionJob
 from app.services.meli.sites import SITE_CURRENCIES
@@ -254,6 +256,17 @@ def get_amazon_url_collection_jobs(
     return list_collection_jobs(db, limit=limit, offset=offset)
 
 
+@router.get("/amazon-url/jobs/status", response_model=list[CollectionJobRead])
+def get_amazon_url_collection_job_statuses(
+    job_ids: list[int] = Query(default=[]),
+    db: Session = Depends(get_db),
+) -> list[CollectionJobRead]:
+    unique_ids = list(dict.fromkeys(job_ids))
+    if len(unique_ids) > 200:
+        raise HTTPException(status_code=422, detail="collection_job_status_limit_exceeded")
+    return list_collection_jobs_by_ids(db, unique_ids)
+
+
 @router.get("/source-products/{source_product_id}", response_model=SourceProductRead)
 def get_source_product(
     source_product_id: int,
@@ -327,6 +340,61 @@ def create_source_variant_collection_job(
         return to_collection_job_read(existing, existing_source)
     job = create_collection_job(db, variant_url, target_site_id)
     return to_collection_job_read(job)
+
+
+@router.post(
+    "/source-products/{source_product_id}/variants/collection-jobs",
+    response_model=SourceVariantCollectionBatchRead,
+)
+def create_source_variant_collection_jobs(
+    source_product_id: int,
+    payload: SourceVariantCollectionCreate,
+    db: Session = Depends(get_db),
+) -> SourceVariantCollectionBatchRead:
+    source = db.get(SourceProduct, source_product_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Source product not found.")
+    target_site_id = _target_site_or_422(payload.target_site_id)
+    normalized_source_url = _normalized_amazon_url_or_422(source.source_url)
+    source_parts = urlparse(normalized_source_url)
+    selected_source_asin = source.asin.strip().upper()
+    selected_by_asin: dict[str, bool] = {}
+    for variant in source.variants_json or []:
+        if not isinstance(variant, dict):
+            continue
+        asin = str(variant.get("asin", "")).strip().upper()
+        if not re.fullmatch(r"[A-Z0-9]{10}", asin):
+            continue
+        selected_by_asin[asin] = (
+            selected_by_asin.get(asin, False)
+            or bool(variant.get("selected"))
+            or asin == selected_source_asin
+        )
+    selected_asins = {asin for asin, selected in selected_by_asin.items() if selected}
+    variant_asins = [asin for asin, selected in selected_by_asin.items() if not selected]
+    if len(variant_asins) > 100:
+        raise HTTPException(status_code=422, detail="source_variant_batch_limit_exceeded")
+    variant_urls = [
+        f"{source_parts.scheme}://{source_parts.netloc}/dp/{asin}" for asin in variant_asins
+    ]
+    db.rollback()
+    _lock_collection_site(db, target_site_id)
+    existing_by_url = _existing_collection_jobs(db, target_site_id, set(variant_urls))
+    missing_urls = [url for url in variant_urls if url not in existing_by_url]
+    created_jobs = create_collection_jobs(
+        db, [(url, target_site_id) for url in missing_urls]
+    ) if missing_urls else []
+    jobs_by_url = {
+        **existing_by_url,
+        **{job.source_url: job for job in created_jobs},
+    }
+    jobs = [to_collection_job_read(jobs_by_url[url]) for url in variant_urls]
+    return SourceVariantCollectionBatchRead(
+        created_count=len(created_jobs),
+        reused_count=len(existing_by_url),
+        skipped_selected_count=len(selected_asins),
+        jobs=jobs,
+    )
 
 
 @router.post("/amazon-url/jobs/{job_id}/run", response_model=CollectionJobRead)

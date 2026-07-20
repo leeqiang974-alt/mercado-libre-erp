@@ -123,12 +123,21 @@ def main() -> None:
             timeout=15,
         )
         repeated.raise_for_status()
+        batch = httpx.post(
+            f"{api_url}/api/imports/source-products/{source_id}/variants/collection-jobs",
+            json={"target_site_id": "MLB"},
+            timeout=15,
+        )
+        batch.raise_for_status()
         job = first.json()
         job_id = int(job["id"])
         assert job["source_url"] == f"https://amazon.com.mx/dp/{variant_asin}"
         assert job["target_site_id"] == "MLB"
         assert job["status"] == "pending"
         assert repeated.json()["id"] == job_id
+        assert batch.json()["created_count"] == 0
+        assert batch.json()["reused_count"] == 1
+        assert [row["id"] for row in batch.json()["jobs"]] == [job_id]
         with session_factory() as db:
             assert db.query(CollectionJob).filter(CollectionJob.id == job_id).count() == 1
         print(

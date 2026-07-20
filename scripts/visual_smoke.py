@@ -13,6 +13,8 @@ APP_URL = os.getenv("VISUAL_APP_URL", "http://127.0.0.1:5173")
 
 
 def mock_store_capabilities(page: Page) -> None:
+    collection_status_requests = {"count": 0}
+    setattr(page, "_collection_status_requests", collection_status_requests)
     credential_state = {
         "meli_client_id_configured": False,
         "meli_client_secret_configured": False,
@@ -50,6 +52,11 @@ def mock_store_capabilities(page: Page) -> None:
     page.route("**/api/drafts/2/attribute-suggestions?*", fulfill_attribute_suggestions)
     page.route("**/api/metadata/categories/MLM123/attributes", fulfill_category_attributes)
     page.route("**/api/imports/amazon-url/jobs?*", fulfill_collection_jobs)
+    def tracked_collection_job_statuses(route) -> None:
+        collection_status_requests["count"] += 1
+        fulfill_collection_job_statuses(route)
+
+    page.route("**/api/imports/amazon-url/jobs/status?*", tracked_collection_job_statuses)
     page.route("**/api/imports/source-products/**", fulfill_source_product)
     page.route(
         "**/api/stores",
@@ -299,7 +306,61 @@ def fulfill_collection_jobs(route) -> None:
     )
 
 
+def fulfill_collection_job_statuses(route) -> None:
+    from urllib.parse import parse_qs, urlparse
+
+    requested_ids = {
+        int(value)
+        for value in parse_qs(urlparse(route.request.url).query).get("job_ids", [])
+    }
+    jobs = []
+    if 7004 in requested_ids:
+        jobs.append(
+            {
+                "id": 7004,
+                "source_url": "https://amazon.com/dp/B000TEST02",
+                "target_site_id": "MLM",
+                "status": "completed",
+                "message": "collected",
+                "source_product_id": 8004,
+                "draft_id": 4,
+                "created_at": "2026-07-20T12:10:00",
+                "started_at": "2026-07-20T12:10:01",
+                "completed_at": "2026-07-20T12:10:04",
+                "source_product": None,
+            }
+        )
+    route.fulfill(status=200, content_type="application/json", body=json.dumps(jobs))
+
+
 def fulfill_source_product(route) -> None:
+    if route.request.url.endswith("/variants/collection-jobs"):
+        job = {
+            "id": 7004,
+            "source_url": "https://amazon.com/dp/B000TEST02",
+            "target_site_id": "MLM",
+            "status": "pending",
+            "message": "",
+            "source_product_id": None,
+            "draft_id": None,
+            "created_at": "2026-07-20T12:10:00",
+            "started_at": None,
+            "completed_at": None,
+            "source_product": None,
+        }
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "created_count": 1,
+                    "reused_count": 0,
+                    "skipped_selected_count": 1,
+                    "jobs": [job],
+                }
+            ),
+        )
+        return
     if "/variants/" in route.request.url:
         asin = route.request.url.split("/variants/", 1)[1].split("/", 1)[0]
         body = json.loads(route.request.post_data or "{}")
@@ -505,6 +566,15 @@ def inspect_import_workspace(page: Page) -> dict[str, object]:
     )
     existing_variant_action = page.get_by_role("button", name="Failed #7003", exact=True)
     assert existing_variant_action.is_disabled(), "Existing variant job action must be disabled"
+    page.get_by_role("button", name="Collect 1 missing", exact=True).click()
+    queued_variant_action = page.get_by_role("button", name="Collected #7004", exact=True)
+    queued_variant_action.wait_for()
+    assert queued_variant_action.is_disabled(), "Bulk-created variant job action must be disabled"
+    page.get_by_role("button", name="1 queued · 0 existing", exact=True).wait_for()
+    status_requests = getattr(page, "_collection_status_requests")
+    assert status_requests["count"] == 1, "Expected one active variant status refresh"
+    page.wait_for_timeout(5500)
+    assert status_requests["count"] == 1, "Terminal variant task must stop status polling"
     assert source_measurements == 2, f"Expected 2 source measurements, got {source_measurements}"
     page.get_by_role("button", name="Create MLM draft", exact=True).last.click()
     page.get_by_role("button", name="Draft #8103", exact=True).wait_for()
@@ -526,6 +596,8 @@ def inspect_import_workspace(page: Page) -> dict[str, object]:
         "source_variants": source_variants,
         "collect_variant_actions": collect_variant_actions,
         "existing_variant_job_disabled": existing_variant_action.is_disabled(),
+        "bulk_variant_job_disabled": queued_variant_action.is_disabled(),
+        "terminal_variant_status_requests": status_requests["count"],
         "source_measurements": source_measurements,
         "horizontal_overflow": page.evaluate("document.documentElement.scrollWidth > innerWidth"),
     }

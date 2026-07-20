@@ -545,6 +545,10 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .source-measurements { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 6px; }
 .source-measurements span { display: grid; gap: 2px; padding: 7px 8px; border: 1px solid #d7dee8; background: #f8fafc; }
 .source-measurements small { color: #697586; }
+.source-variant-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 5px; }
+.source-variant-heading > span { display: grid; gap: 1px; }
+.source-variant-heading small { color: #697586; }
+.source-variant-heading .icon-text-button { min-height: 28px; padding: 4px 7px; font-size: 11px; }
 .source-variant-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 150px; overflow-y: auto; margin-top: 5px; }
 .source-variant-list > span { border: 1px solid #d7dee8; display: grid; gap: 1px; min-width: 0; max-width: 100%; padding: 5px 7px; font-size: 11px; }
 .source-variant-list > span.selected { border-color: #2563eb; box-shadow: inset 2px 0 #2563eb; }

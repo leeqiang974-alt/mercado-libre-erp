@@ -18,13 +18,17 @@ import {
 import {
   createCollectionJobsBatch,
   createSourceVariantCollectionJob,
+  createSourceVariantCollectionJobs,
   createSourceVariantDraft,
   getSourceProduct,
   listCollectionJobs,
+  listCollectionJobStatuses,
   runCollectionJob,
   type CollectionBatchResult,
   type CollectionJobRecord,
+  type AmazonSourceVariant,
   type SourceProductRecord,
+  type SourceVariantCollectionBatchResult,
 } from "../api/client";
 import { MERCADO_LIBRE_SITES } from "../domain/sites";
 
@@ -60,6 +64,22 @@ const AMAZON_DOMAINS = [
 function canonicalAmazonDomain(hostname: string) {
   const host = hostname.toLowerCase().replace(/\.$/, "");
   return AMAZON_DOMAINS.find((domain) => host === domain || host.endsWith(`.${domain}`)) ?? host;
+}
+
+function uniqueSourceVariants(variants: AmazonSourceVariant[]) {
+  const byAsin = new Map<string, AmazonSourceVariant>();
+  variants.forEach((variant) => {
+    const asin = variant.asin.trim().toUpperCase();
+    const normalized = { ...variant, asin };
+    const existing = byAsin.get(asin);
+    byAsin.set(asin, existing ? {
+      ...existing,
+      attributes: { ...existing.attributes, ...normalized.attributes },
+      image_urls: [...new Set([...existing.image_urls, ...normalized.image_urls])],
+      selected: existing.selected || normalized.selected,
+    } : normalized);
+  });
+  return [...byAsin.values()];
 }
 
 function jobIcon(status: CollectionJobRecord["status"]) {
@@ -132,14 +152,57 @@ export function ImportPage({
   const [sourceDetails, setSourceDetails] = useState<Record<number, SourceProductRecord>>({});
   const [expandedSourceId, setExpandedSourceId] = useState<number | null>(null);
   const [variantDraftIds, setVariantDraftIds] = useState<Record<string, number>>({});
+  const [knownVariantJobs, setKnownVariantJobs] = useState<Record<number, CollectionJobRecord>>({});
+  const [variantBatchResults, setVariantBatchResults] = useState<Record<string, SourceVariantCollectionBatchResult>>({});
   const collectionRequestEpoch = useRef(0);
+  const knownVariantJobsRef = useRef<Record<number, CollectionJobRecord>>({});
+
+  function setKnownVariantJobSnapshot(jobsById: Record<number, CollectionJobRecord>) {
+    const jobs = Object.values(jobsById);
+    const active = jobs.filter((job) => job.status === "pending" || job.status === "running");
+    const recentTerminal = jobs
+      .filter((job) => job.status !== "pending" && job.status !== "running")
+      .sort((left, right) => right.id - left.id)
+      .slice(0, 100);
+    const next = Object.fromEntries([...active, ...recentTerminal].map((job) => [job.id, job]));
+    knownVariantJobsRef.current = next;
+    setKnownVariantJobs(next);
+  }
+
+  function rememberVariantJobs(jobs: CollectionJobRecord[]) {
+    if (jobs.length === 0) return;
+    const next = {
+      ...knownVariantJobsRef.current,
+      ...Object.fromEntries(jobs.map((job) => [job.id, job])),
+    };
+    setKnownVariantJobSnapshot(next);
+  }
 
   const refreshCollectionJobs = useCallback(async (showError = true) => {
     const requestEpoch = ++collectionRequestEpoch.current;
     try {
-      const jobs = await listCollectionJobs();
+      const knownJobIds = Object.values(knownVariantJobsRef.current)
+        .filter((job) => job.status === "pending" || job.status === "running")
+        .map((job) => job.id);
+      const [jobs, knownStatuses] = await Promise.all([
+        listCollectionJobs(),
+        listCollectionJobStatuses(knownJobIds),
+      ]);
       if (requestEpoch === collectionRequestEpoch.current) {
         setCollectionJobs(jobs);
+        const nextKnown = { ...knownVariantJobsRef.current };
+        const freshById = new Map(
+          [...jobs, ...knownStatuses].map((job) => [job.id, job]),
+        );
+        knownJobIds.forEach((jobId) => {
+          const fresh = freshById.get(jobId);
+          if (fresh) nextKnown[jobId] = fresh;
+          else delete nextKnown[jobId];
+        });
+        jobs.forEach((job) => {
+          if (nextKnown[job.id]) nextKnown[job.id] = job;
+        });
+        setKnownVariantJobSnapshot(nextKnown);
       }
     } catch (jobError) {
       if (showError && requestEpoch === collectionRequestEpoch.current) {
@@ -207,7 +270,10 @@ export function ImportPage({
     setError("");
     setBusyAction(`job-${job.id}`);
     try {
-      await runCollectionJob(job.id);
+      const updated = await runCollectionJob(job.id);
+      if (knownVariantJobsRef.current[job.id]) {
+        rememberVariantJobs([updated]);
+      }
       await refreshCollectionJobs(false);
     } catch (jobError) {
       setError(jobError instanceof Error ? jobError.message : "Failed to run collection job");
@@ -274,11 +340,12 @@ export function ImportPage({
     setBusyAction(`collect-variant-${key}`);
     setError("");
     try {
-      await createSourceVariantCollectionJob(
+      const created = await createSourceVariantCollectionJob(
         sourceProductId,
         variantAsin,
         variantTargetSiteId,
       );
+      rememberVariantJobs([created]);
       await refreshCollectionJobs(false);
     } catch (variantError) {
       setError(variantError instanceof Error ? variantError.message : "Failed to collect variant");
@@ -287,7 +354,34 @@ export function ImportPage({
     }
   }
 
+  async function collectMissingSourceVariants(
+    sourceProductId: number,
+    variantTargetSiteId: string,
+  ) {
+    const key = `${sourceProductId}:${variantTargetSiteId}`;
+    setBusyAction(`collect-variant-batch-${key}`);
+    setError("");
+    try {
+      const result = await createSourceVariantCollectionJobs(
+        sourceProductId,
+        variantTargetSiteId,
+      );
+      setVariantBatchResults((current) => ({ ...current, [key]: result }));
+      rememberVariantJobs(result.jobs);
+      await refreshCollectionJobs(false);
+    } catch (variantError) {
+      setError(variantError instanceof Error ? variantError.message : "Failed to collect variants");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   const isBusy = Boolean(busyAction);
+  const displayedCollectionJobs = Array.from(
+    new Map(
+      [...Object.values(knownVariantJobs), ...collectionJobs].map((job) => [job.id, job]),
+    ).values(),
+  ).sort((left, right) => right.id - left.id);
   const urlEntries = sourceUrls
     .split(/\r?\n/)
     .map((entry) => entry.trim())
@@ -471,20 +565,36 @@ export function ImportPage({
         <div className="section-heading">
           <div>
             <h3 id="collection-queue-title">Collection queue</h3>
-            <p>{collectionJobs.length} jobs</p>
+            <p>{displayedCollectionJobs.length} jobs</p>
           </div>
         </div>
 
-        {collectionJobs.length === 0 ? (
+        {displayedCollectionJobs.length === 0 ? (
           <div className="empty-state compact-empty">
             <Clock3 size={24} />
             <strong>No collection jobs</strong>
           </div>
         ) : (
           <div className="collection-job-list">
-            {collectionJobs.map((job) => {
+            {displayedCollectionJobs.map((job) => {
               const canRun = job.status !== "running" && job.status !== "completed";
               const needsSnapshot = job.status === "needs_manual_action";
+              const sourceDetail = job.source_product
+                ? sourceDetails[job.source_product.id]
+                : undefined;
+              const sourceVariants = uniqueSourceVariants(sourceDetail?.snapshot?.variants ?? []);
+              const missingVariantCount = sourceVariants.filter(
+                (variant) => !variant.selected && !findVariantCollectionJob(
+                  displayedCollectionJobs,
+                  job.source_url,
+                  variant.asin,
+                  job.target_site_id,
+                ),
+              ).length ?? 0;
+              const variantBatchKey = job.source_product
+                ? `${job.source_product.id}:${job.target_site_id}`
+                : "";
+              const variantBatchResult = variantBatchResults[variantBatchKey];
               return (
                 <article className={`collection-job ${job.status}`} key={job.id}>
                   <div className={`collection-job-state ${job.status}`}>
@@ -544,10 +654,35 @@ export function ImportPage({
                                     ))}
                                 </div>
                               )}
+                              <div className="source-variant-heading">
+                                <span>
+                                  <strong>Variants</strong>
+                                  <small>{missingVariantCount} missing collections</small>
+                                </span>
+                                <button
+                                  className="icon-text-button"
+                                  disabled={isBusy || missingVariantCount === 0}
+                                  onClick={() => void collectMissingSourceVariants(
+                                    job.source_product!.id,
+                                    job.target_site_id,
+                                  )}
+                                >
+                                  {busyAction === `collect-variant-batch-${variantBatchKey}` ? (
+                                    <LoaderCircle className="spin" size={14} />
+                                  ) : (
+                                    <ListPlus size={14} />
+                                  )}
+                                  {variantBatchResult
+                                    ? `${variantBatchResult.created_count} queued · ${variantBatchResult.reused_count} existing`
+                                    : missingVariantCount > 0
+                                      ? `Collect ${missingVariantCount} missing`
+                                      : "All variants queued"}
+                                </button>
+                              </div>
                               <div className="source-variant-list">
-                                {sourceDetails[job.source_product.id].snapshot!.variants.map((variant) => {
+                                {sourceVariants.map((variant) => {
                                   const variantJob = findVariantCollectionJob(
-                                    collectionJobs,
+                                    displayedCollectionJobs,
                                     job.source_url,
                                     variant.asin,
                                     job.target_site_id,
