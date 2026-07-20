@@ -5,6 +5,7 @@ from app.db.session import get_db
 from app.schemas.draft_approvals import DraftApprovalCreate, DraftApprovalRead
 from app.schemas.draft_listing_config import DraftListingConfigRead, DraftListingConfigUpsert
 from app.schemas.drafts import ProductDraftRead
+from app.schemas.attribute_mapping import AttributeSuggestionRead
 from app.schemas.pricing import DraftPricingRead, DraftPricingUpsert
 from app.services.draft_approvals import approve_product_draft, to_approval_read
 from app.services.draft_listing_configs import (
@@ -14,6 +15,7 @@ from app.services.draft_listing_configs import (
 )
 from app.services.drafts import list_product_drafts
 from app.services.draft_pricing import get_draft_pricing, to_pricing_read, upsert_draft_pricing
+from app.services.meli.attribute_mapping import suggest_draft_category_attributes
 
 router = APIRouter(prefix="/api/drafts", tags=["drafts"])
 
@@ -67,6 +69,18 @@ def read_listing_config(
         if optional and exc.status_code == 404:
             return None
         raise
+
+
+@router.get(
+    "/{product_draft_id}/attribute-suggestions",
+    response_model=AttributeSuggestionRead,
+)
+def read_attribute_suggestions(
+    product_draft_id: int,
+    category_id: str = Query(..., min_length=1, max_length=40),
+    db: Session = Depends(get_db),
+) -> AttributeSuggestionRead:
+    return suggest_draft_category_attributes(db, product_draft_id, category_id)
 
 
 @router.post("/{product_draft_id}/approval", response_model=DraftApprovalRead)

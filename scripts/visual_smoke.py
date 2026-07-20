@@ -9,10 +9,18 @@ ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = ROOT / "artifacts"
 RUNTIME_TEMP = ARTIFACTS / "runtime-temp"
 CHROME = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
-APP_URL = "http://127.0.0.1:5173"
+APP_URL = os.getenv("VISUAL_APP_URL", "http://127.0.0.1:5173")
 
 
 def mock_store_capabilities(page: Page) -> None:
+    page.route("**/api/drafts", fulfill_drafts)
+    page.route(
+        "**/api/drafts/2/listing-config?optional=true",
+        fulfill_listing_config,
+    )
+    page.route("**/api/drafts/2/listing-config", fulfill_listing_config)
+    page.route("**/api/drafts/2/attribute-suggestions?*", fulfill_attribute_suggestions)
+    page.route("**/api/metadata/categories/MLM123/attributes", fulfill_category_attributes)
     page.route("**/api/imports/amazon-url/jobs?*", fulfill_collection_jobs)
     page.route("**/api/imports/source-products/**", fulfill_source_product)
     page.route(
@@ -41,6 +49,29 @@ def mock_store_capabilities(page: Page) -> None:
     page.route("**/api/reviews/drafts/*", fulfill_review_history)
 
 
+def fulfill_listing_config(route) -> None:
+    if route.request.method == "GET":
+        route.fulfill(status=200, content_type="application/json", body="null")
+        return
+    body = json.loads(route.request.post_data or "{}")
+    response = {
+        "id": 9201,
+        "product_draft_id": 2,
+        **body,
+        "attributes": [
+            {
+                **attribute,
+                "value_name": str(attribute.get("value_name") or "").strip(),
+                "value_id": attribute.get("value_id"),
+            }
+            for attribute in body.get("attributes", [])
+        ],
+        "created_at": "2026-07-20T12:00:00Z",
+        "updated_at": "2026-07-20T12:00:01Z",
+    }
+    route.fulfill(status=200, content_type="application/json", body=json.dumps(response))
+
+
 def _source_image(color: str) -> str:
     svg = (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120">'
@@ -51,7 +82,141 @@ def _source_image(color: str) -> str:
     return f"data:image/svg+xml,{quote(svg)}"
 
 
+def fulfill_drafts(route) -> None:
+    draft = {
+        "id": 2,
+        "source_product_id": 8001,
+        "source_variant_asin": "B000TEST03",
+        "source_variant_attributes": {"Color": "Blue", "Size": "32 oz"},
+        "title": "TrailPro Variant Bottle",
+        "description": "Insulated bottle.",
+        "brand": "TrailPro",
+        "target_site_id": "MLM",
+        "target_category_id": "",
+        "condition": "new",
+        "source_price": 24.99,
+        "source_currency": "USD",
+        "price": 599,
+        "currency": "MXN",
+        "stock": 1,
+        "listing_type_id": "",
+        "image_urls": [_source_image("#2563eb")],
+        "attributes": [],
+        "status": "draft",
+        "risk_status": "unreviewed",
+    }
+    route.fulfill(status=200, content_type="application/json", body=json.dumps([draft]))
+
+
+def fulfill_category_attributes(route) -> None:
+    attributes = {
+        "verified": True,
+        "attributes": [
+            {
+                "id": "COLOR",
+                "name": "Color principal",
+                "value_type": "list",
+                "values": [{"id": "52028", "name": "Blue"}, {"id": "52055", "name": "Black"}],
+                "tags": {"variation_attribute": True},
+            },
+            {
+                "id": "SIZE",
+                "name": "Talla",
+                "value_type": "list",
+                "values": [{"id": "S", "name": "Small"}],
+                "tags": {"variation_attribute": True, "required": True},
+            },
+            {
+                "id": "BRAND",
+                "name": "Marca",
+                "value_type": "string",
+                "values": [],
+                "tags": {"required": True},
+            },
+        ]
+    }
+    route.fulfill(status=200, content_type="application/json", body=json.dumps(attributes))
+
+
+def fulfill_attribute_suggestions(route) -> None:
+    response = {
+        "product_draft_id": 2,
+        "category_id": "MLM123",
+        "source_variant_asin": "B000TEST03",
+        "listing_strategy": "one_source_asin_per_item",
+        "suggestions": [
+            {
+                "source_name": "Color",
+                "source_value": "Blue",
+                "attribute_id": "COLOR",
+                "attribute_name": "Color principal",
+                "value_name": "Blue",
+                "value_id": "52028",
+                "confidence": 1,
+                "match_reason": "exact_attribute_name",
+                "required": False,
+                "variation_attribute": True,
+                "can_apply": True,
+            },
+            {
+                "source_name": "Size",
+                "source_value": "32 oz",
+                "attribute_id": "SIZE",
+                "attribute_name": "Talla",
+                "value_name": "32 oz",
+                "value_id": None,
+                "confidence": 0.95,
+                "match_reason": "semantic_attribute_alias",
+                "required": True,
+                "variation_attribute": True,
+                "can_apply": False,
+            },
+            {
+                "source_name": "Brand",
+                "source_value": "TrailPro",
+                "attribute_id": "BRAND",
+                "attribute_name": "Marca",
+                "value_name": "TrailPro",
+                "value_id": None,
+                "confidence": 0.95,
+                "match_reason": "semantic_attribute_alias",
+                "required": True,
+                "variation_attribute": False,
+                "can_apply": True,
+            },
+        ],
+        "unmatched_source_attributes": {},
+    }
+    route.fulfill(status=200, content_type="application/json", body=json.dumps(response))
+
+
 def fulfill_collection_jobs(route) -> None:
+    if route.request.url.endswith("/jobs/batch"):
+        body = json.loads(route.request.post_data or "{}")
+        items = [
+            {
+                "input_url": source_url,
+                "normalized_url": "",
+                "outcome": "invalid",
+                "detail": "only_public_amazon_product_urls_allowed",
+                "job": None,
+            }
+            for source_url in body.get("source_urls", [])
+        ]
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "created_count": 0,
+                    "duplicate_count": 0,
+                    "existing_count": 0,
+                    "invalid_count": len(items),
+                    "items": items,
+                }
+            ),
+        )
+        return
     row = {
         "id": 7001,
         "source_url": "https://amazon.com/dp/B000TEST01",
@@ -205,6 +370,8 @@ def select_first_draft(page: Page) -> None:
     rows.nth(0).click()
     page.get_by_role("heading", name="Product draft", exact=True).wait_for()
     page.locator(".product-summary").wait_for(state="visible")
+    page.get_by_text("Amazon variant · B000TEST03", exact=True).wait_for()
+    assert page.locator(".variant-provenance > div span").count() == 2
 
 
 def inspect_review_history(page: Page) -> dict[str, object]:
@@ -290,12 +457,34 @@ def inspect_publish_workspace(page: Page) -> dict[str, object]:
     assert "fulfillment" not in shipping.inner_text().lower()
     shipping.select_option("me2:self_service")
     page.get_by_text("FULL is filtered out and cannot be saved.", exact=False).wait_for()
+    page.get_by_label("Category ID", exact=True).fill("MLM123")
+    page.get_by_role("button", name="Load attributes", exact=True).click()
+    page.get_by_text("Amazon variant B000TEST03", exact=True).wait_for()
+    suggestions = page.locator(".attribute-suggestion")
+    assert suggestions.count() == 3
+    page.get_by_role("button", name="Apply exact matches", exact=True).click()
+    assert page.get_by_label("Color principal", exact=True).input_value() == "Blue"
+    assert page.get_by_label("Marca *", exact=True).input_value() == "TrailPro"
+    assert page.get_by_label("Talla *", exact=True).input_value() == ""
+    save_config = page.get_by_role("button", name="Save listing configuration", exact=True)
+    assert save_config.is_disabled(), "Missing required size must block config save"
+    page.get_by_label("Talla *", exact=True).fill(" 32 oz ")
+    assert save_config.is_enabled(), "Completing required attributes should unlock config save"
+    save_config.click()
+    page.get_by_text("Saved as non-FULL", exact=True).wait_for()
+    configured = page.locator(".publish-progress > div").filter(has_text="Configured")
+    page.wait_for_function(
+        "element => element.classList.contains('ready')",
+        arg=configured.element_handle(),
+    )
     return {
         "site_options": option_count,
         "classic_enabled": classic.is_enabled(),
         "premium_enabled": premium.is_enabled(),
         "shipping_options": shipping.locator("option").count() - 1,
         "selected_shipping": shipping.input_value(),
+        "attribute_suggestions": suggestions.count(),
+        "required_attribute_gate": True,
         "horizontal_overflow": page.evaluate("document.documentElement.scrollWidth > innerWidth"),
     }
 
@@ -337,7 +526,7 @@ def main() -> None:
             else None,
         )
         mock_store_capabilities(desktop)
-        desktop.goto(APP_URL, wait_until="networkidle")
+        desktop.goto(APP_URL, wait_until="domcontentloaded")
         desktop.get_by_text("Integration readiness", exact=True).wait_for()
         desktop.screenshot(path=ARTIFACTS / "overview-desktop.png", full_page=True)
         desktop_import = inspect_import_workspace(desktop)
@@ -364,7 +553,7 @@ def main() -> None:
             else None,
         )
         mock_store_capabilities(mobile)
-        mobile.goto(APP_URL, wait_until="networkidle")
+        mobile.goto(APP_URL, wait_until="domcontentloaded")
         mobile_import = inspect_import_workspace(mobile)
         mobile.screenshot(path=ARTIFACTS / "import-mobile.png", full_page=True)
         select_first_draft(mobile)

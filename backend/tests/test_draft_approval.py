@@ -29,7 +29,12 @@ def make_client(with_config: bool = True):
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with testing_session() as db:
-        db.add(MeliMetadataCache(cache_key="category_attributes:MLM123", payload_json={"attributes": []}))
+        db.add(
+            MeliMetadataCache(
+                cache_key="category_attributes:MLM123",
+                payload_json={"attributes": [{"id": "BRAND", "tags": {}}], "verified": True},
+            )
+        )
         store = Store(
             site_id="MLM",
             seller_id="seller-1",
@@ -201,9 +206,7 @@ def test_newer_behavioral_review_invalidates_old_review_and_approval(monkeypatch
     monkeypatch.setattr(publishing, "execute_publish", unexpected_publish)
     client, testing_session = make_client()
     review_result_id = seed_publish_review(testing_session)
-    approval_response = client.post(
-        "/api/drafts/1/approval", json={"approved_by": "operator"}
-    )
+    approval_response = client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
     assert approval_response.status_code == 200
     with testing_session() as db:
         draft = db.get(ProductDraft, 1)

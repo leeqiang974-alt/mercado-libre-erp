@@ -30,7 +30,12 @@ def make_client():
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with testing_session() as db:
-        db.add(MeliMetadataCache(cache_key="category_attributes:MLM123", payload_json={"attributes": []}))
+        db.add(
+            MeliMetadataCache(
+                cache_key="category_attributes:MLM123",
+                payload_json={"attributes": [{"id": "BRAND", "tags": {}}], "verified": True},
+            )
+        )
         store = Store(
             site_id="MLM",
             seller_id="seller-1",
@@ -49,16 +54,16 @@ def make_client():
             )
         )
         draft = ProductDraft(
-                title="Bottle",
-                description="Leak proof.",
-                target_site_id="MLM",
-                target_category_id="MLM123",
-                price=9.99,
-                currency="MXN",
-                stock=2,
-                listing_type_id="gold_special",
-                image_urls_json=["https://example.com/a.jpg"],
-            )
+            title="Bottle",
+            description="Leak proof.",
+            target_site_id="MLM",
+            target_category_id="MLM123",
+            price=9.99,
+            currency="MXN",
+            stock=2,
+            listing_type_id="gold_special",
+            image_urls_json=["https://example.com/a.jpg"],
+        )
         db.add(draft)
         db.flush()
         db.add_all(

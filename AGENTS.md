@@ -24,6 +24,7 @@
 - Never silently substitute local review for Claude or NVIDIA and present it as provider output.
 - Keep Amazon source currency separate from Mercado Libre target currency; never relabel an unconverted source price.
 - FULL fulfillment remains excluded. Supported listing choices come from live Mercado Libre metadata for the authorized store site.
+- Treat Mercado Libre category attributes as verified only when the cache explicitly records `verified: true`; cache presence, non-empty definitions, and legacy saved configurations must never bypass category validation at save, review, preview, queue, retry, worker, or execute boundaries.
 - Treat a lost or ambiguous Mercado Libre create-item response as an unknown outcome that requires store reconciliation; never retry it automatically.
 - Treat operator-provided Amazon HTML as a manual source. Require the requested ASIN to match a strong page identity signal, and never label it as independently collected.
 - Live publishing requires PostgreSQL row locking. SQLite is allowed only while live publishing is disabled.

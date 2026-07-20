@@ -17,7 +17,24 @@ SUPPORTED_NON_FULL_LOGISTIC_TYPES = {
 
 class ListingAttributeValue(BaseModel):
     id: str
-    value_name: str
+    value_name: str = ""
+    value_id: str | None = None
+
+    @field_validator("id")
+    @classmethod
+    def require_attribute_id(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if not normalized:
+            raise ValueError("Attribute ID is required.")
+        return normalized
+
+    @model_validator(mode="after")
+    def require_value(self):
+        if not self.value_name.strip() and not (self.value_id or "").strip():
+            raise ValueError("Attribute value_name or value_id is required.")
+        self.value_name = self.value_name.strip()
+        self.value_id = (self.value_id or "").strip() or None
+        return self
 
 
 class DraftListingConfigUpsert(BaseModel):
@@ -64,11 +81,22 @@ class DraftListingConfigUpsert(BaseModel):
             raise ValueError("A connected store requires a non-FULL shipping selection.")
         if self.shipping_mode and self.store_id is None:
             raise ValueError("Shipping selection must be bound to a connected store.")
+        attribute_ids = [attribute.id for attribute in self.attributes]
+        if len(attribute_ids) != len(set(attribute_ids)):
+            raise ValueError("Listing attribute IDs must be unique.")
         return self
 
 
-class DraftListingConfigRead(DraftListingConfigUpsert):
+class DraftListingConfigRead(BaseModel):
     id: int
     product_draft_id: int
+    site_id: str
+    store_id: int | None = None
+    category_id: str
+    listing_type_id: str
+    fulfillment: str
+    shipping_mode: str
+    shipping_logistic_type: str
+    attributes: list[ListingAttributeValue] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime

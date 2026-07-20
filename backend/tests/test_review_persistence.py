@@ -12,6 +12,7 @@ from app.db.session import get_db
 from app.main import app
 from app.models.product_draft import ProductDraft
 from app.models.draft_listing_config import DraftListingConfig
+from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.registry import import_all_models
 from app.models.review_result import ReviewResult
 from app.models.audit_event import AuditEvent
@@ -30,6 +31,12 @@ def make_client():
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with testing_session() as db:
+        db.add(
+            MeliMetadataCache(
+                cache_key="category_attributes:MLM123",
+                payload_json={"attributes": [], "verified": True},
+            )
+        )
         draft = ProductDraft(
                 title="Bottle",
                 target_site_id="MLM",

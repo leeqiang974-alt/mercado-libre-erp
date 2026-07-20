@@ -68,7 +68,12 @@ def make_client(with_store: bool = True, token_expires_in_seconds: int = 7200):
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with testing_session() as db:
-        db.add(MeliMetadataCache(cache_key="category_attributes:MLM123", payload_json={"attributes": []}))
+        db.add(
+            MeliMetadataCache(
+                cache_key="category_attributes:MLM123",
+                payload_json={"attributes": [{"id": "BRAND", "tags": {}}], "verified": True},
+            )
+        )
         if with_store:
             store = Store(
                 site_id="MLM",

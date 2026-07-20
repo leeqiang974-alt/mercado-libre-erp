@@ -28,6 +28,25 @@ def make_client():
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with testing_session() as db:
         db.add(
+            MeliMetadataCache(
+                cache_key="category_attributes:MLM123",
+                payload_json={
+                    "verified": True,
+                    "attributes": [
+                        {"id": "BRAND", "name": "Brand", "tags": {}},
+                        {"id": "MODEL", "name": "Model", "tags": {}},
+                        {
+                            "id": "COLOR",
+                            "name": "Color",
+                            "value_type": "list",
+                            "values": [{"id": "52028", "name": "Blue"}],
+                            "tags": {"variation_attribute": True},
+                        },
+                    ],
+                },
+            )
+        )
+        db.add(
             ProductDraft(
                 title="Bottle",
                 description="Leak proof.",
@@ -132,6 +151,197 @@ def test_listing_config_can_be_saved_and_read_for_draft():
         draft = db.get(ProductDraft, 1)
         assert draft.target_category_id == "MLM123"
         assert draft.listing_type_id == "gold_special"
+
+
+def test_source_variant_attributes_are_suggested_against_category_metadata():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        draft = db.get(ProductDraft, 1)
+        draft.brand = "TrailPro"
+        draft.source_variant_asin = "B000TEST02"
+        draft.source_variant_attributes_json = {"Color Name": "Blue", "Size": "32 oz"}
+        cache = db.query(MeliMetadataCache).one()
+        cache.payload_json = {
+                    "verified": True,
+                    "attributes": [
+                        {
+                            "id": "COLOR",
+                            "name": "Color principal",
+                            "value_type": "list",
+                            "values": [{"id": "52028", "name": "Blue"}],
+                            "tags": {"variation_attribute": True},
+                        },
+                        {
+                            "id": "SIZE",
+                            "name": "Talla",
+                            "value_type": "list",
+                            "values": [{"id": "S", "name": "Small"}],
+                            "tags": {"variation_attribute": True, "required": True},
+                        },
+                        {
+                            "id": "BRAND",
+                            "name": "Marca",
+                            "value_type": "string",
+                            "tags": {"required": True},
+                        },
+                    ],
+                }
+        db.commit()
+
+    response = client.get(
+        "/api/drafts/1/attribute-suggestions?category_id=mlm123"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source_variant_asin"] == "B000TEST02"
+    assert body["listing_strategy"] == "one_source_asin_per_item"
+    suggestions = {item["attribute_id"]: item for item in body["suggestions"]}
+    assert suggestions["COLOR"] | {
+        "value_id": "52028",
+        "value_name": "Blue",
+        "variation_attribute": True,
+        "can_apply": True,
+    } == suggestions["COLOR"]
+    assert suggestions["SIZE"]["value_name"] == "32 oz"
+    assert suggestions["SIZE"]["value_id"] is None
+    assert suggestions["SIZE"]["can_apply"] is False
+    assert suggestions["BRAND"]["value_name"] == "TrailPro"
+    assert suggestions["BRAND"]["can_apply"] is True
+
+
+def test_attribute_suggestions_require_cached_category_metadata():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        db.query(MeliMetadataCache).delete()
+        db.commit()
+
+    response = client.get(
+        "/api/drafts/1/attribute-suggestions?category_id=MLM123"
+    )
+
+    assert response.status_code == 409
+    assert "category_attributes_not_verified" in response.text
+
+
+def test_attribute_suggestions_do_not_match_modified_semantics():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        draft = db.get(ProductDraft, 1)
+        draft.source_variant_attributes_json = {"Color": "Blue", "Size": "32 oz"}
+        cache = db.query(MeliMetadataCache).one()
+        cache.payload_json = {
+            "verified": True,
+            "attributes": [
+                {"id": "SECONDARY_COLOR", "name": "Secondary color", "tags": {}},
+                {"id": "PACKAGE_SIZE", "name": "Package size", "tags": {}},
+            ],
+        }
+        db.commit()
+
+    response = client.get("/api/drafts/1/attribute-suggestions?category_id=MLM123")
+
+    assert response.status_code == 200
+    assert response.json()["suggestions"] == []
+    assert response.json()["unmatched_source_attributes"] == {
+        "Color": "Blue",
+        "Size": "32 oz",
+    }
+
+
+def test_legacy_duplicate_attributes_can_be_read_but_not_built():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        db.add(
+            DraftListingConfig(
+                product_draft_id=1,
+                store_id=1,
+                site_id="MLM",
+                category_id="MLM123",
+                listing_type_id="gold_special",
+                fulfillment="not_full",
+                shipping_mode="me2",
+                shipping_logistic_type="drop_off",
+                attributes_json=[
+                    {"id": "BRAND", "value_name": "Acme"},
+                    {"id": "brand", "value_name": "Other"},
+                ],
+            )
+        )
+        db.commit()
+
+    readable = client.get("/api/drafts/1/listing-config")
+    review = client.post(
+        "/api/reviews/local?product_draft_id=1",
+        json={
+            "title": "Bottle",
+            "target_site_id": "MLM",
+            "target_category_id": "MLM123",
+            "price": 9.99,
+            "currency": "MXN",
+            "stock": 2,
+            "image_urls": ["https://example.com/a.jpg"],
+        },
+    )
+
+    assert readable.status_code == 200
+    assert len(readable.json()["attributes"]) == 2
+    assert review.status_code == 409
+    assert review.json()["detail"] == {
+        "code": "listing_config_stale",
+        "errors": ["category_attribute_duplicate:BRAND"],
+    }
+
+
+def test_listing_config_preserves_value_ids_and_rejects_duplicate_attributes():
+    client, _ = make_client()
+    payload = config_payload() | {
+        "attributes": [
+            {"id": "COLOR", "value_id": "52028", "value_name": "Blue"},
+        ]
+    }
+
+    saved = client.put("/api/drafts/1/listing-config", json=payload)
+    duplicate = client.put(
+        "/api/drafts/1/listing-config",
+        json=payload
+        | {
+            "attributes": [
+                {"id": "COLOR", "value_name": "Blue"},
+                {"id": "color", "value_name": "Red"},
+            ]
+        },
+    )
+
+    assert saved.status_code == 200
+    assert saved.json()["attributes"] == [
+        {"id": "COLOR", "value_name": "Blue", "value_id": "52028"}
+    ]
+    assert duplicate.status_code == 422
+    assert "attribute IDs must be unique" in duplicate.text
+
+
+def test_listing_config_rejects_missing_required_cached_category_attribute():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        cache = db.query(MeliMetadataCache).one()
+        cache.payload_json = {
+                    "verified": True,
+                    "attributes": [
+                        {"id": "BRAND", "tags": {"required": True}},
+                        {"id": "COLOR", "tags": {"catalog_required": True}},
+                        {"id": "MODEL", "tags": {}},
+                    ],
+                }
+        db.commit()
+
+    response = client.put("/api/drafts/1/listing-config", json=config_payload())
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {
+        "code": "invalid_category_attributes",
+        "errors": ["required_category_attribute_missing:COLOR"],
+    }
 
 
 def test_existing_listing_config_update_persists_new_shipping_selection():
@@ -260,17 +470,15 @@ def test_publish_preview_blocks_missing_required_category_attribute():
     review_result_id = seed_publish_review(testing_session)
     client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
     with testing_session() as db:
-        db.add(
-            MeliMetadataCache(
-                cache_key="category_attributes:MLM123",
-                payload_json={
-                    "attributes": [
-                        {"id": "BRAND", "tags": {"required": True}},
-                        {"id": "GTIN", "tags": {"required": True}},
-                    ]
-                },
-            )
-        )
+        cache = db.query(MeliMetadataCache).one()
+        cache.payload_json = {
+                    "verified": True,
+                        "attributes": [
+                            {"id": "BRAND", "tags": {"required": True}},
+                            {"id": "MODEL", "tags": {}},
+                            {"id": "GTIN", "tags": {"required": True}},
+                    ],
+                }
         db.commit()
 
     response = client.post(
@@ -283,8 +491,8 @@ def test_publish_preview_blocks_missing_required_category_attribute():
         },
     )
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "allowed": False,
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "listing_config_stale",
         "errors": ["required_category_attribute_missing:GTIN"],
     }

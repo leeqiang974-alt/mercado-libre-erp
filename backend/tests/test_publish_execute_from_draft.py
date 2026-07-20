@@ -30,7 +30,12 @@ def make_client(with_config: bool = True):
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with testing_session() as db:
-        db.add(MeliMetadataCache(cache_key="category_attributes:MLM123", payload_json={"attributes": []}))
+        db.add(
+            MeliMetadataCache(
+                cache_key="category_attributes:MLM123",
+                payload_json={"attributes": [{"id": "BRAND", "tags": {}}], "verified": True},
+            )
+        )
         store = Store(
             site_id="MLM",
             seller_id="seller-1",
@@ -222,9 +227,7 @@ def test_publish_execute_from_draft_requires_saved_config(monkeypatch):
     monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
     client, _ = make_client(with_config=False)
 
-    response = client.post(
-        "/api/publishing/execute-from-draft", json=execute_payload(999)
-    )
+    response = client.post("/api/publishing/execute-from-draft", json=execute_payload(999))
 
     assert response.status_code == 404
     assert "Listing config not found" in response.text
@@ -257,9 +260,7 @@ def test_publish_execute_replays_existing_result_without_duplicate_item(monkeypa
     with testing_session() as db:
         assert db.query(PublishJob).count() == 1
         assert (
-            db.query(AuditEvent)
-            .filter(AuditEvent.action == "publish.idempotent_replay")
-            .count()
+            db.query(AuditEvent).filter(AuditEvent.action == "publish.idempotent_replay").count()
             == 1
         )
 

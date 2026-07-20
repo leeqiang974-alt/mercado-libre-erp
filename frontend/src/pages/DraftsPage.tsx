@@ -243,6 +243,16 @@ export function DraftsPage({
             <div>
               <h3>{draft.title || "Untitled product"}</h3>
               <p>{draft.brand || "Brand not captured"}</p>
+              {draft.source_variant_asin && (
+                <div className="variant-provenance">
+                  <span>Amazon variant · {draft.source_variant_asin}</span>
+                  <div>
+                    {Object.entries(draft.source_variant_attributes ?? {}).map(([name, value]) => (
+                      <span key={name}>{name}: {value}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="price-pair">
                 <span>Amazon source <strong>{draft.source_currency} {draft.source_price ?? "-"}</strong></span>
                 <span>Mercado Libre <strong>{draft.currency} {draft.price ?? "Not priced"}</strong></span>
@@ -331,6 +341,14 @@ export function DraftsPage({
               <span className="draft-copy">
                 <strong>{savedDraft.title}</strong>
                 <small>#{savedDraft.id} · {savedDraft.target_site_id} · source {savedDraft.source_currency} {savedDraft.source_price ?? "-"} · target {savedDraft.currency} {savedDraft.price ?? "not priced"}</small>
+                {savedDraft.source_variant_asin && (
+                  <small>
+                    {savedDraft.source_variant_asin}
+                    {Object.entries(savedDraft.source_variant_attributes).slice(0, 2).map(
+                      ([name, value]) => ` · ${name}: ${value}`,
+                    )}
+                  </small>
+                )}
               </span>
               <span className="draft-state">{savedDraft.risk_status}</span>
             </button>

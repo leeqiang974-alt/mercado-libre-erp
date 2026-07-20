@@ -42,7 +42,12 @@ def make_client():
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with testing_session() as db:
-        db.add(MeliMetadataCache(cache_key="category_attributes:MLM123", payload_json={"attributes": []}))
+        db.add(
+            MeliMetadataCache(
+                cache_key="category_attributes:MLM123",
+                payload_json={"attributes": [{"id": "BRAND", "tags": {}}], "verified": True},
+            )
+        )
         store = Store(
             site_id="MLM",
             seller_id="seller-e2e",
@@ -212,7 +217,11 @@ def test_full_fulfillment_is_rejected_before_queueing():
     client, _ = make_client()
     imported = client.post(
         "/api/imports/amazon-html",
-        json={"source_url": "https://www.amazon.com/dp/B000TEST01", "html": AMAZON_HTML, "persist": True},
+        json={
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
+            "html": AMAZON_HTML,
+            "persist": True,
+        },
     )
     draft_id = imported.json()["id"]
 

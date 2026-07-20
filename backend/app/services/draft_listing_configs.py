@@ -11,6 +11,7 @@ from app.schemas.drafts import ProductDraftCreate
 from app.schemas.publishing import ListingChoice
 from app.services.audit_events import create_audit_event
 from app.services.drafts import update_draft_content
+from app.services.meli.category_validation import validate_category_attributes
 
 
 def upsert_draft_listing_config(
@@ -29,6 +30,17 @@ def upsert_draft_listing_config(
             raise HTTPException(status_code=409, detail="Store is not connected.")
         if store.site_id.strip().upper() != payload.site_id.strip().upper():
             raise HTTPException(status_code=422, detail="Store site does not match listing site.")
+    category_errors = validate_category_attributes(
+        db,
+        payload.category_id,
+        [attribute.model_dump(exclude_none=True) for attribute in payload.attributes],
+        require_verified_metadata=True,
+    )
+    if category_errors:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_category_attributes", "errors": category_errors},
+        )
 
     config = (
         db.query(DraftListingConfig)
@@ -57,7 +69,9 @@ def upsert_draft_listing_config(
     config.fulfillment = payload.fulfillment
     config.shipping_mode = payload.shipping_mode
     config.shipping_logistic_type = payload.shipping_logistic_type
-    config.attributes_json = [attribute.model_dump() for attribute in payload.attributes]
+    config.attributes_json = [
+        attribute.model_dump(exclude_none=True) for attribute in payload.attributes
+    ]
     config.updated_at = datetime.now(UTC)
 
     update_draft_content(
@@ -103,11 +117,24 @@ def get_draft_listing_config(db: Session, product_draft_id: int) -> DraftListing
     return config
 
 
-def build_configured_draft(db: Session, product_draft_id: int) -> tuple[ProductDraftCreate, ListingChoice]:
+def build_configured_draft(
+    db: Session, product_draft_id: int
+) -> tuple[ProductDraftCreate, ListingChoice]:
     draft = db.get(ProductDraft, product_draft_id)
     if draft is None:
         raise HTTPException(status_code=404, detail="Product draft not found.")
     config = get_draft_listing_config(db, product_draft_id)
+    category_errors = validate_category_attributes(
+        db,
+        config.category_id,
+        config.attributes_json or [],
+        require_verified_metadata=True,
+    )
+    if category_errors:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "listing_config_stale", "errors": category_errors},
+        )
     return (
         ProductDraftCreate(
             title=draft.title,

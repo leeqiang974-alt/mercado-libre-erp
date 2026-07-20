@@ -34,7 +34,18 @@ def make_client(with_token: bool = True):
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with testing_session() as db:
-        db.add(MeliMetadataCache(cache_key="category_attributes:MLM123", payload_json={"attributes": []}))
+        db.add(
+            MeliMetadataCache(
+                cache_key="category_attributes:MLM123",
+                payload_json={"attributes": [{"id": "BRAND", "tags": {}}], "verified": True},
+            )
+        )
+        db.add(
+            MeliMetadataCache(
+                cache_key="category_attributes:MLA123",
+                payload_json={"attributes": [{"id": "BRAND", "tags": {}}], "verified": True},
+            )
+        )
         store = Store(
             site_id="MLM",
             seller_id="seller-1",
@@ -54,14 +65,14 @@ def make_client(with_token: bool = True):
                 )
             )
         draft = ProductDraft(
-                title="Persisted Bottle",
-                target_site_id="MLM",
-                target_category_id="MLM123",
-                price=9.99,
-                currency="MXN",
-                stock=2,
-                image_urls_json=["https://example.com/a.jpg"],
-            )
+            title="Persisted Bottle",
+            target_site_id="MLM",
+            target_category_id="MLM123",
+            price=9.99,
+            currency="MXN",
+            stock=2,
+            image_urls_json=["https://example.com/a.jpg"],
+        )
         db.add(draft)
         db.flush()
         db.add_all(
@@ -222,9 +233,7 @@ def test_publish_execute_quarantines_unexpected_adapter_exception(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["status"] == "blocked"
-    assert response.json()["errors"] == [
-        "publish_outcome_unknown_manual_reconciliation_required"
-    ]
+    assert response.json()["errors"] == ["publish_outcome_unknown_manual_reconciliation_required"]
     with testing_session() as db:
         job = db.query(PublishJob).one()
         assert job.status == PublishJobStatus.BLOCKED

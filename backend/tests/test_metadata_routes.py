@@ -107,3 +107,19 @@ def test_metadata_routes_proxy_category_attributes(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["attributes"][0]["id"] == "BRAND"
+
+
+def test_metadata_routes_reject_malformed_category_attributes(monkeypatch):
+    async def malformed_attributes(client, category_id: str):
+        raise ValueError("invalid_category_attributes_response")
+
+    monkeypatch.setattr(metadata, "fetch_category_attributes", malformed_attributes)
+    client = make_client()
+
+    response = client.get("/api/metadata/categories/MLM123/attributes")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "meli_metadata_unavailable",
+        "operation": "category attributes",
+    }

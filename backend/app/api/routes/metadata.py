@@ -57,7 +57,7 @@ async def _fetch_listing_types_with_transparent_fallback(
             fetch_listing_type_ids(create_metadata_client(), site_id),
             timeout=3.5,
         )
-    except (httpx.HTTPError, TimeoutError) as exc:
+    except (httpx.HTTPError, TimeoutError, ValueError) as exc:
         logger.warning("Mercado Libre listing types unavailable for %s: %s", site_id, exc)
         return {
             "listing_type_ids": STANDARD_LISTING_TYPE_IDS,
@@ -87,17 +87,20 @@ async def get_category_predictions(site_id: str, q: str = Query(...)) -> dict[st
 @router.get("/categories/{category_id}/attributes")
 async def get_category_attributes(
     category_id: str, db: Session = Depends(get_db)
-) -> dict[str, list[dict]]:
+) -> dict[str, object]:
     cached = get_cached_metadata(db, category_attributes_key(category_id))
     if cached:
-        return {"attributes": cached.get("attributes", [])}
+        return {
+            "attributes": cached.get("attributes", []),
+            "verified": cached.get("verified") is True,
+        }
     try:
         attributes = await asyncio.wait_for(
             fetch_category_attributes(create_metadata_client(), category_id), timeout=3.5
         )
-    except (httpx.HTTPError, TimeoutError) as exc:
+    except (httpx.HTTPError, TimeoutError, ValueError) as exc:
         raise _metadata_unavailable("category attributes", exc) from exc
-    payload = {"attributes": attributes}
+    payload = {"attributes": attributes, "verified": True}
     upsert_cached_metadata(db, category_attributes_key(category_id), payload)
     return payload
 
@@ -105,19 +108,19 @@ async def get_category_attributes(
 @router.post("/categories/{category_id}/attributes/refresh")
 async def refresh_category_attributes(
     category_id: str, db: Session = Depends(get_db)
-) -> dict[str, list[dict]]:
+) -> dict[str, object]:
     try:
         attributes = await asyncio.wait_for(
             fetch_category_attributes(create_metadata_client(), category_id), timeout=3.5
         )
-    except (httpx.HTTPError, TimeoutError) as exc:
+    except (httpx.HTTPError, TimeoutError, ValueError) as exc:
         raise _metadata_unavailable("category attributes", exc) from exc
-    payload = {"attributes": attributes}
+    payload = {"attributes": attributes, "verified": True}
     upsert_cached_metadata(db, category_attributes_key(category_id), payload)
     return payload
 
 
-def _metadata_unavailable(operation: str, exc: httpx.HTTPError) -> HTTPException:
+def _metadata_unavailable(operation: str, exc: Exception) -> HTTPException:
     logger.warning("Mercado Libre %s unavailable: %s", operation, exc)
     return HTTPException(
         status_code=503,

@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowRight,
   CheckCircle2,
   ListChecks,
   RefreshCw,
   Rocket,
   Save,
   Search,
+  Sparkles,
   Store,
   Truck,
 } from "lucide-react";
@@ -16,6 +18,7 @@ import {
   getCategoryAttributes,
   getCategoryPredictions,
   getDraftListingConfig,
+  getDraftAttributeSuggestions,
   getListingTypes,
   getStoreShippingOptions,
   getSystemReadiness,
@@ -27,6 +30,7 @@ import {
   retryPublishJob,
   saveDraftListingConfig,
   type DraftApproval,
+  type AttributeSuggestion,
   type DraftListingConfig,
   type ProductDraft,
   type PublishExecutionResult,
@@ -57,6 +61,26 @@ function shippingKey(option: ShippingOption) {
   return `${option.mode}:${option.logistic_type}`;
 }
 
+function readablePublishError(value: string) {
+  if (value === "category_attributes_not_verified") return "Refresh verified category attributes before publishing.";
+  if (value.startsWith("required_category_attribute_missing:")) {
+    return `${value.split(":", 2)[1]} is required.`;
+  }
+  if (value.startsWith("category_attribute_value_id_invalid:")) {
+    return `${value.split(":", 2)[1]} has an invalid category value.`;
+  }
+  if (value.startsWith("category_attribute_value_id_unverifiable:")) {
+    return `${value.split(":", 2)[1]} must be reselected from verified category values.`;
+  }
+  if (value.startsWith("category_attribute_unknown:")) {
+    return `${value.split(":", 2)[1]} is not available in this category.`;
+  }
+  if (value.includes("meli_metadata_unavailable")) {
+    return "Mercado Libre attribute metadata is temporarily unavailable.";
+  }
+  return value;
+}
+
 export function PublishingPage({
   draft,
   draftId,
@@ -77,7 +101,11 @@ export function PublishingPage({
   const [categoryId, setCategoryId] = useState("");
   const [predictions, setPredictions] = useState<Record<string, unknown>[]>([]);
   const [categoryAttributes, setCategoryAttributes] = useState<Record<string, unknown>[]>([]);
+  const [categoryAttributesVerified, setCategoryAttributesVerified] = useState(false);
   const [attributeValues, setAttributeValues] = useState<Record<string, string>>({});
+  const [attributeValueIds, setAttributeValueIds] = useState<Record<string, string>>({});
+  const [attributeSuggestions, setAttributeSuggestions] = useState<AttributeSuggestion[]>([]);
+  const [attributeError, setAttributeError] = useState("");
   const [savedConfig, setSavedConfig] = useState<DraftListingConfig | null>(null);
   const [approval, setApproval] = useState<DraftApproval | null>(null);
   const [preview, setPreview] = useState<PublishValidationResult | null>(null);
@@ -92,19 +120,32 @@ export function PublishingPage({
   const [readiness, setReadiness] = useState<SystemReadiness | null>(null);
   const [busy, setBusy] = useState("");
   const [status, setStatus] = useState("");
+  const initRequestEpochRef = useRef(0);
   const siteRequestEpochRef = useRef(0);
+  const listingTypeRequestEpochRef = useRef(0);
   const categoryPredictionEpochRef = useRef(0);
+  const categorySelectionEpochRef = useRef(0);
   const categoryAttributesEpochRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
-    siteRequestEpochRef.current += 1;
+    const initEpoch = ++initRequestEpochRef.current;
+    const initialSiteEpoch = ++siteRequestEpochRef.current;
+    const initialListingTypeEpoch = ++listingTypeRequestEpochRef.current;
+    const initialCategoryEpoch = ++categorySelectionEpochRef.current;
+    categoryAttributesEpochRef.current += 1;
     if (!draft) return () => { cancelled = true; };
     const nextSite = draft.target_site_id;
     setSiteId(nextSite);
     setListingTypes([]);
     setListingTypeId("");
     setCategoryId(draft.target_category_id || "");
+    setCategoryAttributes([]);
+    setCategoryAttributesVerified(false);
+    setAttributeValues({});
+    setAttributeValueIds({});
+    setAttributeSuggestions([]);
+    setAttributeError("");
     setSavedConfig(null);
     setPreview(null);
     setApproval(null);
@@ -118,13 +159,16 @@ export function PublishingPage({
       configRequest,
     ])
       .then(([system, storeRows, jobRows, metadata, config]) => {
-        if (cancelled) return;
+        if (cancelled || initRequestEpochRef.current !== initEpoch) return;
         setReadiness(system);
         setStores(storeRows);
         setJobs(jobRows);
-        setListingTypes(metadata.listing_type_ids);
-        setListingTypesVerified(metadata.verified);
-        if (config) {
+        if (listingTypeRequestEpochRef.current === initialListingTypeEpoch) {
+          setListingTypes(metadata.listing_type_ids);
+          setListingTypesVerified(metadata.verified);
+        }
+        if (siteRequestEpochRef.current !== initialSiteEpoch) return;
+        if (config && categorySelectionEpochRef.current === initialCategoryEpoch) {
           setSavedConfig(config);
           setSiteId(config.site_id);
           setStoreId(config.store_id ? String(config.store_id) : "");
@@ -138,6 +182,14 @@ export function PublishingPage({
           setAttributeValues(
             Object.fromEntries(config.attributes.map((item) => [item.id, item.value_name])),
           );
+          setAttributeValueIds(
+            Object.fromEntries(
+              config.attributes
+                .filter((item) => item.value_id)
+                .map((item) => [item.id, item.value_id as string]),
+            ),
+          );
+          void loadAttributes(false, config.category_id);
           return;
         }
         const matchingStore = storeRows.find(
@@ -150,7 +202,7 @@ export function PublishingPage({
         setListingTypeId(defaultType);
       })
       .catch((error) => {
-        if (!cancelled) {
+        if (!cancelled && initRequestEpochRef.current === initEpoch) {
           setStatus(error instanceof Error ? error.message : "Failed to load publish data");
         }
       });
@@ -210,13 +262,39 @@ export function PublishingPage({
     }),
     [categoryAttributes],
   );
+  const visibleAttributes = useMemo(() => {
+    const suggestedIds = new Set(attributeSuggestions.map((item) => item.attribute_id));
+    return categoryAttributes.filter((attribute) => {
+      const id = String(attribute.id ?? "");
+      const tags = attribute.tags as Record<string, unknown> | undefined;
+      return Boolean(tags?.required || tags?.catalog_required || suggestedIds.has(id));
+    });
+  }, [attributeSuggestions, categoryAttributes]);
   const currentAttributes = useMemo(
     () => Object.entries(attributeValues)
       .filter(([, value]) => value.trim())
-      .map(([id, value_name]) => ({ id, value_name }))
+      .map(([id, value_name]) => ({
+        id,
+        value_name: value_name.trim(),
+        ...(attributeValueIds[id] ? { value_id: attributeValueIds[id] } : {}),
+      }))
       .sort((left, right) => left.id.localeCompare(right.id)),
-    [attributeValues],
+    [attributeValueIds, attributeValues],
   );
+  const normalizedSavedAttributes = useMemo(
+    () => (savedConfig?.attributes ?? [])
+      .map(({ id, value_name, value_id }) => ({
+        id,
+        value_name: value_name.trim(),
+        ...(value_id ? { value_id } : {}),
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+    [savedConfig],
+  );
+  const missingRequiredAttributes = requiredAttributes.filter((attribute) => {
+    const id = String(attribute.id ?? "");
+    return !attributeValues[id]?.trim();
+  });
   const currentConfigFingerprint = JSON.stringify({
     draft_id: draftId,
     review_result_id: review?.review_result_id ?? null,
@@ -241,6 +319,8 @@ export function PublishingPage({
 
   async function changeSite(nextSite: string) {
     const requestEpoch = ++siteRequestEpochRef.current;
+    const listingTypeEpoch = ++listingTypeRequestEpochRef.current;
+    categorySelectionEpochRef.current += 1;
     categoryPredictionEpochRef.current += 1;
     categoryAttributesEpochRef.current += 1;
     setSiteId(nextSite);
@@ -249,7 +329,11 @@ export function PublishingPage({
     setCategoryId("");
     setPredictions([]);
     setCategoryAttributes([]);
+    setCategoryAttributesVerified(false);
     setAttributeValues({});
+    setAttributeValueIds({});
+    setAttributeSuggestions([]);
+    setAttributeError("");
     setSavedConfig(null);
     setPreview(null);
     setShippingOptions([]);
@@ -259,35 +343,44 @@ export function PublishingPage({
     setBusy("listing-types");
     try {
       const result = await getListingTypes(nextSite);
-      if (siteRequestEpochRef.current !== requestEpoch) return;
+      if (
+        siteRequestEpochRef.current !== requestEpoch
+        || listingTypeRequestEpochRef.current !== listingTypeEpoch
+      ) return;
       setListingTypes(result.listing_type_ids);
       setListingTypesVerified(result.verified);
       if (result.listing_type_ids.includes("gold_special")) setListingTypeId("gold_special");
       else if (result.listing_type_ids.includes("gold_pro")) setListingTypeId("gold_pro");
     } catch (error) {
-      if (siteRequestEpochRef.current === requestEpoch) {
+      if (
+        siteRequestEpochRef.current === requestEpoch
+        && listingTypeRequestEpochRef.current === listingTypeEpoch
+      ) {
         setStatus(error instanceof Error ? error.message : "Failed to load listing types");
       }
     } finally {
-      if (siteRequestEpochRef.current === requestEpoch) setBusy("");
+      if (
+        siteRequestEpochRef.current === requestEpoch
+        && listingTypeRequestEpochRef.current === listingTypeEpoch
+      ) setBusy("");
     }
   }
 
   async function refreshCommercialTypes() {
-    const requestEpoch = ++siteRequestEpochRef.current;
+    const requestEpoch = ++listingTypeRequestEpochRef.current;
     setBusy("listing-types");
     setStatus("");
     try {
       const result = await refreshListingTypes(siteId);
-      if (siteRequestEpochRef.current !== requestEpoch) return;
+      if (listingTypeRequestEpochRef.current !== requestEpoch) return;
       setListingTypes(result.listing_type_ids);
       setListingTypesVerified(result.verified);
     } catch (error) {
-      if (siteRequestEpochRef.current === requestEpoch) {
+      if (listingTypeRequestEpochRef.current === requestEpoch) {
         setStatus(error instanceof Error ? error.message : "Failed to refresh listing types");
       }
     } finally {
-      if (siteRequestEpochRef.current === requestEpoch) setBusy("");
+      if (listingTypeRequestEpochRef.current === requestEpoch) setBusy("");
     }
   }
 
@@ -309,21 +402,34 @@ export function PublishingPage({
     }
   }
 
-  async function loadAttributes(force = false) {
-    if (!categoryId) return;
-    const requestedCategoryId = categoryId;
+  async function loadAttributes(force = false, categoryOverride = "") {
+    const requestedCategoryId = categoryOverride || categoryId;
+    if (!requestedCategoryId) return;
     const requestEpoch = ++categoryAttributesEpochRef.current;
     setBusy("attributes");
     setStatus("");
+    setAttributeError("");
     try {
       const result = force
         ? await refreshCategoryAttributes(requestedCategoryId)
         : await getCategoryAttributes(requestedCategoryId);
       if (categoryAttributesEpochRef.current !== requestEpoch) return;
       setCategoryAttributes(result.attributes);
+      setCategoryAttributesVerified(result.verified);
+      if (!result.verified) {
+        setAttributeError("Refresh verified category attributes before publishing.");
+        setAttributeSuggestions([]);
+        return;
+      }
+      if (draftId) {
+        const mapped = await getDraftAttributeSuggestions(draftId, requestedCategoryId);
+        if (categoryAttributesEpochRef.current !== requestEpoch) return;
+        setAttributeSuggestions(mapped.suggestions);
+      }
     } catch (error) {
       if (categoryAttributesEpochRef.current === requestEpoch) {
-        setStatus(error instanceof Error ? error.message : "Failed to load attributes");
+        const message = error instanceof Error ? error.message : "Failed to load attributes";
+        setAttributeError(readablePublishError(message));
       }
     } finally {
       if (categoryAttributesEpochRef.current === requestEpoch) setBusy("");
@@ -331,17 +437,42 @@ export function PublishingPage({
   }
 
   function changeCategory(nextCategoryId: string) {
+    categorySelectionEpochRef.current += 1;
     categoryPredictionEpochRef.current += 1;
     categoryAttributesEpochRef.current += 1;
     setCategoryId(nextCategoryId);
     setCategoryAttributes([]);
+    setCategoryAttributesVerified(false);
     setAttributeValues({});
+    setAttributeValueIds({});
+    setAttributeSuggestions([]);
+    setAttributeError("");
     setSavedConfig(null);
     setPreview(null);
     setPreviewFingerprint("");
     setBusy((current) => (
       current === "category" || current === "attributes" ? "" : current
     ));
+  }
+
+  function applyAttributeSuggestion(suggestion: AttributeSuggestion) {
+    if (!suggestion.can_apply) return;
+    setAttributeValues((values) => ({
+      ...values,
+      [suggestion.attribute_id]: suggestion.value_name,
+    }));
+    setAttributeValueIds((values) => {
+      const next = { ...values };
+      if (suggestion.value_id) next[suggestion.attribute_id] = suggestion.value_id;
+      else delete next[suggestion.attribute_id];
+      return next;
+    });
+    setSavedConfig(null);
+    setPreview(null);
+  }
+
+  function applyExactSuggestions() {
+    attributeSuggestions.filter((item) => item.can_apply).forEach(applyAttributeSuggestion);
   }
 
   async function saveConfig() {
@@ -469,9 +600,9 @@ export function PublishingPage({
       && selectedShipping
       && savedConfig.shipping_mode === selectedShipping.mode
       && savedConfig.shipping_logistic_type === selectedShipping.logistic_type
-      && JSON.stringify(
-        [...savedConfig.attributes].sort((left, right) => left.id.localeCompare(right.id)),
-      ) === JSON.stringify(currentAttributes),
+      && categoryAttributesVerified
+      && JSON.stringify(normalizedSavedAttributes) === JSON.stringify(currentAttributes)
+      && missingRequiredAttributes.length === 0
   );
   const canApprove = pricingValid && reviewPassed && configReady;
   const canPreview = canApprove && Boolean(approval);
@@ -567,12 +698,97 @@ export function PublishingPage({
           const id = String(prediction.category_id ?? "");
           return <button key={id} className={categoryId === id ? "selected" : ""} onClick={() => changeCategory(id)}>{String(prediction.category_name ?? prediction.domain_name ?? id)}<small>{id}</small></button>;
         })}</div>}
-        {requiredAttributes.length > 0 && <div className="form-grid two-col attribute-grid">{requiredAttributes.map((attribute) => {
+        {attributeSuggestions.length > 0 && (
+          <div className="attribute-mapping">
+            <div className="attribute-mapping-heading">
+              <span>
+                <strong>Amazon variant {draft.source_variant_asin || "source"}</strong>
+                <small>{attributeSuggestions.length} category matches</small>
+              </span>
+              <button
+                className="secondary-button"
+                disabled={!attributeSuggestions.some((item) => item.can_apply)}
+                onClick={applyExactSuggestions}
+              >
+                <Sparkles size={16} /> Apply exact matches
+              </button>
+            </div>
+            <div className="attribute-suggestion-list">
+              {attributeSuggestions.map((suggestion) => (
+                <div className="attribute-suggestion" key={`${suggestion.source_name}-${suggestion.attribute_id}`}>
+                  <span><small>{suggestion.source_name}</small><strong>{suggestion.source_value}</strong></span>
+                  <ArrowRight size={15} />
+                  <span>
+                    <small>{suggestion.attribute_id}{suggestion.variation_attribute ? " · variation" : ""}</small>
+                    <strong>{suggestion.attribute_name}</strong>
+                  </span>
+                  {suggestion.can_apply ? (
+                    <button
+                      className="icon-text-button"
+                      onClick={() => applyAttributeSuggestion(suggestion)}
+                    >
+                      <Sparkles size={14} /> Apply
+                    </button>
+                  ) : (
+                    <span className="state-pill blocked">Manual entry</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {visibleAttributes.length > 0 && <div className="form-grid two-col attribute-grid">{visibleAttributes.map((attribute) => {
           const id = String(attribute.id ?? "");
-          return <label key={id}>{String(attribute.name ?? id)}<input value={attributeValues[id] ?? ""} onChange={(event) => setAttributeValues((values) => ({ ...values, [id]: event.target.value }))} /></label>;
+          const values = Array.isArray(attribute.values)
+            ? attribute.values.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === "object"))
+            : [];
+          const tags = attribute.tags as Record<string, unknown> | undefined;
+          const listId = `attribute-values-${id}`;
+          return (
+            <label key={id}>
+              {String(attribute.name ?? id)}{tags?.required || tags?.catalog_required ? " *" : ""}
+              <input
+                list={values.length ? listId : undefined}
+                aria-invalid={Boolean((tags?.required || tags?.catalog_required) && !attributeValues[id]?.trim())}
+                value={attributeValues[id] ?? ""}
+                onChange={(event) => {
+                  const valueName = event.target.value;
+                  const exactMatches = values.filter(
+                    (value) => String(value.name ?? "").toLocaleLowerCase() === valueName.toLocaleLowerCase(),
+                  );
+                  const exact = exactMatches.length === 1 ? exactMatches[0] : undefined;
+                  setAttributeValues((current) => ({ ...current, [id]: valueName }));
+                  setAttributeValueIds((current) => {
+                    const next = { ...current };
+                    if (exact?.id) next[id] = String(exact.id);
+                    else delete next[id];
+                    return next;
+                  });
+                  setSavedConfig(null);
+                  setPreview(null);
+                }}
+              />
+              {values.length > 0 && (
+                <datalist id={listId}>
+                  {values.map((value) => (
+                    <option key={String(value.id ?? value.name)} value={String(value.name ?? "")} />
+                  ))}
+                </datalist>
+              )}
+            </label>
+          );
         })}</div>}
+        {attributeError && <p className="inline-warning" role="alert">{attributeError}</p>}
+        {categoryId && !categoryAttributesVerified && !attributeError && (
+          <p className="inline-warning">Load verified category attributes before saving.</p>
+        )}
+        {missingRequiredAttributes.length > 0 && (
+          <p className="inline-warning">
+            {missingRequiredAttributes.length} required attribute{missingRequiredAttributes.length === 1 ? "" : "s"} remaining
+          </p>
+        )}
         {categoryAttributes.length > 0 && <div className="action-line"><span>{requiredAttributes.length} required · {categoryAttributes.length} total attributes loaded</span><button className="secondary-button" onClick={() => loadAttributes(true)}><RefreshCw size={16} /> Refresh metadata</button></div>}
-        <div className="action-line"><button onClick={saveConfig} disabled={!categoryId || !listingTypeId || !selectedShipping || !pricingValid || busy === "config"}><Save size={16} /> Save listing configuration</button>{savedConfig && <span className="success-text"><CheckCircle2 size={16} /> Saved as non-FULL</span>}</div>
+        <div className="action-line"><button onClick={saveConfig} disabled={!categoryId || !categoryAttributesVerified || !listingTypeId || !selectedShipping || !pricingValid || missingRequiredAttributes.length > 0 || busy === "config"}><Save size={16} /> Save listing configuration</button>{savedConfig && <span className="success-text"><CheckCircle2 size={16} /> Saved as non-FULL</span>}</div>
       </section>
 
       <section className="surface publish-section">
@@ -591,8 +807,8 @@ export function PublishingPage({
           <button className="secondary-button" disabled={!previewMatchesCurrentConfig || !selectedStore || busy === "queue" || busy === "config"} onClick={queuePublish}><Rocket size={16} /> Add to queue</button>
         </div>
         {!readiness?.mercado_libre.live_publish_enabled && <p className="inline-warning">Live publishing is disabled in server configuration.</p>}
-        {preview && <div className={`validation-result ${preview.allowed ? "ready" : "blocked"}`}><strong>{preview.allowed ? "Payload is ready" : "Payload is blocked"}</strong>{preview.errors.map((item) => <span key={item}>{item}</span>)}</div>}
-        {execution && <div className={`validation-result ${execution.status === "published" ? "ready" : "blocked"}`}><strong>{execution.status}</strong>{execution.item_id && <span>{execution.item_id}</span>}{execution.shipping_mode && <span>Shipping: {execution.shipping_mode}{execution.shipping_logistic_type ? ` · ${execution.shipping_logistic_type}` : ""}</span>}{execution.errors.map((item) => <span key={item}>{item}</span>)}</div>}
+        {preview && <div className={`validation-result ${preview.allowed ? "ready" : "blocked"}`}><strong>{preview.allowed ? "Payload is ready" : "Payload is blocked"}</strong>{preview.errors.map((item) => <span key={item}>{readablePublishError(item)}</span>)}</div>}
+        {execution && <div className={`validation-result ${execution.status === "published" ? "ready" : "blocked"}`}><strong>{execution.status}</strong>{execution.item_id && <span>{execution.item_id}</span>}{execution.shipping_mode && <span>Shipping: {execution.shipping_mode}{execution.shipping_logistic_type ? ` · ${execution.shipping_logistic_type}` : ""}</span>}{execution.errors.map((item) => <span key={item}>{readablePublishError(item)}</span>)}</div>}
       </section>
 
       {status && <p className="status-line">{status}</p>}

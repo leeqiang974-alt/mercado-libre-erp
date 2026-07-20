@@ -56,3 +56,18 @@ async def test_fetch_category_attributes_reads_attributes():
 
     assert result[0]["id"] == "BRAND"
     assert result[0]["tags"]["required"] is True
+
+
+@pytest.mark.asyncio
+async def test_fetch_category_attributes_rejects_malformed_definition():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[{"name": "Missing id", "tags": {"required": True}}],
+        )
+
+    with pytest.raises(ValueError, match="invalid_category_attribute_definition"):
+        await fetch_category_attributes(
+            MercadoLibreClient(transport=httpx.MockTransport(handler)),
+            "MLM123",
+        )

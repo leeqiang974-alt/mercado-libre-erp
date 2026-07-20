@@ -56,6 +56,21 @@ def test_build_item_payload_includes_listing_attributes():
     assert payload["attributes"] == [{"id": "BRAND", "value_name": "Acme"}]
 
 
+def test_build_item_payload_preserves_category_value_ids():
+    payload = build_item_payload(
+        complete_draft(),
+        ListingChoice(
+            site_id="MLM",
+            listing_type_id="gold_special",
+            attributes=[{"id": "COLOR", "value_id": "52028", "value_name": "Blue"}],
+        ),
+    )
+
+    assert payload["attributes"] == [
+        {"id": "COLOR", "value_id": "52028", "value_name": "Blue"}
+    ]
+
+
 def test_build_item_payload_includes_me2_shipping_fields():
     payload = build_item_payload(
         draft=complete_draft(),

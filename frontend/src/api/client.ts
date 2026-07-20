@@ -14,6 +14,9 @@ export type ProductDraft = {
   stock: number;
   listing_type_id: string;
   image_urls: string[];
+  source_product_id?: number | null;
+  source_variant_asin?: string;
+  source_variant_attributes?: Record<string, string>;
 };
 
 export type ProductDraftRead = ProductDraft & {
@@ -82,9 +85,32 @@ export type DraftListingConfig = {
   fulfillment: string;
   shipping_mode: string;
   shipping_logistic_type: string;
-  attributes: { id: string; value_name: string }[];
+  attributes: { id: string; value_name: string; value_id?: string | null }[];
   created_at: string;
   updated_at: string;
+};
+
+export type AttributeSuggestion = {
+  source_name: string;
+  source_value: string;
+  attribute_id: string;
+  attribute_name: string;
+  value_name: string;
+  value_id: string | null;
+  confidence: number;
+  match_reason: string;
+  required: boolean;
+  variation_attribute: boolean;
+  can_apply: boolean;
+};
+
+export type AttributeSuggestionResult = {
+  product_draft_id: number;
+  category_id: string;
+  source_variant_asin: string;
+  listing_strategy: string;
+  suggestions: AttributeSuggestion[];
+  unmatched_source_attributes: Record<string, string>;
 };
 
 export type ShippingOption = {
@@ -474,7 +500,19 @@ export async function getCategoryPredictions(siteId: string, query: string) {
 export async function getCategoryAttributes(categoryId: string) {
   const response = await fetch(`${API_BASE}/api/metadata/categories/${categoryId}/attributes`);
   if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<{ attributes: Record<string, unknown>[] }>;
+  return response.json() as Promise<{
+    attributes: Record<string, unknown>[];
+    verified: boolean;
+  }>;
+}
+
+export async function getDraftAttributeSuggestions(productDraftId: number, categoryId: string) {
+  const params = new URLSearchParams({ category_id: categoryId });
+  const response = await fetch(
+    `${API_BASE}/api/drafts/${productDraftId}/attribute-suggestions?${params}`,
+  );
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<AttributeSuggestionResult>;
 }
 
 export async function refreshCategoryAttributes(categoryId: string) {
@@ -482,7 +520,10 @@ export async function refreshCategoryAttributes(categoryId: string) {
     method: "POST",
   });
   if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<{ attributes: Record<string, unknown>[] }>;
+  return response.json() as Promise<{
+    attributes: Record<string, unknown>[];
+    verified: boolean;
+  }>;
 }
 
 export async function listPublishJobs() {
@@ -509,7 +550,7 @@ export async function saveDraftListingConfig(
     fulfillment: string;
     shipping_mode: string;
     shipping_logistic_type: string;
-    attributes: { id: string; value_name: string }[];
+    attributes: { id: string; value_name: string; value_id?: string | null }[];
   },
 ) {
   const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/listing-config`, {
