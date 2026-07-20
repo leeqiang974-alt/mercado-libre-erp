@@ -16,11 +16,21 @@ Collector = Callable[[str, str], Awaitable[CollectionResult]]
 
 
 def create_collection_job(db: Session, source_url: str, target_site_id: str) -> CollectionJob:
-    job = CollectionJob(source_url=source_url, target_site_id=target_site_id)
-    db.add(job)
+    return create_collection_jobs(db, [(source_url, target_site_id)])[0]
+
+
+def create_collection_jobs(
+    db: Session, entries: list[tuple[str, str]]
+) -> list[CollectionJob]:
+    jobs = [
+        CollectionJob(source_url=source_url, target_site_id=target_site_id)
+        for source_url, target_site_id in entries
+    ]
+    db.add_all(jobs)
     db.commit()
-    db.refresh(job)
-    return job
+    for job in jobs:
+        db.refresh(job)
+    return jobs
 
 
 def list_collection_jobs(db: Session) -> list[CollectionJobRead]:

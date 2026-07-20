@@ -1,5 +1,8 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -8,6 +11,7 @@ from app.schemas.drafts import PersistedDraftResponse, ProductDraftCreate
 from app.services.amazon.collector import (
     CollectionResult,
     collect_amazon_page,
+    normalize_amazon_product_url,
     validate_amazon_snapshot,
 )
 from app.services.amazon.normalizer import normalize_amazon_product
@@ -16,27 +20,41 @@ from app.services.source_products import create_source_product
 from app.models.source_product import SourceProductStatus
 from app.services.collection_jobs import (
     create_collection_job,
+    create_collection_jobs,
     list_collection_jobs,
     run_collection_job,
     to_collection_job_read,
 )
-from app.schemas.collection_jobs import CollectionJobRead
+from app.schemas.collection_jobs import (
+    CollectionBatchItemRead,
+    CollectionBatchRead,
+    CollectionJobRead,
+)
+from app.models.collection_job import CollectionJob
+from app.services.meli.sites import SITE_CURRENCIES
 
 router = APIRouter(prefix="/api/imports", tags=["imports"])
 settings = get_settings()
+AmazonProductUrl = Annotated[str, Field(max_length=2048)]
 
 
 class AmazonHtmlImport(BaseModel):
-    source_url: str
+    source_url: AmazonProductUrl
     html: str
     target_site_id: str = "MLM"
     persist: bool = False
 
 
 class AmazonUrlImport(BaseModel):
-    source_url: str
+    source_url: AmazonProductUrl
     target_site_id: str = "MLM"
     persist: bool = False
+
+
+class AmazonUrlBatchImport(BaseModel):
+    source_urls: list[AmazonProductUrl] = Field(min_length=1, max_length=100)
+    target_site_id: str = "MLM"
+    allow_existing: bool = False
 
 
 @router.post("/amazon-html")
@@ -66,7 +84,9 @@ def import_amazon_html(
 async def import_amazon_url(
     payload: AmazonUrlImport, db: Session = Depends(get_db)
 ) -> CollectionResult:
-    result = await collect_amazon_page(payload.source_url, payload.target_site_id)
+    source_url = _normalized_amazon_url_or_422(payload.source_url)
+    target_site_id = _target_site_or_422(payload.target_site_id)
+    result = await collect_amazon_page(source_url, target_site_id)
     if not payload.persist:
         return result
     status_map = {
@@ -76,7 +96,7 @@ async def import_amazon_url(
     }
     source = create_source_product(
         db,
-        source_url=payload.source_url,
+        source_url=source_url,
         status=status_map[result.status.value],
         collection_error="" if result.status.value == "collected" else result.message,
     )
@@ -97,12 +117,90 @@ async def import_amazon_url(
 def create_amazon_url_collection_job(
     payload: AmazonUrlImport, db: Session = Depends(get_db)
 ) -> CollectionJobRead:
+    normalized_url = _normalized_amazon_url_or_422(payload.source_url)
+    target_site_id = _target_site_or_422(payload.target_site_id)
+    _lock_collection_site(db, target_site_id)
+    if existing := _existing_collection_jobs(db, target_site_id).get(normalized_url):
+        return to_collection_job_read(existing)
     job = create_collection_job(
         db=db,
-        source_url=payload.source_url,
-        target_site_id=payload.target_site_id,
+        source_url=normalized_url,
+        target_site_id=target_site_id,
     )
     return to_collection_job_read(job)
+
+
+@router.post("/amazon-url/jobs/batch", response_model=CollectionBatchRead)
+def create_amazon_url_collection_jobs_batch(
+    payload: AmazonUrlBatchImport, db: Session = Depends(get_db)
+) -> CollectionBatchRead:
+    target_site_id = _target_site_or_422(payload.target_site_id)
+    existing_by_url: dict[str, CollectionJob] = {}
+    if not payload.allow_existing:
+        _lock_collection_site(db, target_site_id)
+        existing_by_url = _existing_collection_jobs(db, target_site_id)
+
+    seen: set[str] = set()
+    items: list[CollectionBatchItemRead | None] = []
+    entries: list[tuple[int, str]] = []
+    for input_url in payload.source_urls:
+        try:
+            normalized_url = normalize_amazon_product_url(input_url)
+        except ValueError as exc:
+            items.append(
+                CollectionBatchItemRead(
+                    input_url=input_url,
+                    outcome="invalid",
+                    detail=str(exc),
+                )
+            )
+            continue
+        if normalized_url in seen:
+            items.append(
+                CollectionBatchItemRead(
+                    input_url=input_url,
+                    normalized_url=normalized_url,
+                    outcome="duplicate_input",
+                    detail="duplicate_amazon_product_in_request",
+                )
+            )
+            continue
+        seen.add(normalized_url)
+        if existing := existing_by_url.get(normalized_url):
+            items.append(
+                CollectionBatchItemRead(
+                    input_url=input_url,
+                    normalized_url=normalized_url,
+                    outcome="existing",
+                    detail="collection_job_already_exists",
+                    job=to_collection_job_read(existing),
+                )
+            )
+            continue
+        item_index = len(items)
+        items.append(None)
+        entries.append((item_index, normalized_url))
+
+    jobs = create_collection_jobs(
+        db,
+        [(normalized_url, target_site_id) for _, normalized_url in entries],
+    ) if entries else []
+    for (item_index, normalized_url), job in zip(entries, jobs, strict=True):
+        items[item_index] = CollectionBatchItemRead(
+            input_url=payload.source_urls[item_index],
+            normalized_url=normalized_url,
+            outcome="created",
+            job=to_collection_job_read(job),
+        )
+
+    result_items = [item for item in items if item is not None]
+    return CollectionBatchRead(
+        created_count=sum(item.outcome == "created" for item in result_items),
+        duplicate_count=sum(item.outcome == "duplicate_input" for item in result_items),
+        existing_count=sum(item.outcome == "existing" for item in result_items),
+        invalid_count=sum(item.outcome == "invalid" for item in result_items),
+        items=result_items,
+    )
 
 
 @router.get("/amazon-url/jobs", response_model=list[CollectionJobRead])
@@ -121,3 +219,46 @@ async def run_amazon_url_collection_job(
         timeout_seconds=settings.job_execution_timeout_seconds,
     )
     return to_collection_job_read(job)
+
+
+def _normalized_amazon_url_or_422(source_url: str) -> str:
+    try:
+        return normalize_amazon_product_url(source_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _target_site_or_422(site_id: str) -> str:
+    normalized = site_id.strip().upper()
+    if normalized not in SITE_CURRENCIES:
+        raise HTTPException(status_code=422, detail="unsupported_mercado_libre_site")
+    return normalized
+
+
+def _lock_collection_site(db: Session, site_id: str) -> None:
+    dialect_name = db.get_bind().dialect.name
+    if dialect_name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_name))"),
+            {"lock_name": f"amazon_collection:{site_id}"},
+        )
+    elif dialect_name == "sqlite":
+        # Serialize the read-then-insert section across SQLite connections.
+        db.execute(text("BEGIN IMMEDIATE"))
+
+
+def _existing_collection_jobs(db: Session, site_id: str) -> dict[str, CollectionJob]:
+    rows = (
+        db.query(CollectionJob)
+        .filter(CollectionJob.target_site_id == site_id)
+        .order_by(CollectionJob.id.desc())
+        .all()
+    )
+    existing_by_url: dict[str, CollectionJob] = {}
+    for row in rows:
+        try:
+            normalized = normalize_amazon_product_url(row.source_url)
+        except ValueError:
+            continue
+        existing_by_url.setdefault(normalized, row)
+    return existing_by_url

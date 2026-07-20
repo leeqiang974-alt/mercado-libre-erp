@@ -5,17 +5,18 @@ import {
   Clock3,
   FileCode2,
   Link2,
+  ListPlus,
   LoaderCircle,
   Play,
-  Plus,
   RefreshCw,
   RotateCcw,
   Upload,
 } from "lucide-react";
 import {
-  createCollectionJob,
+  createCollectionJobsBatch,
   listCollectionJobs,
   runCollectionJob,
+  type CollectionBatchResult,
   type CollectionJobRecord,
 } from "../api/client";
 import { MERCADO_LIBRE_SITES } from "../domain/sites";
@@ -28,6 +29,19 @@ const JOB_LABELS: Record<CollectionJobRecord["status"], string> = {
   completed: "Collected",
   needs_manual_action: "Manual action",
   failed: "Failed",
+};
+
+const BATCH_LABELS: Record<CollectionBatchResult["items"][number]["outcome"], string> = {
+  created: "Queued",
+  duplicate_input: "Duplicate input",
+  existing: "Already exists",
+  invalid: "Invalid URL",
+};
+
+const BATCH_DETAILS: Record<string, string> = {
+  only_public_amazon_product_urls_allowed: "Use a public Amazon product URL",
+  duplicate_amazon_product_in_request: "Same product appears earlier in this batch",
+  collection_job_already_exists: "A collection job already exists",
 };
 
 function jobIcon(status: CollectionJobRecord["status"]) {
@@ -65,6 +79,8 @@ export function ImportPage({
   const [targetSiteId, setTargetSiteId] = useState("MLM");
   const [html, setHtml] = useState("");
   const [persist, setPersist] = useState(true);
+  const [allowExisting, setAllowExisting] = useState(false);
+  const [batchResult, setBatchResult] = useState<CollectionBatchResult | null>(null);
   const [collectionJobs, setCollectionJobs] = useState<CollectionJobRecord[]>([]);
   const [busyAction, setBusyAction] = useState("");
   const [error, setError] = useState("");
@@ -89,7 +105,7 @@ export function ImportPage({
     setError("");
     setBusyAction("collect");
     try {
-      await onCollectUrl(sourceUrl, targetSiteId);
+      await onCollectUrl(urlEntries[0], targetSiteId);
       await refreshCollectionJobs(false);
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : "Collection failed");
@@ -114,7 +130,8 @@ export function ImportPage({
     setError("");
     setBusyAction("queue");
     try {
-      await createCollectionJob(sourceUrl, targetSiteId);
+      const result = await createCollectionJobsBatch(urlEntries, targetSiteId, allowExisting);
+      setBatchResult(result);
       await refreshCollectionJobs(false);
     } catch (jobError) {
       setError(jobError instanceof Error ? jobError.message : "Failed to create collection job");
@@ -144,6 +161,11 @@ export function ImportPage({
   }
 
   const isBusy = Boolean(busyAction);
+  const urlEntries = sourceUrl
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const urlCountValid = urlEntries.length > 0 && urlEntries.length <= 100;
 
   return (
     <section className="workspace import-workspace">
@@ -186,17 +208,35 @@ export function ImportPage({
       <section className="surface import-source">
         <div className="form-grid two-col">
           <label>
-            Amazon product URL
-            <input
-              type="url"
-              placeholder="https://www.amazon.com/dp/..."
-              value={sourceUrl}
-              onChange={(event) => setSourceUrl(event.target.value)}
-            />
+            {mode === "url" ? "Amazon product URLs" : "Amazon product URL"}
+            {mode === "url" ? (
+              <textarea
+                className="batch-url-input"
+                placeholder={"https://www.amazon.com/dp/...\nhttps://www.amazon.ca/dp/..."}
+                value={sourceUrl}
+                onChange={(event) => {
+                  setSourceUrl(event.target.value);
+                  setBatchResult(null);
+                }}
+              />
+            ) : (
+              <input
+                type="url"
+                placeholder="https://www.amazon.com/dp/..."
+                value={sourceUrl}
+                onChange={(event) => setSourceUrl(event.target.value)}
+              />
+            )}
           </label>
           <label>
             Target Mercado Libre site
-            <select value={targetSiteId} onChange={(event) => setTargetSiteId(event.target.value)}>
+            <select
+              value={targetSiteId}
+              onChange={(event) => {
+                setTargetSiteId(event.target.value);
+                setBatchResult(null);
+              }}
+            >
               {MERCADO_LIBRE_SITES.map((site) => (
                 <option key={site.id} value={site.id}>
                   {site.country} ({site.id}) · {site.currency}
@@ -212,20 +252,61 @@ export function ImportPage({
               <AlertTriangle size={17} />
               <span>Amazon challenges are stopped and moved to manual snapshot handling.</span>
             </div>
+            <div className="batch-options">
+              <span className={urlEntries.length > 100 ? "error" : ""}>
+                {urlEntries.length} / 100 URLs
+              </span>
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={allowExisting}
+                  onChange={(event) => {
+                    setAllowExisting(event.target.checked);
+                    setBatchResult(null);
+                  }}
+                />
+                Queue previously imported URLs again
+              </label>
+            </div>
             <div className="button-row">
-              <button disabled={!sourceUrl.trim() || isBusy} onClick={runUrlCollection}>
+              <button disabled={urlEntries.length !== 1 || isBusy} onClick={runUrlCollection}>
                 {busyAction === "collect" ? <LoaderCircle className="spin" size={17} /> : <Play size={17} />}
                 Collect now
               </button>
               <button
                 className="secondary-button"
-                disabled={!sourceUrl.trim() || isBusy}
+                disabled={!urlCountValid || isBusy}
                 onClick={queueCollectionJob}
               >
-                {busyAction === "queue" ? <LoaderCircle className="spin" size={17} /> : <Plus size={17} />}
-                Add to queue
+                {busyAction === "queue" ? <LoaderCircle className="spin" size={17} /> : <ListPlus size={17} />}
+                {urlEntries.length > 1 ? `Add ${urlEntries.length} to queue` : "Add to queue"}
               </button>
             </div>
+            {batchResult && (
+              <div className="batch-result" aria-live="polite">
+                <div className="batch-result-summary">
+                  <strong>{batchResult.created_count} queued</strong>
+                  <span>{batchResult.existing_count} existing</span>
+                  <span>{batchResult.duplicate_count} duplicates</span>
+                  <span>{batchResult.invalid_count} invalid</span>
+                </div>
+                <div className="batch-result-list">
+                  {batchResult.items.map((item, index) => (
+                    <div className={`batch-result-row ${item.outcome}`} key={`${item.input_url}-${index}`}>
+                      <span>{BATCH_LABELS[item.outcome]}</span>
+                      <strong title={item.normalized_url || item.input_url}>
+                        {shortSource(item.normalized_url || item.input_url)}
+                      </strong>
+                      <small>
+                        {item.job
+                          ? `Job #${item.job.id}`
+                          : BATCH_DETAILS[item.detail] || item.detail}
+                      </small>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </>
         ) : (
           <>
@@ -256,7 +337,7 @@ export function ImportPage({
         )}
 
         {status && <p className="status-line">{status}</p>}
-        {error && <p className="error import-error">{error}</p>}
+        {error && <p className="error import-error" role="alert">{error}</p>}
       </section>
 
       <section className="saved-section" aria-labelledby="collection-queue-title">

@@ -63,7 +63,7 @@ python -m app.worker --queue publish --loop --interval 30 --limit 10
 
 - Import an Amazon HTML snapshot and optionally save it as a draft.
 - Collect an Amazon URL through the backend Playwright adapter; challenge pages are marked for manual action.
-- Queue Amazon URL collection jobs, run queued jobs, and list job status/history.
+- Queue up to 100 Amazon product URLs per batch with ASIN normalization, duplicate detection, per-row outcomes, and job status/history.
 - Run queued Amazon URL collection jobs through a backend worker CLI.
 - Run API, collection worker, and publish worker services through Docker Compose.
 - Persist successful URL collections as source products and product drafts.

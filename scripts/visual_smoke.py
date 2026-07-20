@@ -31,9 +31,17 @@ def inspect_import_workspace(page: Page) -> dict[str, object]:
     page.get_by_role("tab", name="HTML snapshot", exact=True).click()
     page.get_by_label("Amazon HTML snapshot", exact=True).wait_for()
     page.get_by_role("tab", name="URL collector", exact=True).click()
+    url_input = page.get_by_label("Amazon product URLs", exact=True)
+    url_input.fill("https://example.com/not-amazon\nnot-a-url")
+    page.get_by_role("button", name="Add 2 to queue", exact=True).click()
+    page.locator(".batch-result").wait_for()
+    batch_result_count = page.locator(".batch-result-row").count()
+    assert batch_result_count == 2, f"Expected 2 batch result rows, got {batch_result_count}"
+    page.get_by_text("2 invalid", exact=True).wait_for()
     return {
         "site_options": option_count,
         "job_count": page.locator(".collection-job").count(),
+        "batch_result_count": batch_result_count,
         "horizontal_overflow": page.evaluate("document.documentElement.scrollWidth > innerWidth"),
     }
 

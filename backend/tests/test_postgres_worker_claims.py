@@ -10,11 +10,47 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models.collection_job import CollectionJob
 from app.models.source_product import SourceProduct
+from app.api.routes.imports import AmazonUrlImport, create_amazon_url_collection_job
 from app.services.amazon.collector import CollectionResult, CollectionStatus
 from app.workers import collection_worker
 
 
 POSTGRES_URL = os.getenv("TEST_POSTGRES_URL", "")
+
+
+@pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")
+def test_two_postgres_requests_reuse_one_collection_job():
+    engine = create_engine(POSTGRES_URL, pool_pre_ping=True)
+    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    asin = f"B{uuid4().hex[:9].upper()}"
+    source_url = f"https://www.amazon.com/dp/{asin}"
+    both_requests_ready = Barrier(2)
+
+    def create_job():
+        with testing_session() as db:
+            both_requests_ready.wait(timeout=10)
+            return create_amazon_url_collection_job(
+                AmazonUrlImport(source_url=source_url, target_site_id="MLM"),
+                db,
+            ).id
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            job_ids = list(pool.map(lambda _: create_job(), range(2)))
+        assert job_ids[0] == job_ids[1]
+        with testing_session() as db:
+            assert (
+                db.query(CollectionJob)
+                .filter(CollectionJob.source_url == f"https://amazon.com/dp/{asin}")
+                .count()
+                == 1
+            )
+    finally:
+        with testing_session() as db:
+            for job in db.query(CollectionJob).filter(CollectionJob.source_url.contains(asin)):
+                db.delete(job)
+            db.commit()
+        engine.dispose()
 
 
 @pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")

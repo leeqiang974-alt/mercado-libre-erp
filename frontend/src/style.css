@@ -438,6 +438,24 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .import-warning { display: flex; align-items: center; gap: 8px; }
 .import-warning svg { flex: 0 0 auto; }
 .snapshot-input { min-height: 260px; font-family: Consolas, monospace; font-size: 13px; }
+.batch-url-input { min-height: 92px; resize: vertical; font-family: Consolas, monospace; font-size: 13px; }
+.batch-options { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 12px; }
+.batch-options > span { color: #52606d; font-size: 12px; white-space: nowrap; }
+.batch-options > span.error { color: #b42318; }
+.batch-result { margin-top: 14px; border: 1px solid #d7dee8; background: #f8fafc; }
+.batch-result-summary { display: flex; align-items: center; gap: 18px; padding: 10px 12px; border-bottom: 1px solid #d7dee8; font-size: 12px; }
+.batch-result-summary strong { color: #126c33; }
+.batch-result-summary span { color: #52606d; }
+.batch-result-list { max-height: 240px; overflow: auto; }
+.batch-result-row { display: grid; grid-template-columns: 112px minmax(0, 1fr) 160px; align-items: center; gap: 12px; min-height: 42px; padding: 8px 12px; border-bottom: 1px solid #e3e8ef; font-size: 12px; }
+.batch-result-row:last-child { border-bottom: 0; }
+.batch-result-row > span { font-weight: 700; }
+.batch-result-row.created > span { color: #126c33; }
+.batch-result-row.invalid > span { color: #b42318; }
+.batch-result-row.duplicate_input > span,
+.batch-result-row.existing > span { color: #8a4b08; }
+.batch-result-row strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batch-result-row small { color: #697586; overflow-wrap: anywhere; }
 .snapshot-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .snapshot-actions .check-row { margin: 10px 0; }
 .import-error { overflow-wrap: anywhere; }
@@ -501,6 +519,10 @@ input[readonly] { background: #eef1f4; color: #52606d; }
   .store-row { grid-template-columns: 38px minmax(0, 1fr); }
   .store-site, .connection-status { grid-column: 2; }
   .import-mode-switch { width: 100%; box-sizing: border-box; }
+  .batch-options { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .batch-result-summary { flex-wrap: wrap; gap: 8px 14px; }
+  .batch-result-row { grid-template-columns: 1fr; gap: 3px; }
+  .batch-result-row strong { white-space: normal; overflow-wrap: anywhere; }
   .snapshot-actions { align-items: stretch; flex-direction: column; }
   .snapshot-actions button { width: 100%; }
   .collection-job { grid-template-columns: 1fr; gap: 8px; padding: 14px; }

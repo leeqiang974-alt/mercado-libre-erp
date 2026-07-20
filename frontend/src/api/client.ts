@@ -190,6 +190,22 @@ export type CollectionJobRecord = {
   completed_at: string | null;
 };
 
+export type CollectionBatchItem = {
+  input_url: string;
+  normalized_url: string;
+  outcome: "created" | "duplicate_input" | "existing" | "invalid";
+  detail: string;
+  job: CollectionJobRecord | null;
+};
+
+export type CollectionBatchResult = {
+  created_count: number;
+  duplicate_count: number;
+  existing_count: number;
+  invalid_count: number;
+  items: CollectionBatchItem[];
+};
+
 export async function importAmazonUrl(sourceUrl: string, targetSiteId: string) {
   const response = await fetch(`${API_BASE}/api/imports/amazon-url`, {
     method: "POST",
@@ -230,6 +246,24 @@ export async function createCollectionJob(sourceUrl: string, targetSiteId: strin
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<CollectionJobRecord>;
+}
+
+export async function createCollectionJobsBatch(
+  sourceUrls: string[],
+  targetSiteId: string,
+  allowExisting: boolean,
+) {
+  const response = await fetch(`${API_BASE}/api/imports/amazon-url/jobs/batch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source_urls: sourceUrls,
+      target_site_id: targetSiteId,
+      allow_existing: allowExisting,
+    }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<CollectionBatchResult>;
 }
 
 export async function listCollectionJobs() {

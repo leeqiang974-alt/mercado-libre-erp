@@ -71,6 +71,22 @@ def is_allowed_amazon_url(url: str) -> bool:
     )
 
 
+def normalize_amazon_product_url(url: str) -> str:
+    source_url = url.strip()
+    if not is_allowed_amazon_url(source_url):
+        raise ValueError("only_public_amazon_product_urls_allowed")
+    parsed = urlparse(source_url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    domain = next(
+        domain
+        for domain in sorted(AMAZON_DOMAINS, key=len, reverse=True)
+        if host == domain or host.endswith(f".{domain}")
+    )
+    asin = extract_amazon_asin(source_url)
+    assert asin is not None
+    return f"https://{domain}/dp/{asin}"
+
+
 def requires_manual_action(html: str) -> bool:
     lowered = html.lower()
     return any(marker in lowered for marker in CHALLENGE_MARKERS)

@@ -7,7 +7,8 @@ Implemented:
 - FastAPI health endpoint.
 - Amazon HTML parser and normalizer.
 - Playwright-backed Amazon URL collection adapter with manual-action handling for CAPTCHA/challenge pages.
-- Amazon URL collection job model, create/list/run APIs, and frontend queue controls.
+- Amazon URL collection job model, single/batch create, list/run APIs, and frontend queue controls with per-row validation and duplicate reporting.
+- Batch intake canonicalizes Amazon domain/ASIN identities, limits each request to 100 URLs, and serializes deduplication on both PostgreSQL and SQLite so concurrent operator requests reuse the same job by default.
 - Backend collection worker CLI for processing pending Amazon URL collection jobs in batches.
 - Persisted Amazon URL collection results as source products, including manual-action and failed collection states.
 - Local AI review policy.
@@ -48,9 +49,18 @@ Implemented:
 
 Not connected yet:
 
+- The local runtime has no Mercado Libre, Claude, or NVIDIA production credentials, so no real Mercado Libre item has been published yet.
 - Production-grade external KMS or secrets manager for Mercado Libre token encryption keys.
+
+Verification for this change:
+
+- Backend suite: 148 passed, with 2 PostgreSQL-only tests skipped in the default run.
+- Docker PostgreSQL integration run: 2 passed, including concurrent request deduplication.
+- Frontend production build passed.
+- Desktop and mobile browser smoke passed for all 18 sites, Classic/Premium controls, batch result rows, overflow, console errors, and failed responses.
 
 Next production phase:
 
 - Add Mercado Libre shipping options metadata refresh.
 - Add provider prompt versioning and review-model version analytics.
+- Persist and index normalized Amazon product identities, then paginate collection history to keep lookup and polling costs bounded as the queue grows.

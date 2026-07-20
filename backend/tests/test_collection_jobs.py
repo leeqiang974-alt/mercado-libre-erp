@@ -1,10 +1,13 @@
 from fastapi.testclient import TestClient
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.routes import imports
+from app.api.routes.imports import AmazonUrlImport, create_amazon_url_collection_job
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
@@ -53,10 +56,190 @@ def test_amazon_url_collection_job_can_be_created_and_listed():
     assert response.json()["status"] == "pending"
     list_response = client.get("/api/imports/amazon-url/jobs")
     assert list_response.status_code == 200
-    assert list_response.json()[0]["source_url"] == "https://www.amazon.com/dp/B000TEST01"
+    assert list_response.json()[0]["source_url"] == "https://amazon.com/dp/B000TEST01"
     with testing_session() as db:
         job = db.query(CollectionJob).one()
         assert job.status == CollectionJobStatus.PENDING
+
+
+def test_single_amazon_url_job_creation_reuses_existing_normalized_job():
+    client, testing_session = make_client()
+
+    first = client.post(
+        "/api/imports/amazon-url/jobs",
+        json={
+            "source_url": "https://www.amazon.com/dp/B000TEST01?tag=first",
+            "target_site_id": "mlm",
+        },
+    )
+    second = client.post(
+        "/api/imports/amazon-url/jobs",
+        json={
+            "source_url": "https://m.amazon.com/gp/product/B000TEST01/ref=second",
+            "target_site_id": "MLM",
+        },
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["id"] == first.json()["id"]
+    with testing_session() as db:
+        assert db.query(CollectionJob).count() == 1
+
+
+def test_amazon_url_batch_normalizes_deduplicates_and_reports_invalid_rows():
+    client, testing_session = make_client()
+
+    response = client.post(
+        "/api/imports/amazon-url/jobs/batch",
+        json={
+            "source_urls": [
+                "https://www.amazon.com/dp/B000TEST01?tag=affiliate-20",
+                "https://m.amazon.com/gp/product/B000TEST01/ref=something",
+                "https://www.amazon.ca/dp/B000TEST02",
+                "https://example.com/not-amazon",
+            ],
+            "target_site_id": "MLM",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["created_count"] == 2
+    assert body["duplicate_count"] == 1
+    assert body["existing_count"] == 0
+    assert body["invalid_count"] == 1
+    assert [item["outcome"] for item in body["items"]] == [
+        "created",
+        "duplicate_input",
+        "created",
+        "invalid",
+    ]
+    with testing_session() as db:
+        assert [job.source_url for job in db.query(CollectionJob).order_by(CollectionJob.id)] == [
+            "https://amazon.com/dp/B000TEST01",
+            "https://amazon.ca/dp/B000TEST02",
+        ]
+
+
+def test_amazon_url_batch_skips_existing_unless_operator_allows_recollection():
+    client, testing_session = make_client()
+    payload = {
+        "source_urls": ["https://www.amazon.com/dp/B000TEST01"],
+        "target_site_id": "MLM",
+    }
+
+    first = client.post("/api/imports/amazon-url/jobs/batch", json=payload)
+    second = client.post("/api/imports/amazon-url/jobs/batch", json=payload)
+    forced = client.post(
+        "/api/imports/amazon-url/jobs/batch",
+        json={**payload, "allow_existing": True},
+    )
+
+    assert first.json()["created_count"] == 1
+    assert second.json()["existing_count"] == 1
+    assert second.json()["items"][0]["job"]["id"] == first.json()["items"][0]["job"]["id"]
+    assert forced.json()["created_count"] == 1
+    with testing_session() as db:
+        assert db.query(CollectionJob).count() == 2
+
+
+def test_amazon_url_job_creation_rejects_invalid_url_site_and_oversized_batch():
+    client, testing_session = make_client()
+
+    invalid_url = client.post(
+        "/api/imports/amazon-url/jobs",
+        json={"source_url": "https://example.com/item", "target_site_id": "MLM"},
+    )
+    invalid_site = client.post(
+        "/api/imports/amazon-url/jobs/batch",
+        json={
+            "source_urls": ["https://www.amazon.com/dp/B000TEST01"],
+            "target_site_id": "XXX",
+        },
+    )
+    oversized = client.post(
+        "/api/imports/amazon-url/jobs/batch",
+        json={
+            "source_urls": [
+                f"https://www.amazon.com/dp/B{i:09d}" for i in range(101)
+            ],
+            "target_site_id": "MLM",
+        },
+    )
+    oversized_url = client.post(
+        "/api/imports/amazon-url/jobs/batch",
+        json={
+            "source_urls": [f"https://www.amazon.com/dp/B000TEST01?x={'a' * 2048}"],
+            "target_site_id": "MLM",
+        },
+    )
+
+    assert invalid_url.status_code == 422
+    assert invalid_url.json()["detail"] == "only_public_amazon_product_urls_allowed"
+    assert invalid_site.status_code == 422
+    assert invalid_site.json()["detail"] == "unsupported_mercado_libre_site"
+    assert oversized.status_code == 422
+    assert oversized_url.status_code == 422
+    with testing_session() as db:
+        assert db.query(CollectionJob).count() == 0
+
+
+def test_sqlite_file_requests_reuse_one_collection_job(tmp_path):
+    database_path = tmp_path / "collection-concurrency.db"
+    engine = create_engine(
+        f"sqlite:///{database_path}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    import_all_models()
+    Base.metadata.create_all(engine)
+    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    both_requests_ready = Barrier(2)
+
+    def create_job():
+        with testing_session() as db:
+            both_requests_ready.wait(timeout=10)
+            return create_amazon_url_collection_job(
+                AmazonUrlImport(
+                    source_url="https://www.amazon.com/dp/B000TEST01",
+                    target_site_id="MLM",
+                ),
+                db,
+            ).id
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            job_ids = list(pool.map(lambda _: create_job(), range(2)))
+        assert job_ids[0] == job_ids[1]
+        with testing_session() as db:
+            assert db.query(CollectionJob).count() == 1
+    finally:
+        engine.dispose()
+
+
+def test_amazon_url_identity_keeps_domains_and_asins_distinct():
+    client, testing_session = make_client()
+
+    response = client.post(
+        "/api/imports/amazon-url/jobs/batch",
+        json={
+            "source_urls": [
+                "https://www.amazon.com/gp/aw/d/b000test01",
+                "https://www.amazon.ca/dp/B000TEST01",
+                "https://www.amazon.com/dp/B000TEST02",
+            ],
+            "target_site_id": "MLM",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["created_count"] == 3
+    with testing_session() as db:
+        assert {job.source_url for job in db.query(CollectionJob)} == {
+            "https://amazon.com/dp/B000TEST01",
+            "https://amazon.ca/dp/B000TEST01",
+            "https://amazon.com/dp/B000TEST02",
+        }
 
 
 def test_running_collection_job_persists_source_and_draft(monkeypatch):
