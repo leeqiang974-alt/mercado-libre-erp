@@ -9,6 +9,7 @@ from app.db.session import get_db
 from app.main import app
 from app.models.audit_event import AuditEvent
 from app.models.draft_listing_config import DraftListingConfig
+from app.models.draft_pricing_config import DraftPricingConfig
 from app.models.product_draft import ProductDraft
 from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.product_draft_approval import ProductDraftApproval
@@ -19,6 +20,7 @@ from app.models.store import Store
 from app.models.token_credential import TokenCredential
 from app.schemas.publishing import PublishExecutionResult
 from app.services.meli.token_vault import encrypt_token_value
+from pricing_test_support import add_current_pricing
 
 
 def make_client():
@@ -54,20 +56,20 @@ def make_client():
                 encrypted_refresh_token=encrypt_token_value("refresh-token", "test-secret"),
             )
         )
-        db.add(
-            ProductDraft(
-                title="Persisted Bottle",
-                description="Leak proof.",
-                brand="Demo",
-                target_site_id="MLM",
-                target_category_id="MLM123",
-                price=9.99,
-                currency="MXN",
-                stock=2,
-                image_urls_json=["https://example.com/a.jpg"],
-            )
+        draft = ProductDraft(
+            title="Persisted Bottle",
+            description="Leak proof.",
+            brand="Demo",
+            target_site_id="MLM",
+            target_category_id="MLM123",
+            price=9.99,
+            currency="MXN",
+            stock=2,
+            image_urls_json=["https://example.com/a.jpg"],
         )
+        db.add(draft)
         db.flush()
+        add_current_pricing(db, draft)
         db.add(
             DraftListingConfig(
                 product_draft_id=1,
@@ -184,6 +186,34 @@ def test_blocked_publish_job_can_be_retried_from_saved_draft_config(monkeypatch)
         assert retry_audit.after_json["retry_store_id"] == 1
         assert retry_audit.after_json["shipping_mode"] == "me2"
         assert retry_audit.after_json["shipping_logistic_type"] == "drop_off"
+
+
+def test_retry_requires_current_saved_pricing(monkeypatch):
+    async def unexpected_publish(**kwargs):
+        raise AssertionError("missing pricing must block before the publisher")
+
+    monkeypatch.setattr(publishing, "execute_publish", unexpected_publish)
+    client, testing_session = make_client()
+    with testing_session() as db:
+        db.add(
+            PublishJob(
+                product_draft_id=1,
+                store_id=1,
+                requested_by="operator",
+                status=PublishJobStatus.BLOCKED,
+                request_summary_json=job_summary(),
+                response_summary_json={"errors": ["live_publish_disabled"]},
+            )
+        )
+        db.query(DraftPricingConfig).delete()
+        db.commit()
+
+    response = client.post("/api/publishing/jobs/1/retry")
+
+    assert response.status_code == 409
+    assert "saved_pricing_required" in response.text
+    with testing_session() as db:
+        assert db.get(PublishJob, 1).status == PublishJobStatus.BLOCKED
 
 
 def test_published_publish_job_cannot_be_retried():

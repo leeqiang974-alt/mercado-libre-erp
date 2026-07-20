@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.models.product_draft import ProductDraft
 from app.schemas.draft_approvals import DraftApprovalCreate, DraftApprovalRead
 from app.schemas.draft_listing_config import DraftListingConfigRead, DraftListingConfigUpsert
 from app.schemas.drafts import ProductDraftRead
@@ -14,7 +15,12 @@ from app.services.draft_listing_configs import (
     upsert_draft_listing_config,
 )
 from app.services.drafts import list_product_drafts
-from app.services.draft_pricing import get_draft_pricing, to_pricing_read, upsert_draft_pricing
+from app.services.draft_pricing import (
+    get_draft_pricing,
+    require_current_draft_pricing,
+    to_pricing_read,
+    upsert_draft_pricing,
+)
 from app.services.meli.attribute_mapping import suggest_draft_category_attributes
 
 router = APIRouter(prefix="/api/drafts", tags=["drafts"])
@@ -41,11 +47,16 @@ def read_pricing(
     db: Session = Depends(get_db),
 ) -> DraftPricingRead | None:
     try:
-        return to_pricing_read(get_draft_pricing(db, product_draft_id))
+        pricing = get_draft_pricing(db, product_draft_id)
     except HTTPException as exc:
         if optional and exc.status_code == 404:
             return None
         raise
+    draft = db.get(ProductDraft, product_draft_id)
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Product draft not found.")
+    require_current_draft_pricing(db, draft)
+    return to_pricing_read(pricing)
 
 
 @router.put("/{product_draft_id}/listing-config", response_model=DraftListingConfigRead)

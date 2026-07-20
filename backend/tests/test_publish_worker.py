@@ -7,6 +7,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.models.draft_listing_config import DraftListingConfig
+from app.models.draft_pricing_config import DraftPricingConfig
 from app.models.product_draft import ProductDraft
 from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.product_draft_approval import ProductDraftApproval
@@ -19,6 +20,7 @@ from app.schemas.publishing import PublishExecutionResult
 from app.services.meli.token_vault import encrypt_token_value
 from app.workers.publish_worker import run_pending_publish_jobs
 from app.workers import publish_worker
+from pricing_test_support import add_current_pricing
 
 
 def make_session():
@@ -54,20 +56,20 @@ def make_session():
                 encrypted_refresh_token=encrypt_token_value("refresh-token", "test-secret"),
             )
         )
-        db.add(
-            ProductDraft(
-                title="Worker Bottle",
-                description="Leak proof.",
-                brand="Demo",
-                target_site_id="MLM",
-                target_category_id="MLM123",
-                price=9.99,
-                currency="MXN",
-                stock=2,
-                image_urls_json=["https://example.com/a.jpg"],
-            )
+        draft = ProductDraft(
+            title="Worker Bottle",
+            description="Leak proof.",
+            brand="Demo",
+            target_site_id="MLM",
+            target_category_id="MLM123",
+            price=9.99,
+            currency="MXN",
+            stock=2,
+            image_urls_json=["https://example.com/a.jpg"],
         )
+        db.add(draft)
         db.flush()
+        add_current_pricing(db, draft)
         db.add(
             DraftListingConfig(
                 product_draft_id=1,
@@ -268,6 +270,46 @@ async def test_worker_rechecks_saved_listing_type_catalog_before_publisher():
         job = db.query(PublishJob).one()
         assert job.status == PublishJobStatus.BLOCKED
         assert "listing_type_not_supported" in job.response_summary_json["errors"]
+
+
+@pytest.mark.asyncio
+async def test_worker_blocks_job_without_current_saved_pricing():
+    testing_session = make_session()
+    with testing_session() as db:
+        db.add(
+            PublishJob(
+                product_draft_id=1,
+                store_id=1,
+                requested_by="operator",
+                status=PublishJobStatus.PENDING,
+                request_summary_json=job_summary(),
+            )
+        )
+        db.query(DraftPricingConfig).delete()
+        db.commit()
+
+    async def unexpected_publisher(**kwargs):
+        raise AssertionError("missing pricing must block before the publisher")
+
+    with testing_session() as db:
+        summary = await run_pending_publish_jobs(
+            db,
+            publisher=unexpected_publisher,
+            allow_live_publish=True,
+            token_encryption_key="test-secret",
+        )
+
+    assert summary == {
+        "processed": 1,
+        "published": 0,
+        "blocked": 1,
+        "failed": 0,
+        "recovered": 0,
+    }
+    with testing_session() as db:
+        job = db.query(PublishJob).one()
+        assert job.status == PublishJobStatus.BLOCKED
+        assert job.response_summary_json["errors"] == ["saved_pricing_required"]
 
 
 @pytest.mark.asyncio

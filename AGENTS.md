@@ -23,6 +23,7 @@
 - The UI must show integration readiness for Mercado Libre, Claude, NVIDIA, live publishing, database, and workers.
 - Never silently substitute local review for Claude or NVIDIA and present it as provider output.
 - Keep Amazon source currency separate from Mercado Libre target currency; never relabel an unconverted source price.
+- Treat Amazon source amount/currency as read-only evidence. A persisted pricing formula must match that evidence, the Mercado Libre site currency, and the current draft target price; enforce this before persisted AI review, preview, queue, retry, worker, and direct execution.
 - FULL fulfillment remains excluded. Supported listing choices come from live Mercado Libre metadata for the authorized store site.
 - Treat Mercado Libre category attributes as verified only when the cache explicitly records `verified: true`; cache presence, non-empty definitions, and legacy saved configurations must never bypass category validation at save, review, preview, queue, retry, worker, or execute boundaries.
 - Treat a lost or ambiguous Mercado Libre create-item response as an unknown outcome that requires store reconciliation; never retry it automatically.

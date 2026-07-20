@@ -17,6 +17,7 @@ from app.models.token_credential import TokenCredential
 from app.schemas.publishing import PublishExecutionResult
 from app.services.meli.oauth import MercadoLibreOAuthClient
 from app.services.meli.token_vault import encrypt_token_value
+from pricing_test_support import add_current_pricing
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -106,6 +107,7 @@ def make_client(with_store: bool = True, token_expires_in_seconds: int = 7200):
         )
         db.add(draft)
         db.flush()
+        add_current_pricing(db, draft)
         db.add_all(
             [
                 DraftListingConfig(

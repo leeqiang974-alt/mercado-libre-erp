@@ -2,6 +2,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import os
 from threading import Barrier
+import time
 from uuid import uuid4
 
 import pytest
@@ -9,6 +10,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.models.collection_job import CollectionJob
+from app.models.draft_listing_config import DraftListingConfig
+from app.models.draft_pricing_config import DraftPricingConfig
+from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.source_product import SourceProduct, SourceProductStatus
 from app.models.product_draft import ProductDraft
 from app.models.publish_job import PublishJob
@@ -21,11 +25,108 @@ from app.schemas.publishing import ListingChoice
 from app.schemas.reviews import ReviewResponse
 from app.services.publish_jobs import create_publish_job
 from app.services.drafts import update_draft_content
+from app.services.draft_listing_configs import build_configured_draft
 from app.workers import collection_worker
 from app.services import source_products as source_products_service
 
 
 POSTGRES_URL = os.getenv("TEST_POSTGRES_URL", "")
+
+
+@pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")
+def test_final_publish_evidence_lock_blocks_concurrent_draft_change():
+    engine = create_engine(POSTGRES_URL, pool_pre_ping=True)
+    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    marker = uuid4().hex
+    category_id = f"MLM{marker[:8].upper()}"
+    with testing_session() as db:
+        draft = ProductDraft(
+            title=f"Publish lock {marker}",
+            target_site_id="MLM",
+            target_category_id=category_id,
+            source_price=10,
+            source_currency="USD",
+            price=180,
+            currency="MXN",
+            stock=1,
+            image_urls_json=["https://example.com/a.jpg"],
+        )
+        db.add(draft)
+        db.flush()
+        draft_id = draft.id
+        db.add_all(
+            [
+                MeliMetadataCache(
+                    cache_key=f"category_attributes:{category_id}",
+                    payload_json={"attributes": [], "verified": True},
+                ),
+                DraftListingConfig(
+                    product_draft_id=draft_id,
+                    site_id="MLM",
+                    category_id=category_id,
+                    listing_type_id="gold_special",
+                    fulfillment="not_full",
+                    attributes_json=[],
+                ),
+                DraftPricingConfig(
+                    product_draft_id=draft_id,
+                    source_price=10,
+                    source_currency="USD",
+                    target_currency="MXN",
+                    exchange_rate=18,
+                    purchase_extra_cost=0,
+                    shipping_cost=0,
+                    platform_fee_rate=0,
+                    tax_rate=0,
+                    profit_margin_rate=0,
+                    rounding_increment=0.01,
+                    landed_cost=180,
+                    target_price=180,
+                ),
+            ]
+        )
+        db.commit()
+
+    try:
+        with testing_session() as locked_db:
+            assert locked_db.get(ProductDraft, draft_id).title == f"Publish lock {marker}"
+            with testing_session() as concurrent_db:
+                update_draft_content(
+                    concurrent_db, draft_id, title=f"Changed before lock {marker}"
+                )
+                concurrent_db.commit()
+            locked_draft, _ = build_configured_draft(
+                locked_db, draft_id, lock_draft=True
+            )
+            assert locked_draft.title == f"Changed before lock {marker}"
+
+            def change_draft():
+                with testing_session() as db:
+                    update_draft_content(db, draft_id, title=f"Changed {marker}")
+                    db.commit()
+
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(change_draft)
+                time.sleep(0.2)
+                assert not future.done(), "concurrent edit bypassed final publish evidence lock"
+                locked_db.commit()
+                future.result(timeout=5)
+        with testing_session() as db:
+            assert db.get(ProductDraft, draft_id).title == f"Changed {marker}"
+    finally:
+        with testing_session() as db:
+            db.query(DraftPricingConfig).filter(
+                DraftPricingConfig.product_draft_id == draft_id
+            ).delete()
+            db.query(DraftListingConfig).filter(
+                DraftListingConfig.product_draft_id == draft_id
+            ).delete()
+            db.query(ProductDraft).filter(ProductDraft.id == draft_id).delete()
+            db.query(MeliMetadataCache).filter(
+                MeliMetadataCache.cache_key == f"category_attributes:{category_id}"
+            ).delete()
+            db.commit()
+        engine.dispose()
 
 
 @pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")

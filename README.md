@@ -58,6 +58,7 @@ python -m app.worker --queue publish --loop --interval 30 --limit 10
 - AI providers never receive Mercado Libre tokens.
 - No publish request is sent unless a human approval flag is present.
 - Publish execution uses an authorized store id and backend-encrypted Mercado Libre token, not a frontend-provided access token.
+- Amazon source amount and currency are read-only evidence; saved pricing must reconcile that evidence to the selected Mercado Libre site's currency before review or publishing.
 
 ## Current MVP Capabilities
 
@@ -82,6 +83,7 @@ python -m app.worker --queue publish --loop --interval 30 --limit 10
 - Cache Mercado Libre listing types and category attributes, with explicit refresh endpoints.
 - Save Mercado Libre category, listing type, fulfillment, and attribute values as draft listing configuration.
 - Persist operator approval for drafts before publish-from-draft execution.
+- Save an explicit exchange-rate, cost, fee, tax, margin, and rounding formula; revalidate it before persisted AI review and every saved-draft publishing path.
 - Load verified non-FULL shipping options from the authorized store, bind the operator's selection to the versioned draft, and build the validated Mercado Libre item payload.
 - Preview publishing from saved draft listing configuration.
 - Execute a guarded publish adapter only when `ALLOW_LIVE_PUBLISH=true`.

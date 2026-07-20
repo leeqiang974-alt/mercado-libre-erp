@@ -19,6 +19,7 @@ from app.models.audit_event import AuditEvent
 from app.schemas.reviews import ReviewResponse
 from app.services.ai.provider_utils import AIProviderError
 from app.services import reviews as review_service
+from pricing_test_support import add_current_pricing
 
 
 def make_client():
@@ -42,12 +43,13 @@ def make_client():
                 target_site_id="MLM",
                 target_category_id="MLM123",
                 price=9.99,
-                currency="USD",
+                currency="MXN",
                 stock=1,
                 image_urls_json=["https://example.com/a.jpg"],
             )
         db.add(draft)
         db.flush()
+        add_current_pricing(db, draft)
         db.add(
             DraftListingConfig(
                 product_draft_id=draft.id,
@@ -81,7 +83,7 @@ def draft_payload():
         "description": "Leak proof.",
         "target_site_id": "MLM",
         "price": 9.99,
-        "currency": "USD",
+        "currency": "MXN",
         "stock": 1,
         "image_urls": ["https://example.com/a.jpg"],
     }
@@ -130,6 +132,8 @@ def test_claude_review_can_persist_result_for_draft(monkeypatch):
             pass
 
         async def review_draft(self, draft):
+            assert draft.source_price == 9.99
+            assert draft.source_currency == "MXN"
             return ReviewResponse(
                 provider="claude",
                 decision="needs_human_review",

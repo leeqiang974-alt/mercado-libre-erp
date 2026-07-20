@@ -82,8 +82,8 @@ export function DraftsPage({
     setListingConfigured(false);
     setPricing({
       ...EMPTY_PRICING,
-      source_price: draft.source_price ?? draft.price ?? 0,
-      source_currency: draft.source_currency || draft.currency || "USD",
+      source_price: draft.source_price ?? 0,
+      source_currency: draft.source_currency || "",
       target_currency: currencyForSite(draft.target_site_id) || draft.currency,
     });
     if (!draftId) return;
@@ -97,7 +97,14 @@ export function DraftsPage({
         setPricingResult(saved);
       })
       .catch(() => undefined);
-  }, [draftId]);
+  }, [
+    draftId,
+    draft?.target_site_id,
+    draft?.source_price,
+    draft?.source_currency,
+    draft?.price,
+    draft?.currency,
+  ]);
 
   function updatePricing(name: keyof DraftPricingInput, value: string) {
     if (name === "source_currency" || name === "target_currency") {
@@ -269,8 +276,8 @@ export function DraftsPage({
                 </span>
               </div>
               <div className="form-grid three-col">
-                <label>Source price<input type="number" min="0" step="0.01" value={pricing.source_price} onChange={(event) => updatePricing("source_price", event.target.value)} /></label>
-                <label>Source currency<input value={pricing.source_currency} onChange={(event) => updatePricing("source_currency", event.target.value)} /></label>
+                <label>Source price<input type="number" value={draft.source_price ?? ""} readOnly /></label>
+                <label>Source currency<input value={draft.source_currency} readOnly /></label>
                 <label>Exchange rate<input type="number" min="0" step="0.0001" value={pricing.exchange_rate} onChange={(event) => updatePricing("exchange_rate", event.target.value)} /></label>
                 <label>Purchase extras<input type="number" min="0" step="0.01" value={pricing.purchase_extra_cost} onChange={(event) => updatePricing("purchase_extra_cost", event.target.value)} /></label>
                 <label>Shipping cost<input type="number" min="0" step="0.01" value={pricing.shipping_cost} onChange={(event) => updatePricing("shipping_cost", event.target.value)} /></label>
@@ -291,6 +298,9 @@ export function DraftsPage({
                   </div>
                 )}
               </div>
+              {(!draft.source_price || !draft.source_currency) && (
+                <p className="inline-warning">Amazon source price evidence is missing. Recollect the source page before pricing.</p>
+              )}
             </section>
 
             <section className="surface">

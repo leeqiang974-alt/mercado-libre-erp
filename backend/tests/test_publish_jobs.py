@@ -11,6 +11,7 @@ from app.models.audit_event import AuditEvent
 from app.models.product_draft import ProductDraft
 from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.draft_listing_config import DraftListingConfig
+from app.models.draft_pricing_config import DraftPricingConfig
 from app.models.product_draft_approval import ProductDraftApproval
 from app.models.publish_job import PublishJob, PublishJobStatus
 from app.models.registry import import_all_models
@@ -22,6 +23,7 @@ from app.schemas.publishing import ListingChoice, PublishExecutionResult
 from app.schemas.reviews import ReviewResponse
 from app.services.meli.token_vault import encrypt_token_value
 from app.services.publish_jobs import _publish_idempotency_key
+from pricing_test_support import add_current_pricing
 
 
 def make_client(with_token: bool = True):
@@ -75,6 +77,7 @@ def make_client(with_token: bool = True):
         )
         db.add(draft)
         db.flush()
+        add_current_pricing(db, draft)
         db.add_all(
             [
                 DraftListingConfig(
@@ -275,6 +278,8 @@ def test_publish_execute_blocks_when_draft_site_does_not_match_authorized_store(
         draft = db.get(ProductDraft, 1)
         draft.target_site_id = "MLA"
         draft.currency = "ARS"
+        pricing = db.query(DraftPricingConfig).one()
+        pricing.target_currency = "ARS"
         db.commit()
     body = payload()
     body["draft"]["target_site_id"] = "MLA"

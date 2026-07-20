@@ -43,6 +43,7 @@ def mock_store_capabilities(page: Page) -> None:
         )
 
     page.route("**/api/drafts", fulfill_drafts)
+    page.route("**/api/drafts/2/pricing?optional=true", fulfill_pricing)
     page.route("**/api/integrations/credentials", fulfill_credentials)
     page.route(
         "**/api/drafts/2/listing-config?optional=true",
@@ -107,6 +108,33 @@ def fulfill_listing_config(route) -> None:
     route.fulfill(status=200, content_type="application/json", body=json.dumps(response))
 
 
+def fulfill_pricing(route) -> None:
+    route.fulfill(
+        status=200,
+        content_type="application/json",
+        body=json.dumps(
+            {
+                "id": 9101,
+                "product_draft_id": 2,
+                "source_price": 24.99,
+                "source_currency": "USD",
+                "target_currency": "MXN",
+                "exchange_rate": 20,
+                "purchase_extra_cost": 0,
+                "shipping_cost": 0,
+                "platform_fee_rate": 0,
+                "tax_rate": 0,
+                "profit_margin_rate": 0,
+                "rounding_increment": 1,
+                "landed_cost": 499.8,
+                "target_price": 500,
+                "created_at": "2026-07-20T12:00:00Z",
+                "updated_at": "2026-07-20T12:00:01Z",
+            }
+        ),
+    )
+
+
 def _source_image(color: str) -> str:
     svg = (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120">'
@@ -131,7 +159,7 @@ def fulfill_drafts(route) -> None:
         "condition": "new",
         "source_price": 24.99,
         "source_currency": "USD",
-        "price": 599,
+        "price": 500,
         "currency": "MXN",
         "stock": 1,
         "listing_type_id": "",
@@ -503,7 +531,7 @@ def fulfill_review_history(route) -> None:
     route.fulfill(status=200, content_type="application/json", body=json.dumps(rows))
 
 
-def select_first_draft(page: Page) -> None:
+def select_first_draft(page: Page) -> dict[str, object]:
     page.get_by_role("button", name="Drafts", exact=True).click()
     rows = page.locator(".draft-row")
     rows.first.wait_for(state="visible")
@@ -513,6 +541,19 @@ def select_first_draft(page: Page) -> None:
     page.locator(".product-summary").wait_for(state="visible")
     page.get_by_text("Amazon variant · B000TEST03", exact=True).wait_for()
     assert page.locator(".variant-provenance > div span").count() == 2
+    source_price = page.get_by_label("Source price", exact=True)
+    source_currency = page.get_by_label("Source currency", exact=True)
+    assert source_price.is_editable() is False
+    assert source_currency.is_editable() is False
+    assert source_price.input_value() == "24.99"
+    assert source_currency.input_value() == "USD"
+    return {
+        "source_price_read_only": True,
+        "source_currency_read_only": True,
+        "horizontal_overflow": page.evaluate(
+            "document.documentElement.scrollWidth > innerWidth"
+        ),
+    }
 
 
 def inspect_review_history(page: Page) -> dict[str, object]:
@@ -714,7 +755,7 @@ def main() -> None:
         desktop.screenshot(path=ARTIFACTS / "overview-desktop.png", full_page=True)
         desktop_import = inspect_import_workspace(desktop)
         desktop.screenshot(path=ARTIFACTS / "import-desktop.png", full_page=True)
-        select_first_draft(desktop)
+        desktop_draft = select_first_draft(desktop)
         desktop_reviews = inspect_review_history(desktop)
         desktop.screenshot(path=ARTIFACTS / "draft-desktop.png", full_page=True)
         desktop_result = inspect_publish_workspace(desktop)
@@ -739,7 +780,7 @@ def main() -> None:
         mobile.goto(APP_URL, wait_until="domcontentloaded")
         mobile_import = inspect_import_workspace(mobile)
         mobile.screenshot(path=ARTIFACTS / "import-mobile.png", full_page=True)
-        select_first_draft(mobile)
+        mobile_draft = select_first_draft(mobile)
         mobile_reviews = inspect_review_history(mobile)
         mobile.screenshot(path=ARTIFACTS / "draft-mobile.png", full_page=True)
         mobile_result = inspect_publish_workspace(mobile)
@@ -757,6 +798,8 @@ def main() -> None:
     assert not mobile_stores["horizontal_overflow"], "Mobile stores page overflows horizontally"
     assert not desktop_reviews["horizontal_overflow"], "Desktop review history overflows horizontally"
     assert not mobile_reviews["horizontal_overflow"], "Mobile review history overflows horizontally"
+    assert not desktop_draft["horizontal_overflow"], "Desktop draft page overflows horizontally"
+    assert not mobile_draft["horizontal_overflow"], "Mobile draft page overflows horizontally"
     assert not console_errors, f"Browser console errors: {console_errors}"
     assert not failed_responses, f"Failed browser responses: {failed_responses}"
     print(
@@ -769,6 +812,8 @@ def main() -> None:
             "mobile_stores": mobile_stores,
             "desktop_reviews": desktop_reviews,
             "mobile_reviews": mobile_reviews,
+            "desktop_draft": desktop_draft,
+            "mobile_draft": mobile_draft,
             "console_errors": console_errors,
             "failed_responses": failed_responses,
             "screenshots": str(ARTIFACTS),

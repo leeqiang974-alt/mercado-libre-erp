@@ -18,6 +18,7 @@ from app.models.store import Store
 from app.models.token_credential import TokenCredential
 from app.schemas.publishing import PublishExecutionResult
 from app.services.meli.token_vault import encrypt_token_value
+from pricing_test_support import add_current_pricing
 
 
 def make_client():
@@ -66,6 +67,7 @@ def make_client():
         )
         db.add(draft)
         db.flush()
+        add_current_pricing(db, draft)
         db.add_all(
             [
                 DraftListingConfig(

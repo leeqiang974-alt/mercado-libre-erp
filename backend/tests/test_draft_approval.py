@@ -17,6 +17,7 @@ from app.models.store import Store
 from app.models.token_credential import TokenCredential
 from app.schemas.publishing import PublishExecutionResult
 from app.services.meli.token_vault import encrypt_token_value
+from pricing_test_support import add_current_pricing
 
 
 def make_client(with_config: bool = True):
@@ -52,18 +53,19 @@ def make_client(with_config: bool = True):
                 encrypted_refresh_token=encrypt_token_value("refresh-token", "test-secret"),
             )
         )
-        db.add(
-            ProductDraft(
-                title="Bottle",
-                description="Leak proof.",
-                target_site_id="MLM",
-                target_category_id="",
-                price=9.99,
-                currency="MXN",
-                stock=2,
-                image_urls_json=["https://example.com/a.jpg"],
-            )
+        draft = ProductDraft(
+            title="Bottle",
+            description="Leak proof.",
+            target_site_id="MLM",
+            target_category_id="",
+            price=9.99,
+            currency="MXN",
+            stock=2,
+            image_urls_json=["https://example.com/a.jpg"],
         )
+        db.add(draft)
+        db.flush()
+        add_current_pricing(db, draft)
         db.commit()
 
     def override_get_db():

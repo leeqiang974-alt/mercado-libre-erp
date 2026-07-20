@@ -39,6 +39,7 @@ from app.services.publish_jobs import (
     complete_publish_job,
     create_publish_job,
     list_publish_jobs,
+    publish_blocking_errors,
     replay_publish_result,
     to_publish_job_read,
 )
@@ -439,6 +440,67 @@ async def _execute_with_payload(
     )
     if not access_token:
         result = PublishExecutionResult(status="blocked", errors=["store_access_token_required"])
+        complete_publish_job(db, job, result)
+        _audit_publish_execution(
+            db=db,
+            job_id=job.id,
+            product_draft_id=product_draft_id,
+            store_id=store_id,
+            listing_choice=listing_choice,
+            human_approved=human_approved,
+            result=result,
+        )
+        return result.model_copy(update={"job_id": job.id})
+    try:
+        draft, listing_choice = build_configured_draft(
+            db, product_draft_id, lock_draft=True
+        )
+        review = get_publish_review(db, product_draft_id, review.review_result_id)
+        human_approved = is_product_draft_approved(db, product_draft_id)
+        store = db.scalar(
+            select(Store)
+            .where(Store.id == store_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if store is None:
+            raise HTTPException(status_code=404, detail="Store not found.")
+    except HTTPException as exc:
+        result = PublishExecutionResult(
+            status="blocked", errors=publish_blocking_errors(exc.detail)
+        )
+        complete_publish_job(db, job, result)
+        _audit_publish_execution(
+            db=db,
+            job_id=job.id,
+            product_draft_id=product_draft_id,
+            store_id=store_id,
+            listing_choice=listing_choice,
+            human_approved=human_approved,
+            result=result,
+        )
+        return result.model_copy(update={"job_id": job.id})
+    final_validation = validate_publish_request(
+        draft=draft,
+        review=review,
+        listing_choice=listing_choice,
+        valid_listing_type_ids=valid_listing_type_ids,
+        human_approved=human_approved,
+    )
+    final_errors = [
+        *final_validation.errors,
+        *validate_store_delivery(
+            store.id, store.site_id, store.oauth_status, listing_choice
+        ),
+        *validate_category_attributes(
+            db,
+            draft.target_category_id,
+            listing_choice.attributes,
+            require_verified_metadata=settings.allow_live_publish,
+        ),
+    ]
+    if final_errors:
+        result = PublishExecutionResult(status="blocked", errors=final_errors)
         complete_publish_job(db, job, result)
         _audit_publish_execution(
             db=db,

@@ -9,6 +9,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.audit_event import AuditEvent
+from app.models.draft_pricing_config import DraftPricingConfig
 from app.models.product_draft import ProductDraft
 from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.publish_job import PublishJob, PublishJobStatus
@@ -18,6 +19,7 @@ from app.models.store import Store
 from app.models.token_credential import TokenCredential
 from app.schemas.publishing import PublishExecutionResult
 from app.services.meli.token_vault import encrypt_token_value
+from pricing_test_support import add_current_pricing
 
 
 def make_client(with_config: bool = True):
@@ -53,18 +55,19 @@ def make_client(with_config: bool = True):
                 encrypted_refresh_token=encrypt_token_value("refresh-token", "test-secret"),
             )
         )
-        db.add(
-            ProductDraft(
-                title="Bottle",
-                description="Leak proof.",
-                target_site_id="MLM",
-                target_category_id="",
-                price=9.99,
-                currency="MXN",
-                stock=2,
-                image_urls_json=["https://example.com/a.jpg"],
-            )
+        draft = ProductDraft(
+            title="Bottle",
+            description="Leak proof.",
+            target_site_id="MLM",
+            target_category_id="",
+            price=9.99,
+            currency="MXN",
+            stock=2,
+            image_urls_json=["https://example.com/a.jpg"],
         )
+        db.add(draft)
+        db.flush()
+        add_current_pricing(db, draft)
         db.commit()
 
     def override_get_db():
@@ -231,6 +234,65 @@ def test_publish_execute_from_draft_requires_saved_config(monkeypatch):
 
     assert response.status_code == 404
     assert "Listing config not found" in response.text
+
+
+def test_publish_execute_from_draft_requires_saved_pricing(monkeypatch):
+    async def unexpected_publish(**kwargs):
+        raise AssertionError("missing pricing must block before the publisher")
+
+    monkeypatch.setattr(publishing, "execute_publish", unexpected_publish)
+    client, testing_session = make_client()
+    review_result_id = seed_publish_review(testing_session)
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+    with testing_session() as db:
+        db.query(DraftPricingConfig).delete()
+        db.commit()
+
+    response = client.post(
+        "/api/publishing/execute-from-draft", json=execute_payload(review_result_id)
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "draft_pricing_not_ready",
+        "errors": ["saved_pricing_required"],
+    }
+    with testing_session() as db:
+        assert db.query(PublishJob).count() == 0
+
+
+def test_publish_final_recheck_blocks_price_changed_after_job_creation(monkeypatch):
+    async def mutate_draft_before_final_lock(**kwargs):
+        with testing_session() as db:
+            draft = db.get(ProductDraft, 1)
+            draft.price = 10.99
+            db.commit()
+        return "access-token"
+
+    async def unexpected_publish(**kwargs):
+        raise AssertionError("stale pricing must block before the publisher")
+
+    monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
+    monkeypatch.setattr(
+        publishing,
+        "resolve_fresh_store_access_token",
+        mutate_draft_before_final_lock,
+    )
+    monkeypatch.setattr(publishing, "execute_publish", unexpected_publish)
+    client, testing_session = make_client()
+    review_result_id = seed_publish_review(testing_session)
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+
+    response = client.post(
+        "/api/publishing/execute-from-draft", json=execute_payload(review_result_id)
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "blocked"
+    assert response.json()["errors"] == ["draft_price_not_from_saved_pricing"]
+    with testing_session() as db:
+        job = db.query(PublishJob).one()
+        assert job.status == PublishJobStatus.BLOCKED
 
 
 def test_publish_execute_replays_existing_result_without_duplicate_item(monkeypatch):

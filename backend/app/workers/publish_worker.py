@@ -23,7 +23,11 @@ from app.services.meli.publisher import (
     validate_store_delivery,
 )
 from app.services.meli.token_vault import resolve_fresh_store_access_token
-from app.services.publish_jobs import complete_publish_job, recover_stale_publish_jobs
+from app.services.publish_jobs import (
+    complete_publish_job,
+    publish_blocking_errors,
+    recover_stale_publish_jobs,
+)
 from app.services.reviews import get_publish_review
 
 Publisher = Callable[..., Awaitable[PublishExecutionResult]]
@@ -146,6 +150,7 @@ async def run_pending_publish_job(
             else:
                 result = await _publish_job(
                     db=db,
+                    product_draft_id=job.product_draft_id,
                     store=store,
                     draft=draft,
                     review=review,
@@ -157,7 +162,10 @@ async def run_pending_publish_job(
                     token_encryption_key=token_encryption_key,
                 )
     except HTTPException as exc:
-        result = PublishExecutionResult(status="failed", errors=[str(exc.detail)])
+        result = PublishExecutionResult(
+            status="blocked" if 400 <= exc.status_code < 500 else "failed",
+            errors=publish_blocking_errors(exc.detail),
+        )
     except Exception as exc:
         result = PublishExecutionResult(
             status="failed", errors=[f"worker_error:{type(exc).__name__}"]
@@ -170,6 +178,7 @@ async def run_pending_publish_job(
 
 async def _publish_job(
     db: Session,
+    product_draft_id: int,
     store: Store,
     draft,
     review,
@@ -189,6 +198,44 @@ async def _publish_job(
     )
     if not access_token:
         return PublishExecutionResult(status="blocked", errors=["store_access_token_required"])
+    draft, listing_choice = build_configured_draft(
+        db, product_draft_id, lock_draft=True
+    )
+    review = get_publish_review(db, product_draft_id, review.review_result_id)
+    human_approved = is_product_draft_approved(db, product_draft_id)
+    store = db.scalar(
+        select(Store)
+        .where(Store.id == store.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if store is None:
+        return PublishExecutionResult(status="failed", errors=["store_not_found"])
+    final_validation = validate_publish_request(
+        draft=draft,
+        review=review,
+        listing_choice=listing_choice,
+        valid_listing_type_ids=valid_listing_type_ids,
+        human_approved=human_approved,
+    )
+    final_errors = [
+        *final_validation.errors,
+        *validate_store_delivery(
+            store.id, store.site_id, store.oauth_status, listing_choice
+        ),
+        *validate_category_attributes(
+            db,
+            draft.target_category_id,
+            listing_choice.attributes,
+            require_verified_metadata=(
+                settings.allow_live_publish
+                if allow_live_publish is None
+                else allow_live_publish
+            ),
+        ),
+    ]
+    if final_errors:
+        return PublishExecutionResult(status="blocked", errors=final_errors)
     publish = publisher or execute_publish
     try:
         return await publish(

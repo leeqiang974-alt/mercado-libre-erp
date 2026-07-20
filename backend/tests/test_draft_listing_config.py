@@ -16,6 +16,7 @@ from app.models.registry import import_all_models
 from app.models.review_result import ReviewDecision, ReviewResult
 from app.models.store import Store
 from app.services import draft_listing_configs
+from pricing_test_support import add_current_pricing
 
 
 def make_client():
@@ -47,18 +48,19 @@ def make_client():
                 },
             )
         )
-        db.add(
-            ProductDraft(
-                title="Bottle",
-                description="Leak proof.",
-                target_site_id="MLM",
-                target_category_id="",
-                price=9.99,
-                currency="MXN",
-                stock=2,
-                image_urls_json=["https://example.com/a.jpg"],
-            )
+        draft = ProductDraft(
+            title="Bottle",
+            description="Leak proof.",
+            target_site_id="MLM",
+            target_category_id="",
+            price=9.99,
+            currency="MXN",
+            stock=2,
+            image_urls_json=["https://example.com/a.jpg"],
         )
+        db.add(draft)
+        db.flush()
+        add_current_pricing(db, draft)
         db.add(
             Store(
                 site_id="MLM",

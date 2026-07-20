@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.draft_listing_config import DraftListingConfig
@@ -11,6 +12,7 @@ from app.schemas.drafts import ProductDraftCreate
 from app.schemas.publishing import ListingChoice
 from app.services.audit_events import create_audit_event
 from app.services.drafts import update_draft_content
+from app.services.draft_pricing import require_current_draft_pricing
 from app.services.meli.category_validation import validate_category_attributes
 
 
@@ -44,6 +46,7 @@ def upsert_draft_listing_config(
 
     config = (
         db.query(DraftListingConfig)
+        .populate_existing()
         .filter(DraftListingConfig.product_draft_id == product_draft_id)
         .one_or_none()
     )
@@ -109,6 +112,7 @@ def upsert_draft_listing_config(
 def get_draft_listing_config(db: Session, product_draft_id: int) -> DraftListingConfig:
     config = (
         db.query(DraftListingConfig)
+        .populate_existing()
         .filter(DraftListingConfig.product_draft_id == product_draft_id)
         .one_or_none()
     )
@@ -118,12 +122,16 @@ def get_draft_listing_config(db: Session, product_draft_id: int) -> DraftListing
 
 
 def build_configured_draft(
-    db: Session, product_draft_id: int
+    db: Session, product_draft_id: int, *, lock_draft: bool = False
 ) -> tuple[ProductDraftCreate, ListingChoice]:
-    draft = db.get(ProductDraft, product_draft_id)
+    statement = select(ProductDraft).where(ProductDraft.id == product_draft_id)
+    if lock_draft:
+        statement = statement.with_for_update().execution_options(populate_existing=True)
+    draft = db.scalar(statement)
     if draft is None:
         raise HTTPException(status_code=404, detail="Product draft not found.")
     config = get_draft_listing_config(db, product_draft_id)
+    require_current_draft_pricing(db, draft)
     category_errors = validate_category_attributes(
         db,
         config.category_id,
@@ -143,6 +151,8 @@ def build_configured_draft(
             target_site_id=config.site_id,
             target_category_id=config.category_id,
             condition=draft.condition,
+            source_price=draft.source_price,
+            source_currency=draft.source_currency,
             price=draft.price,
             currency=draft.currency,
             stock=draft.stock,

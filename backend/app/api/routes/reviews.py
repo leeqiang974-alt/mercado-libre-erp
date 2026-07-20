@@ -15,6 +15,7 @@ from app.services.ai.provider_utils import AIProviderError
 from app.services.ai.review_policy import review_draft_locally
 from app.services.audit_events import create_audit_event
 from app.services.draft_listing_configs import build_configured_draft
+from app.services.draft_pricing import require_current_draft_pricing
 from app.services.integration_credentials import resolve_integration_credentials
 from app.services.reviews import (
     ReviewBatchAudit,
@@ -219,6 +220,7 @@ def _canonical_review_draft(
     )
     if model is None:
         raise HTTPException(status_code=404, detail="Product draft not found.")
+    require_current_draft_pricing(db, model)
     try:
         draft, listing_choice = build_configured_draft(db, product_draft_id)
         canonical = draft.model_copy(update={"attributes": listing_choice.attributes})

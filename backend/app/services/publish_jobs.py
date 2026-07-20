@@ -125,6 +125,18 @@ def replay_publish_result(job: PublishJob) -> PublishExecutionResult:
     )
 
 
+def publish_blocking_errors(detail: object) -> list[str]:
+    if isinstance(detail, dict):
+        errors = detail.get("errors")
+        if isinstance(errors, list) and errors:
+            return [str(error) for error in errors]
+        if detail.get("code"):
+            return [str(detail["code"])]
+    if isinstance(detail, list):
+        return [str(error) for error in detail]
+    return [str(detail)]
+
+
 def complete_publish_job(db: Session, job: PublishJob, result: PublishExecutionResult) -> PublishJob:
     if result.item_id:
         job.meli_item_id = result.item_id
