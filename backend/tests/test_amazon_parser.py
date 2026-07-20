@@ -248,6 +248,103 @@ def test_parse_amazon_script_gallery_binds_high_resolution_images_to_asins():
     ]
 
 
+def test_parse_amazon_json5_script_gallery_and_variant_dimensions():
+    html = """
+    <input id="ASIN" value="B000TEST01" />
+    <span id="productTitle">JSON5 variant bottle</span>
+    <script>
+      // colorImages: {}
+      // dimensionValuesDisplayData: {}
+      var imageData = {
+        // Some Amazon page variants emit JavaScript objects { rather than JSON }.
+        colorImages: /* the object's gallery */ {
+          initial: [{hiRes: 'https://example.com/black-main.jpg',},],
+          Blue: [{mainUrl: 'https://example.com/blue-main.jpg',},],
+        },
+        colorToAsin: {
+          /* Don't alter undefined here; ignore structural tokens: { } */
+          Blue: {asin: 'B000TEST02',},
+        },
+        variationValues: {
+          color_name: ['Black', 'Blue'],
+          size_name: ['20 oz', '32 oz'],
+        },
+        dimensionValuesDisplayData: {
+          B000TEST01: ['Black', '20 oz'],
+          B000TEST02: ['Blue', '32 oz'],
+          B000TEST03: [undefined, null],
+        },
+        unused: undefined,
+      };
+    </script>
+    """
+
+    parsed = parse_amazon_html(html, "https://amazon.com/dp/B000TEST01")
+
+    assert parsed["images"] == ["https://example.com/black-main.jpg"]
+    variants = {variant["asin"]: variant for variant in parsed["variants"]}
+    assert variants["B000TEST01"] | {
+        "attributes": {"Color": "Black", "Size": "20 oz"},
+        "selected": True,
+    } == variants["B000TEST01"]
+    assert variants["B000TEST02"] == {
+        "asin": "B000TEST02",
+        "attributes": {"Color": "Blue", "Size": "32 oz"},
+        "image_urls": ["https://example.com/blue-main.jpg"],
+        "selected": False,
+    }
+    assert variants["B000TEST03"]["attributes"] == {}
+
+
+def test_parse_amazon_measurements_from_second_technical_section():
+    html = """
+    <span id="productTitle">Second details table</span>
+    <table id="productDetails_techSpec_section_2">
+      <tr><th>Package Weight</th><td>2.5 kg</td></tr>
+      <tr><th>Package Dimensions</th><td>40 x 30 x 20 cm</td></tr>
+    </table>
+    """
+
+    parsed = parse_amazon_html(html, "https://amazon.com/dp/B000TEST01")
+
+    assert parsed["measurements"]["package_weight"]["value"] == 2.5
+    assert parsed["measurements"]["package_weight"]["unit"] == "kg"
+    assert parsed["measurements"]["package_dimensions"] | {
+        "length": 40.0,
+        "width": 30.0,
+        "height": 20.0,
+        "unit": "cm",
+    } == parsed["measurements"]["package_dimensions"]
+
+
+def test_parse_amazon_dimensions_with_inline_weight_uses_explicit_weight_first():
+    html = """
+    <span id="productTitle">Composite measurements</span>
+    <table id="productDetails_techSpec_section_1">
+      <tr><th>Product Dimensions</th><td>12 x 8 x 4 inches; 1.5 Pounds</td></tr>
+      <tr><th>Package Dimensions</th><td>14 x 10 x 6 inches; 2.25 Pounds</td></tr>
+      <tr><th>Item Weight</th><td>1.25 Pounds</td></tr>
+    </table>
+    """
+
+    parsed = parse_amazon_html(html, "https://amazon.com/dp/B000TEST01")
+
+    assert parsed["measurements"]["product_dimensions"]["length"] == 12.0
+    assert parsed["measurements"]["package_dimensions"]["length"] == 14.0
+    assert parsed["measurements"]["item_weight"] == {
+        "value": 1.25,
+        "unit": "lb",
+        "raw": "1.25 Pounds",
+        "source_label": "Item Weight",
+    }
+    assert parsed["measurements"]["package_weight"] == {
+        "value": 2.25,
+        "unit": "lb",
+        "raw": "14 x 10 x 6 inches; 2.25 Pounds",
+        "source_label": "Package Dimensions",
+    }
+
+
 def test_displayed_asin_owns_initial_gallery_and_mismatch_is_rejected():
     html = """
     <link rel="canonical" href="https://amazon.com/dp/B000TEST01" />

@@ -47,3 +47,8 @@
 - Keep project source, databases, Docker bind mounts, browser profiles, and generated artifacts under `D:\amazon-meli-publisher`; place shared tool caches in dedicated D-drive cache directories.
 - Do not create project data or generated output on C. System-installed runtimes may remain on C, but their project-specific temp/output paths must be redirected to D when configurable.
 - Verify storage changes through resolved host paths, Docker mount inspection, and a write test from the affected container or process.
+
+## Work Continuity And Reporting
+
+- Continue implementation through coding, verification, review, and commit. Do not stop after one subsystem while meaningful credential-independent product work remains.
+- Progress reports must distinguish long-lived services, currently executing commands, active review agents, and completed code. Never present container uptime as active development time.

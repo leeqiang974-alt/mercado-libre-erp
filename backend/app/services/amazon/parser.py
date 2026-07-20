@@ -1,9 +1,9 @@
-import ast
 import json
 import re
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
+import json5
 
 
 def _text(node) -> str:
@@ -195,20 +195,116 @@ def _extract_images(soup: BeautifulSoup) -> list[str]:
 
 
 def _json_object_after_key(text: str, key: str) -> dict:
-    match = re.search(rf'["\']{re.escape(key)}["\']\s*:\s*', text)
-    if not match:
+    object_start = _object_start_after_key(text, key)
+    if object_start is None:
         return {}
-    fragment = _balanced_object(text, match.end())
+    fragment = _balanced_object(text, object_start)
     if not fragment:
         return {}
     try:
         value = json.loads(fragment)
     except (TypeError, ValueError):
         try:
-            value = ast.literal_eval(_pythonize_javascript_literals(fragment))
-        except (SyntaxError, ValueError):
+            value = json5.loads(_replace_javascript_undefined(fragment))
+        except (TypeError, ValueError):
             return {}
     return value if isinstance(value, dict) else {}
+
+
+def _skip_javascript_trivia(text: str, start: int) -> int:
+    index = start
+    while index < len(text):
+        if text[index].isspace():
+            index += 1
+            continue
+        if text.startswith("//", index):
+            newline = re.search(r"[\r\n]", text[index + 2 :])
+            if newline is None:
+                return len(text)
+            index += 2 + newline.end()
+            continue
+        if text.startswith("/*", index):
+            end = text.find("*/", index + 2)
+            if end < 0:
+                return len(text)
+            index = end + 2
+            continue
+        break
+    return index
+
+
+def _property_object_start(text: str, start: int) -> int | None:
+    separator = _skip_javascript_trivia(text, start)
+    if separator >= len(text) or text[separator] != ":":
+        return None
+    object_start = _skip_javascript_trivia(text, separator + 1)
+    return object_start if object_start < len(text) and text[object_start] == "{" else None
+
+
+def _object_start_after_key(text: str, key: str) -> int | None:
+    quote = ""
+    quoted_value: list[str] = []
+    escaped = False
+    line_comment = False
+    block_comment = False
+    index = 0
+    while index < len(text):
+        character = text[index]
+        next_character = text[index + 1] if index + 1 < len(text) else ""
+        if quote:
+            if escaped:
+                quoted_value.append(character)
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                if "".join(quoted_value) == key:
+                    object_start = _property_object_start(text, index + 1)
+                    if object_start is not None:
+                        return object_start
+                quote = ""
+                quoted_value = []
+            else:
+                quoted_value.append(character)
+            index += 1
+            continue
+        if line_comment:
+            if character in "\r\n":
+                line_comment = False
+            index += 1
+            continue
+        if block_comment:
+            if character == "*" and next_character == "/":
+                block_comment = False
+                index += 2
+            else:
+                index += 1
+            continue
+        if character in ("'", '"', "`"):
+            quote = character
+            quoted_value = []
+            index += 1
+            continue
+        if character == "/" and next_character == "/":
+            line_comment = True
+            index += 2
+            continue
+        if character == "/" and next_character == "*":
+            block_comment = True
+            index += 2
+            continue
+        if text.startswith(key, index):
+            before = text[index - 1] if index else ""
+            after_index = index + len(key)
+            after = text[after_index] if after_index < len(text) else ""
+            if (not before or not (before.isalnum() or before in "_$")) and (
+                not after or not (after.isalnum() or after in "_$")
+            ):
+                object_start = _property_object_start(text, after_index)
+                if object_start is not None:
+                    return object_start
+        index += 1
+    return None
 
 
 def _balanced_object(text: str, start: int) -> str:
@@ -219,8 +315,11 @@ def _balanced_object(text: str, start: int) -> str:
     depth = 0
     quote = ""
     escaped = False
+    line_comment = False
+    block_comment = False
     for index in range(start, len(text)):
         character = text[index]
+        next_character = text[index + 1] if index + 1 < len(text) else ""
         if quote:
             if escaped:
                 escaped = False
@@ -229,8 +328,20 @@ def _balanced_object(text: str, start: int) -> str:
             elif character == quote:
                 quote = ""
             continue
-        if character in ("'", '"'):
+        if line_comment:
+            if character in "\r\n":
+                line_comment = False
+            continue
+        if block_comment:
+            if character == "*" and next_character == "/":
+                block_comment = False
+            continue
+        if character in ("'", '"', "`"):
             quote = character
+        elif character == "/" and next_character == "/":
+            line_comment = True
+        elif character == "/" and next_character == "*":
+            block_comment = True
         elif character == "{":
             depth += 1
         elif character == "}":
@@ -240,14 +351,16 @@ def _balanced_object(text: str, start: int) -> str:
     return ""
 
 
-def _pythonize_javascript_literals(value: str) -> str:
-    replacements = {"null": "None", "true": "True", "false": "False", "undefined": "None"}
+def _replace_javascript_undefined(value: str) -> str:
     result: list[str] = []
     quote = ""
     escaped = False
+    line_comment = False
+    block_comment = False
     index = 0
     while index < len(value):
         character = value[index]
+        next_character = value[index + 1] if index + 1 < len(value) else ""
         if quote:
             result.append(character)
             if escaped:
@@ -258,29 +371,49 @@ def _pythonize_javascript_literals(value: str) -> str:
                 quote = ""
             index += 1
             continue
-        if character in ("'", '"'):
+        if line_comment:
+            result.append(character)
+            if character in "\r\n":
+                line_comment = False
+            index += 1
+            continue
+        if block_comment:
+            result.append(character)
+            if character == "*" and next_character == "/":
+                result.append(next_character)
+                block_comment = False
+                index += 2
+            else:
+                index += 1
+            continue
+        if character in ("'", '"', "`"):
             quote = character
             result.append(character)
             index += 1
             continue
-        replaced = False
-        for token, replacement in replacements.items():
-            if not value.startswith(token, index):
-                continue
+        if character == "/" and next_character == "/":
+            result.extend((character, next_character))
+            line_comment = True
+            index += 2
+            continue
+        if character == "/" and next_character == "*":
+            result.extend((character, next_character))
+            block_comment = True
+            index += 2
+            continue
+        if value.startswith("undefined", index):
             before = value[index - 1] if index else ""
-            after_index = index + len(token)
+            after_index = index + len("undefined")
             after = value[after_index] if after_index < len(value) else ""
             if (not before or not (before.isalnum() or before == "_")) and (
                 not after or not (after.isalnum() or after == "_")
             ):
-                result.append(replacement)
+                result.append("null")
                 index = after_index
-                replaced = True
-                break
-        if not replaced:
-            result.append(character)
-            index += 1
-    return "".join(result).replace("\\/", "/")
+                continue
+        result.append(character)
+        index += 1
+    return "".join(result)
 
 
 def _gallery_entry_url(entry: object) -> str:
@@ -427,7 +560,7 @@ def _extract_variants(
                 },
             )
             for attribute, value in zip(attributes, values, strict=False):
-                if attribute and str(value).strip():
+                if attribute and value is not None and str(value).strip():
                     variant["attributes"].setdefault(attribute, str(value).strip())
 
     for asin, image_urls in (script_images_by_asin or {}).items():
@@ -511,24 +644,43 @@ def _extract_measurements(
     decimal_separator = "," if any(
         host == domain or host.endswith(f".{domain}") for domain in COMMA_DECIMAL_DOMAINS
     ) else "."
-    aliases = {
+    weight_aliases = {
         "itemweight": ("item_weight", _parse_weight),
         "productweight": ("item_weight", _parse_weight),
         "packageweight": ("package_weight", _parse_weight),
         "shippingweight": ("package_weight", _parse_weight),
+    }
+    dimension_aliases = {
         "productdimensions": ("product_dimensions", _parse_dimensions),
         "itemdimensionslxwxh": ("product_dimensions", _parse_dimensions),
         "packagedimensions": ("package_dimensions", _parse_dimensions),
     }
-    for label, raw in technical_details.items():
-        normalized_label = re.sub(r"[^a-z0-9]", "", label.lower())
-        target = aliases.get(normalized_label)
-        if not target:
+    normalized_details = [
+        (label, raw, re.sub(r"[^a-z0-9]", "", label.lower()))
+        for label, raw in technical_details.items()
+    ]
+    for aliases in (weight_aliases, dimension_aliases):
+        for label, raw, normalized_label in normalized_details:
+            target = aliases.get(normalized_label)
+            if not target:
+                continue
+            field, parser = target
+            parsed = parser(raw, decimal_separator)
+            if parsed and field not in measurements:
+                measurements[field] = {**parsed, "source_label": label}
+
+    inline_weight_fields = {
+        "productdimensions": "item_weight",
+        "itemdimensionslxwxh": "item_weight",
+        "packagedimensions": "package_weight",
+    }
+    for label, raw, normalized_label in normalized_details:
+        weight_field = inline_weight_fields.get(normalized_label)
+        if not weight_field or weight_field in measurements:
             continue
-        field, parser = target
-        parsed = parser(raw, decimal_separator)
-        if parsed and field not in measurements:
-            measurements[field] = {**parsed, "source_label": label}
+        parsed_weight = _parse_weight(raw, decimal_separator)
+        if parsed_weight:
+            measurements[weight_field] = {**parsed_weight, "source_label": label}
     return measurements
 
 
@@ -553,7 +705,8 @@ def parse_amazon_html(html: str, source_url: str) -> dict:
         _append_unique(images, image_url)
     technical_details = {}
     for row in soup.select(
-        "#productDetails_techSpec_section_1 tr, #productDetails_detailBullets_sections1 tr, "
+        "[id^='productDetails_techSpec_section_'] tr, "
+        "#productDetails_detailBullets_sections1 tr, "
         "#productOverview_feature_div tr"
     ):
         key = _text(row.select_one("th"))

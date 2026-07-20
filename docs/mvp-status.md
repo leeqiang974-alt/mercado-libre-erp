@@ -15,12 +15,14 @@ Implemented:
 - Persisted Amazon URL collection results as source products, including manual-action and failed collection states.
 - Structured Amazon source snapshots persist the full collected title, price, brand, bullets, description, image gallery, technical details, and discovered ASIN variants instead of reducing the source record to a URL/status shell.
 - Amazon `colorImages`/`colorToAsin` page data supplies high-resolution galleries before DOM thumbnails, including single-quoted JavaScript objects and maximum-area `main` image maps; displayed-ASIN validation prevents redirected pages from contaminating the requested product, and each discovered color ASIN receives only its own authoritative script gallery.
+- JSON5-style Amazon script objects with unquoted keys, comments, trailing commas, and JavaScript `undefined` values retain their variant dimensions and per-ASIN image galleries instead of being discarded.
 - Collection history exposes a lightweight source summary and a lazy-loaded review panel for the full image gallery and variant evidence on desktop and mobile.
 - Operators can create an idempotent, site-specific draft from any discovered Amazon variant; the draft retains its source ASIN/attributes and prefers variant-specific images.
 - Non-selected Amazon variants can be queued for an independent page collection from the source review. The API preserves the Amazon country domain, validates snapshot membership, reuses the canonical site/ASIN/Mercado Libre-site task, and lets the resulting source and draft retain that variant's own price, images, and measurements.
 - Source review can queue up to 100 missing variants in one locked batch, reporting created/reused/selected counts. Duplicate ASIN rows collapse with selected precedence, and ID-based status polling keeps batch tasks current even when they fall outside the latest-100 queue window.
 - Saved drafts expose their Amazon ASIN and variant attributes so operators can distinguish otherwise identical titles.
 - Amazon specification tables and detail bullets produce structured item/package weights and product/package dimensions while retaining the original label/value; source review exposes this evidence on desktop and mobile.
+- Every numbered Amazon technical-specification table is scanned. Composite dimension rows can also supply an inline item/package weight, while a dedicated weight row always takes precedence regardless of HTML row order.
 - Selected-page measurements can suggest explicit Mercado Libre weight and dimension attributes only for the selected Amazon ASIN, preventing a sibling variant from inheriting unverified logistics data.
 - Verified Mercado Libre category metadata produces conservative Amazon-to-Mercado Libre attribute suggestions; exact enumerated matches preserve `value_id`, ambiguous list values require manual entry, and mapped optional attributes remain editable.
 - Listing configuration and publish validation enforce both `required` and `catalog_required` attributes, reject unknown category IDs and invalid enumerated value IDs when verified definitions are present, and translate common attribute failures into operator-facing messages.
@@ -67,7 +69,7 @@ Implemented:
 - React MVP shell for import, saved draft list, Claude/NVIDIA review buttons, publishing metadata lookup, publish job list, publishing readiness, connected store list, and store authorization link startup.
 - Operator integration settings for encrypted Mercado Libre App, Claude, and NVIDIA credentials. Secret inputs are write-only, status responses never return values, and store authorization remains disabled until both Mercado Libre App fields are configured.
 - API routes and the publish worker resolve database-backed credentials on each execution, with environment variables used only when no database override exists; updates do not require a service restart.
-- Docker Compose services for PostgreSQL, Redis, backend API, collection worker, and publish worker, with PostgreSQL and Redis data bind-mounted under the D-drive project tree.
+- Docker Compose services for PostgreSQL, Redis, backend API, collection worker, and publish worker, with PostgreSQL and Redis data bind-mounted under the D-drive project tree. The migration, API, collection, and publishing processes share one backend image rather than exporting four duplicate Playwright images.
 - Compose migration gate (`alembic upgrade head`) plus database/Redis/API health checks and restart policies.
 
 Not connected yet:
@@ -77,11 +79,12 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 227 passed, with 5 PostgreSQL-only tests skipped in the default run.
+- Backend suite: 230 passed, with 5 PostgreSQL-only tests skipped in the default run.
 - Docker PostgreSQL integration run: 5 passed, including concurrent collection, publish-job, and source-variant draft deduplication plus atomic draft-version invalidation under simultaneous edits.
 - PostgreSQL migrations through `20260720_0021` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, review execution metadata, structured source snapshots, source-variant draft bindings, structured source measurements, provider usage/request telemetry, and encrypted integration credentials.
 - The complete Alembic chain upgraded to head and downgraded to base successfully on a disposable D-drive SQLite database.
 - Frontend production build passed.
+- Docker Compose dry-run schedules one backend image build, and the running API, collection worker, and publish worker share the same image SHA. A container-level smoke imported `json5` and parsed a commented JSON5 gallery successfully.
 - Desktop and mobile browser smoke passed for all 18 sites, Classic/Premium controls, two verified non-FULL shipping options, provider review metadata/token/request-ID rows, four write-only integration credential controls, credential-gated store authorization, batch result rows, three source images, three source variants, domain-aware single/bulk variant collection, disabled existing-task states, terminal status refresh with no subsequent polling, two source measurements, variant draft creation, three category attribute suggestions, required-attribute save gates, saved configuration readiness, overflow, console errors, and failed responses.
 - A live local PostgreSQL/API/browser integration smoke inserted a temporary collected source, read its structured measurements through the running backend, rendered both cards in the real frontend, and removed the test records afterward.
 - A live local PostgreSQL/API/browser integration smoke persisted temporary provider token/request telemetry, read it through the running backend, rendered it in review history, and removed the draft, review, and audit records afterward.

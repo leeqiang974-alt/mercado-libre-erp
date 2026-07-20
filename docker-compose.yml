@@ -1,10 +1,18 @@
 services:
-  migrate:
+  backend_image:
+    image: mvp-skeleton-backend:latest
     build:
       context: ./backend
+    command: ["true"]
+    restart: "no"
+
+  migrate:
+    image: mvp-skeleton-backend:latest
     environment:
       DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
     depends_on:
+      backend_image:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     command: python -m alembic upgrade head
@@ -15,8 +23,7 @@ services:
       - ./backend/alembic.ini:/app/alembic.ini:ro
 
   backend:
-    build:
-      context: ./backend
+    image: mvp-skeleton-backend:latest
     environment:
       DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
       MELI_CLIENT_ID: ${MELI_CLIENT_ID:-}
@@ -52,8 +59,7 @@ services:
       start_period: 15s
 
   collection_worker:
-    build:
-      context: ./backend
+    image: mvp-skeleton-backend:latest
     environment:
       DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
@@ -70,8 +76,7 @@ services:
     restart: unless-stopped
 
   publish_worker:
-    build:
-      context: ./backend
+    image: mvp-skeleton-backend:latest
     environment:
       DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
       MELI_CLIENT_ID: ${MELI_CLIENT_ID:-}
