@@ -355,6 +355,45 @@ def test_publish_batch_queues_ready_drafts_and_replays_exact_job(monkeypatch):
         assert db.query(AuditEvent).filter(AuditEvent.action == "publish.batch.queued").count() == 2
 
 
+def test_cancelled_publish_job_can_be_queued_again(monkeypatch):
+    async def shipping_preferences(self, path):
+        return {
+            "modes": ["me2"],
+            "logistics": [{"mode": "me2", "types": [{"type": "drop_off"}]}],
+        }
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing.MercadoLibreClient, "get", shipping_preferences)
+    client, testing_session = make_client()
+    seed_publish_review(testing_session)
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+
+    first = client.post(
+        "/api/publishing/enqueue-batch",
+        json={"draft_ids": [1], "acknowledge_publish": True},
+    )
+    first_job_id = first.json()["items"][0]["job"]["id"]
+    cancelled = client.post(f"/api/publishing/jobs/{first_job_id}/cancel")
+    second = client.post(
+        "/api/publishing/enqueue-batch",
+        json={"draft_ids": [1], "acknowledge_publish": True},
+    )
+
+    assert first.status_code == 200
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    assert second.status_code == 200
+    assert second.json()["queued_count"] == 1
+    second_job_id = second.json()["items"][0]["job"]["id"]
+    assert second_job_id != first_job_id
+    with testing_session() as db:
+        jobs = db.query(PublishJob).order_by(PublishJob.id).all()
+        assert [job.status for job in jobs] == [
+            PublishJobStatus.CANCELLED,
+            PublishJobStatus.PENDING,
+        ]
+
+
 def test_publish_batch_reports_unapproved_draft_without_queueing(monkeypatch):
     monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
     client, testing_session = make_client()

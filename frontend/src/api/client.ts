@@ -918,6 +918,14 @@ export async function retryPublishJob(jobId: number) {
   return response.json() as Promise<PublishExecutionResult>;
 }
 
+export async function cancelPublishJob(jobId: number) {
+  const response = await fetch(`${API_BASE}/api/publishing/jobs/${jobId}/cancel`, {
+    method: "POST",
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<PublishJobRecord>;
+}
+
 export async function saveDraftListingConfig(
   productDraftId: number,
   payload: {

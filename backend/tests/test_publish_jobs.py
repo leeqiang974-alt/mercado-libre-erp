@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -22,6 +23,7 @@ from app.schemas.drafts import ProductDraftCreate
 from app.schemas.publishing import ListingChoice, PublishExecutionResult
 from app.schemas.reviews import ReviewResponse
 from app.services.meli.token_vault import encrypt_token_value
+from app.services import publish_jobs as publish_jobs_service
 from app.services.publish_jobs import _publish_idempotency_key
 from pricing_test_support import add_current_pricing
 
@@ -361,3 +363,88 @@ def test_publish_jobs_list_is_bounded_and_paginated():
     assert second.status_code == 200
     assert [item["id"] for item in second.json()] == [1]
     assert invalid.status_code == 422
+
+
+def test_pending_publish_job_can_be_cancelled_idempotently():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        job = PublishJob(
+            product_draft_id=1,
+            store_id=1,
+            requested_by="operator",
+            status=PublishJobStatus.PENDING,
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        job_id = job.id
+        original_key = job.idempotency_key
+
+    first = client.post(f"/api/publishing/jobs/{job_id}/cancel")
+    second = client.post(f"/api/publishing/jobs/{job_id}/cancel")
+
+    assert first.status_code == 200
+    assert first.json()["status"] == "cancelled"
+    assert first.json()["errors"] == ["publish_cancelled_by_operator"]
+    assert first.json()["completed_at"]
+    assert second.status_code == 200
+    assert second.json()["id"] == job_id
+    with testing_session() as db:
+        job = db.get(PublishJob, job_id)
+        assert job.status == PublishJobStatus.CANCELLED
+        assert job.idempotency_key != original_key
+        events = db.query(AuditEvent).filter(AuditEvent.action == "publish.cancelled").all()
+        assert len(events) == 1
+        assert events[0].before_json == {"status": "pending"}
+        assert events[0].after_json["status"] == "cancelled"
+
+
+def test_claimed_publish_job_cannot_be_cancelled():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        job = PublishJob(
+            product_draft_id=1,
+            store_id=1,
+            requested_by="operator",
+            status=PublishJobStatus.VALIDATING,
+        )
+        db.add(job)
+        db.commit()
+        job_id = job.id
+
+    response = client.post(f"/api/publishing/jobs/{job_id}/cancel")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Only pending publish jobs can be cancelled."
+    with testing_session() as db:
+        assert db.get(PublishJob, job_id).status == PublishJobStatus.VALIDATING
+        assert db.query(AuditEvent).filter(AuditEvent.action == "publish.cancelled").count() == 0
+
+
+def test_publish_cancel_rolls_back_when_audit_write_fails(monkeypatch):
+    client, testing_session = make_client()
+    with testing_session() as db:
+        job = PublishJob(
+            product_draft_id=1,
+            store_id=1,
+            requested_by="operator",
+            status=PublishJobStatus.PENDING,
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        job_id = job.id
+        original_key = job.idempotency_key
+
+    def fail_audit(*args, **kwargs):
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr(publish_jobs_service, "create_audit_event", fail_audit)
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        client.post(f"/api/publishing/jobs/{job_id}/cancel")
+
+    with testing_session() as db:
+        job = db.get(PublishJob, job_id)
+        assert job.status == PublishJobStatus.PENDING
+        assert job.idempotency_key == original_key
+        assert db.query(AuditEvent).filter(AuditEvent.action == "publish.cancelled").count() == 0

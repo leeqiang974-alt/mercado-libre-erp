@@ -68,6 +68,7 @@ Implemented:
 - Persisted publish jobs for blocked, failed, and published execution attempts.
 - Publish job list API for reviewing status, errors, item IDs, and permalinks.
 - Publish job history is bounded and paginated, includes queued/started/completed timestamps, and the frontend polls only while pending or validating jobs exist. Terminal rows expose the Mercado Libre item id, permalink, normalized errors, manual refresh, and retry controls; polling stops when every visible job is terminal.
+- Pending publish jobs can be cancelled through a two-step operator action before a worker claims them. Cancellation locks the same job row used by worker claims, records one atomic audit event, releases the exact draft configuration for a later requeue, and refuses validating or terminal work with a conflict instead of interrupting an in-flight Mercado Libre request.
 - Publish job retry API and frontend retry control for blocked or failed jobs, preserving original job history and audit trail.
 - Audit event log for AI review and publish execution actions, with frontend audit page.
 - Alembic baseline migration for the current backend schema.
@@ -96,9 +97,10 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 370 passed, with 12 environment-specific tests skipped in the default run.
+- Backend suite: 374 passed, with 13 environment-specific tests skipped in the default run.
 - Isolated Docker PostgreSQL integration run: 8 passed, including serialized manual-snapshot recovery and refresh-token rotation, concurrent collection, publish-job, and source-variant draft deduplication, atomic draft-version invalidation, and a final publish-evidence row lock that blocks concurrent draft changes until publication completes.
-- PostgreSQL migrations through `20260721_0024` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, high-precision review execution costs, structured source snapshots, source-variant draft bindings, structured source measurements, provider usage/request telemetry, encrypted integration credentials, and a unique active price per provider/model.
+- A dedicated disposable PostgreSQL run verified that pending-job cancellation and worker claiming are mutually exclusive; its migrated database was dropped after the test and PostgreSQL reported zero matching temporary databases.
+- PostgreSQL migrations through `20260721_0028` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, high-precision review execution costs, structured source snapshots, source-variant draft bindings, structured source measurements, provider usage/request telemetry, encrypted integration credentials, unique active provider/model pricing, persistent Amazon throttling, explicit inventory confirmation, and queued combined reviews.
 - The complete Alembic chain upgraded to head and downgraded to base successfully on a disposable D-drive SQLite database.
 - Frontend production build passed.
 - Docker Compose dry-run schedules one backend image build, and the running API, collection worker, and publish worker share the same image SHA. A container-level smoke imported `json5` and parsed a commented JSON5 gallery successfully.

@@ -120,6 +120,7 @@ main {
 .status-dot.ready { background: #16803c; }
 .status-dot.blocked { background: #d92d20; }
 .secondary-button { background: #e7ebf0; color: #1f2933; }
+.danger-button { background: #b42318; color: white; }
 .command-list { display: grid; gap: 10px; margin-top: 18px; }
 
 .draft-list { display: grid; gap: 8px; }

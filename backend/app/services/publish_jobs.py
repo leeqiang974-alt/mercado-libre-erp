@@ -3,7 +3,7 @@ import hashlib
 import json
 
 from fastapi import HTTPException
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -11,6 +11,7 @@ from app.models.publish_job import PublishJob, PublishJobStatus
 from app.schemas.drafts import ProductDraftCreate
 from app.schemas.publishing import ListingChoice, PublishExecutionResult, PublishJobRead
 from app.schemas.reviews import ReviewResponse
+from app.services.audit_events import create_audit_event
 
 
 def _utc_datetime(value: datetime | None) -> datetime | None:
@@ -169,6 +170,68 @@ def complete_publish_job(db: Session, job: PublishJob, result: PublishExecutionR
         "errors": result.errors,
     }
     job.completed_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def cancel_publish_job(db: Session, job_id: int, *, cancelled_by: str) -> PublishJob:
+    existing = db.get(PublishJob, job_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Publish job not found.")
+    if existing.status == PublishJobStatus.CANCELLED:
+        return existing
+
+    original_idempotency_key = existing.idempotency_key
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_name))"),
+            {"lock_name": f"publish_job:{original_idempotency_key}"},
+        )
+    job = db.scalar(
+        select(PublishJob)
+        .where(PublishJob.id == job_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if job is None:
+        raise HTTPException(status_code=404, detail="Publish job not found.")
+    if job.status == PublishJobStatus.CANCELLED:
+        return job
+    if job.status != PublishJobStatus.PENDING:
+        raise HTTPException(
+            status_code=409,
+            detail="Only pending publish jobs can be cancelled.",
+        )
+
+    job.status = PublishJobStatus.CANCELLED
+    job.idempotency_key = hashlib.sha256(
+        f"cancelled:{job.id}:{original_idempotency_key}".encode()
+    ).hexdigest()
+    job.response_summary_json = {
+        "status": "cancelled",
+        "item_id": "",
+        "permalink": "",
+        "shipping_mode": "",
+        "shipping_logistic_type": "",
+        "errors": ["publish_cancelled_by_operator"],
+    }
+    job.completed_at = datetime.now(UTC)
+    create_audit_event(
+        db=db,
+        actor_type="operator",
+        actor_id=cancelled_by,
+        action="publish.cancelled",
+        entity_type="publish_job",
+        entity_id=str(job.id),
+        before={"status": PublishJobStatus.PENDING.value},
+        after={
+            "status": PublishJobStatus.CANCELLED.value,
+            "product_draft_id": job.product_draft_id,
+            "store_id": job.store_id,
+        },
+        commit=False,
+    )
     db.commit()
     db.refresh(job)
     return job

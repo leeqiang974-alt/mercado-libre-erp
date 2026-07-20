@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
+  CircleX,
   CheckCircle2,
   ExternalLink,
   ListChecks,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 import {
   approveDraft,
+  cancelPublishJob,
   enqueuePublishBatch,
   enqueuePublishFromDraft,
   executePublishFromDraft,
@@ -75,6 +77,7 @@ function shippingKey(option: ShippingOption) {
 function readablePublishError(value: string) {
   if (value === "listing_types_not_verified") return "Refresh seller/category listing eligibility before publishing.";
   if (value === "listing_type_not_available") return "This listing type is not available for the selected seller and category.";
+  if (value === "publish_cancelled_by_operator") return "Cancelled by the operator before worker claim.";
   if (value === "category_attributes_not_verified") return "Refresh verified category attributes before publishing.";
   if (value.startsWith("required_category_attribute_missing:")) {
     return `${value.split(":", 2)[1]} is required.`;
@@ -133,6 +136,7 @@ export function PublishingPage({
   const [shippingStatus, setShippingStatus] = useState("");
   const [jobs, setJobs] = useState<PublishJobRecord[]>([]);
   const [jobsRefreshing, setJobsRefreshing] = useState(false);
+  const [cancelCandidateJobId, setCancelCandidateJobId] = useState<number | null>(null);
   const [batchDrafts, setBatchDrafts] = useState<ProductDraftRead[]>([]);
   const [selectedBatchDraftIds, setSelectedBatchDraftIds] = useState<Set<number>>(new Set());
   const [batchPublishAcknowledged, setBatchPublishAcknowledged] = useState(false);
@@ -730,6 +734,24 @@ export function PublishingPage({
     }
   }
 
+  async function cancelJob(jobId: number) {
+    setBusy(`cancel-${jobId}`);
+    setStatus("");
+    try {
+      const cancelled = await cancelPublishJob(jobId);
+      setJobs((current) => current.map((job) => job.id === jobId ? cancelled : job));
+      setCancelCandidateJobId(null);
+      setStatus(`Publish job #${jobId} cancelled before worker claim`);
+      await refreshPublishJobs(false);
+    } catch (error) {
+      setCancelCandidateJobId(null);
+      await refreshPublishJobs(false);
+      setStatus(error instanceof Error ? error.message : "Failed to cancel publish job");
+    } finally {
+      setBusy("");
+    }
+  }
+
   function toggleBatchDraft(draftIdToToggle: number) {
     batchPreflightEpochRef.current += 1;
     setBatchPublishAcknowledged(false);
@@ -921,8 +943,12 @@ export function PublishingPage({
       jobs={jobs}
       refreshing={jobsRefreshing}
       busy={busy}
+      cancelCandidateJobId={cancelCandidateJobId}
       onRefresh={() => void refreshPublishJobs(true)}
       onRetry={(jobId) => void retryJob(jobId)}
+      onRequestCancel={setCancelCandidateJobId}
+      onCancel={(jobId) => void cancelJob(jobId)}
+      onKeep={() => setCancelCandidateJobId(null)}
     />
   );
 
@@ -1209,14 +1235,22 @@ function PublishJobHistory({
   jobs,
   refreshing,
   busy,
+  cancelCandidateJobId,
   onRefresh,
   onRetry,
+  onRequestCancel,
+  onCancel,
+  onKeep,
 }: {
   jobs: PublishJobRecord[];
   refreshing: boolean;
   busy: string;
+  cancelCandidateJobId: number | null;
   onRefresh: () => void;
   onRetry: (jobId: number) => void;
+  onRequestCancel: (jobId: number) => void;
+  onCancel: (jobId: number) => void;
+  onKeep: () => void;
 }) {
   return (
     <section className="saved-section">
@@ -1251,6 +1285,15 @@ function PublishJobHistory({
                 <span className={`state-pill ${stateClass}`}>{job.status}</span>
                 <span className="job-actions">
                   {job.permalink && <a className="icon-text-button" href={job.permalink} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Open listing</a>}
+                  {job.status === "pending" && cancelCandidateJobId !== job.id && (
+                    <button className="secondary-button" onClick={() => onRequestCancel(job.id)}><CircleX size={16} /> Cancel</button>
+                  )}
+                  {job.status === "pending" && cancelCandidateJobId === job.id && (
+                    <>
+                      <button className="danger-button" disabled={busy === `cancel-${job.id}`} onClick={() => onCancel(job.id)}><CircleX size={16} /> Confirm cancel</button>
+                      <button className="secondary-button" disabled={busy === `cancel-${job.id}`} onClick={onKeep}>Keep job</button>
+                    </>
+                  )}
                   <button className="secondary-button" disabled={!canRetry || Boolean(job.item_id) || busy === `retry-${job.id}`} onClick={() => onRetry(job.id)}><RefreshCw size={16} /> Retry</button>
                 </span>
               </div>

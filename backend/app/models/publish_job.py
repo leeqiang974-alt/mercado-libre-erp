@@ -14,6 +14,7 @@ class PublishJobStatus(str, Enum):
     PUBLISHED = "published"
     FAILED = "failed"
     BLOCKED = "blocked"
+    CANCELLED = "cancelled"
 
 
 class PublishJob(Base):

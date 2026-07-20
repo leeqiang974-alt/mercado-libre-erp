@@ -21,7 +21,7 @@ from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.source_product import SourceProduct, SourceProductStatus
 from app.models.product_draft import ProductDraft
 from app.models.provider_model_price import ProviderModelPrice
-from app.models.publish_job import PublishJob
+from app.models.publish_job import PublishJob, PublishJobStatus
 from app.models.review_result import ReviewDecision, ReviewResult
 from app.models.review_job import ReviewJob, ReviewJobStatus
 from app.models.store import Store
@@ -39,7 +39,7 @@ from app.schemas.drafts import ProductDraftContentUpdate, ProductDraftCreate
 from app.schemas.publishing import ListingChoice
 from app.schemas.reviews import ReviewResponse
 from app.schemas.provider_pricing import ProviderModelPriceCreate
-from app.services.publish_jobs import create_publish_job
+from app.services.publish_jobs import cancel_publish_job, create_publish_job
 from app.services.review_jobs import recover_stale_review_jobs
 from app.services.drafts import save_product_draft_content, update_draft_content
 from app.services.provider_pricing import save_provider_model_price
@@ -55,6 +55,95 @@ from app.services.meli.token_vault import (
 
 
 POSTGRES_URL = os.getenv("TEST_POSTGRES_URL", "")
+
+
+@pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")
+def test_postgres_publish_cancel_and_worker_claim_are_mutually_exclusive():
+    engine = create_engine(POSTGRES_URL, pool_pre_ping=True)
+    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    marker = uuid4().hex
+    ready = Barrier(2)
+
+    with testing_session() as db:
+        store = Store(
+            site_id="MLM",
+            seller_id=f"cancel-race-{marker}",
+            display_name="Cancel race store",
+            oauth_status="connected",
+            token_reference=f"cancel-race:{marker}",
+        )
+        draft = ProductDraft(title=f"Cancel race {marker}")
+        db.add_all([store, draft])
+        db.flush()
+        job = PublishJob(
+            product_draft_id=draft.id,
+            store_id=store.id,
+            requested_by="concurrency-test",
+            status=PublishJobStatus.PENDING,
+        )
+        db.add(job)
+        db.commit()
+        job_id = job.id
+        draft_id = draft.id
+        store_id = store.id
+
+    def cancel_concurrently() -> str:
+        with testing_session() as db:
+            ready.wait(timeout=10)
+            try:
+                cancel_publish_job(db, job_id, cancelled_by="concurrency-test")
+                return "cancelled"
+            except HTTPException as exc:
+                assert exc.status_code == 409
+                return "already_claimed"
+
+    def claim_concurrently() -> str:
+        with testing_session() as db:
+            ready.wait(timeout=10)
+            claimed = db.scalar(
+                select(PublishJob)
+                .where(
+                    PublishJob.id == job_id,
+                    PublishJob.status == PublishJobStatus.PENDING,
+                )
+                .with_for_update(skip_locked=True)
+            )
+            if claimed is None:
+                db.rollback()
+                return "skipped"
+            claimed.status = PublishJobStatus.VALIDATING
+            claimed.started_at = datetime.now(UTC)
+            db.commit()
+            return "claimed"
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            cancel_future = pool.submit(cancel_concurrently)
+            claim_future = pool.submit(claim_concurrently)
+            outcomes = {cancel_future.result(), claim_future.result()}
+        assert outcomes in [
+            {"cancelled", "skipped"},
+            {"already_claimed", "claimed"},
+        ]
+        with testing_session() as db:
+            job = db.get(PublishJob, job_id)
+            assert job.status in {
+                PublishJobStatus.CANCELLED,
+                PublishJobStatus.VALIDATING,
+            }
+            cancellation_events = db.query(AuditEvent).filter(
+                AuditEvent.action == "publish.cancelled",
+                AuditEvent.entity_id == str(job_id),
+            ).count()
+            assert cancellation_events == (1 if job.status == PublishJobStatus.CANCELLED else 0)
+    finally:
+        with testing_session() as db:
+            db.execute(delete(AuditEvent).where(AuditEvent.entity_id == str(job_id)))
+            db.execute(delete(PublishJob).where(PublishJob.id == job_id))
+            db.execute(delete(ProductDraft).where(ProductDraft.id == draft_id))
+            db.execute(delete(Store).where(Store.id == store_id))
+            db.commit()
+        engine.dispose()
 
 
 @pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")

@@ -46,6 +46,7 @@ from app.services.meli.listing_type_validation import validate_store_category_li
 from app.services.meli.shipping import find_non_full_shipping_selection
 from app.services.meli.token_vault import resolve_fresh_store_access_token
 from app.services.publish_jobs import (
+    cancel_publish_job,
     complete_publish_job,
     create_publish_job,
     list_publish_jobs,
@@ -799,6 +800,16 @@ async def _execute_with_payload(
         result=result,
     )
     return result.model_copy(update={"job_id": job.id})
+
+
+@router.post("/jobs/{job_id}/cancel", response_model=PublishJobRead)
+def cancel_pending_publish_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+) -> PublishJobRead:
+    return to_publish_job_read(
+        cancel_publish_job(db, job_id, cancelled_by="operator")
+    )
 
 
 def _with_category_attribute_validation(
