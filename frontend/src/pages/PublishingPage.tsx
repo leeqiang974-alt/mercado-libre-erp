@@ -3,6 +3,7 @@ import {
   ArrowRight,
   CheckCircle2,
   ListChecks,
+  ListPlus,
   RefreshCw,
   Rocket,
   Save,
@@ -13,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   approveDraft,
+  enqueuePublishBatch,
   enqueuePublishFromDraft,
   executePublishFromDraft,
   getCategoryAttributes,
@@ -24,6 +26,7 @@ import {
   getStoreShippingOptions,
   getSystemReadiness,
   listPublishJobs,
+  listDrafts,
   listStores,
   previewPublishFromDraft,
   refreshCategoryAttributes,
@@ -34,6 +37,8 @@ import {
   type AttributeSuggestion,
   type DraftListingConfig,
   type ProductDraft,
+  type ProductDraftRead,
+  type PublishBatchEnqueueResult,
   type PublishExecutionResult,
   type PublishJobRecord,
   type PublishValidationResult,
@@ -47,6 +52,8 @@ const COMMERCIAL_TYPES = [
   { id: "gold_special", label: "Classic", note: "Lower fee, standard visibility" },
   { id: "gold_pro", label: "Premium", note: "Installments and higher visibility" },
 ];
+
+const MAX_PUBLISH_BATCH_SIZE = 50;
 
 const SHIPPING_LABELS: Record<string, string> = {
   "me2:drop_off": "Mercado Envíos · drop-off",
@@ -122,6 +129,10 @@ export function PublishingPage({
   const [availableQuantity, setAvailableQuantity] = useState("");
   const [shippingStatus, setShippingStatus] = useState("");
   const [jobs, setJobs] = useState<PublishJobRecord[]>([]);
+  const [batchDrafts, setBatchDrafts] = useState<ProductDraftRead[]>([]);
+  const [selectedBatchDraftIds, setSelectedBatchDraftIds] = useState<Set<number>>(new Set());
+  const [batchPublishAcknowledged, setBatchPublishAcknowledged] = useState(false);
+  const [batchPublishResult, setBatchPublishResult] = useState<PublishBatchEnqueueResult | null>(null);
   const [readiness, setReadiness] = useState<SystemReadiness | null>(null);
   const [busy, setBusy] = useState("");
   const [status, setStatus] = useState("");
@@ -131,6 +142,18 @@ export function PublishingPage({
   const categoryPredictionEpochRef = useRef(0);
   const categorySelectionEpochRef = useRef(0);
   const categoryAttributesEpochRef = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    listDrafts()
+      .then((rows) => {
+        if (!cancelled) setBatchDrafts(rows);
+      })
+      .catch((error) => {
+        if (!cancelled) setStatus(error instanceof Error ? error.message : "Failed to load drafts");
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -565,6 +588,9 @@ export function PublishingPage({
       });
       setSavedConfig(config);
       onDraftChange(config.draft);
+      setBatchDrafts((items) => items.map((item) => (
+        item.id === config.draft.id ? config.draft : item
+      )));
       setStatus("Listing configuration saved");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to save listing config");
@@ -649,8 +675,124 @@ export function PublishingPage({
     }
   }
 
+  function toggleBatchDraft(draftIdToToggle: number) {
+    setBatchPublishAcknowledged(false);
+    setSelectedBatchDraftIds((current) => {
+      const next = new Set(current);
+      if (next.has(draftIdToToggle)) next.delete(draftIdToToggle);
+      else if (next.size < MAX_PUBLISH_BATCH_SIZE) next.add(draftIdToToggle);
+      else setStatus(`A publish batch can contain at most ${MAX_PUBLISH_BATCH_SIZE} drafts.`);
+      return next;
+    });
+    setBatchPublishResult(null);
+  }
+
+  async function queuePublishBatch() {
+    const draftIds = [...selectedBatchDraftIds];
+    if (!batchPublishAcknowledged || draftIds.length === 0) return;
+    setBusy("batch-queue");
+    setStatus("");
+    try {
+      const result = await enqueuePublishBatch(draftIds);
+      setBatchPublishResult(result);
+      setJobs(await listPublishJobs());
+      setSelectedBatchDraftIds(new Set());
+      setBatchPublishAcknowledged(false);
+      setStatus(`${result.queued_count} publish jobs queued`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to queue publish batch");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  const batchPublishSection = (
+    <section className="saved-section batch-publish-section">
+      <div className="section-heading">
+        <div><h3>Batch publish queue</h3></div>
+        <span>{batchDrafts.length}</span>
+      </div>
+      {batchDrafts.length === 0 && <p>No saved drafts are available.</p>}
+      {batchDrafts.length > 0 && (
+        <>
+          <div className="batch-review-controls">
+            <div className="action-line">
+              <span>{selectedBatchDraftIds.size} / {MAX_PUBLISH_BATCH_SIZE} selected</span>
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={batchPublishAcknowledged}
+                  onChange={(event) => setBatchPublishAcknowledged(event.target.checked)}
+                />
+                Confirm ready drafts may be published by the worker
+              </label>
+              <button
+                disabled={
+                  selectedBatchDraftIds.size === 0
+                  || !batchPublishAcknowledged
+                  || busy === "batch-queue"
+                }
+                onClick={queuePublishBatch}
+              >
+                <ListPlus size={16} /> Queue selected drafts
+              </button>
+            </div>
+            {batchPublishResult && (
+              <div className="batch-result-summary" aria-live="polite">
+                <strong>{batchPublishResult.queued_count} queued</strong>
+                <span>{batchPublishResult.existing_count} existing</span>
+                <span>{batchPublishResult.not_ready_count} not ready</span>
+                <span>{batchPublishResult.not_found_count} missing</span>
+              </div>
+            )}
+            {batchPublishResult?.items.some((item) => item.errors.length > 0) && (
+              <div className="batch-review-errors">
+                {batchPublishResult.items.filter((item) => item.errors.length > 0).map((item) => (
+                  <span key={item.draft_id}>
+                    Draft #{item.draft_id}: {item.errors.map(readablePublishError).join(", ")}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="draft-list">
+            {batchDrafts.map((item) => (
+              <div className="draft-selection-row" key={item.id}>
+                <label className="draft-selector">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select draft ${item.id} for publish queue`}
+                    checked={selectedBatchDraftIds.has(item.id)}
+                    disabled={
+                      !selectedBatchDraftIds.has(item.id)
+                      && selectedBatchDraftIds.size >= MAX_PUBLISH_BATCH_SIZE
+                    }
+                    onChange={() => toggleBatchDraft(item.id)}
+                  />
+                </label>
+                <div className="batch-publish-row">
+                  <span>
+                    <strong>{item.title}</strong>
+                    <small>#{item.id} · {item.target_site_id} · {item.listing_type_id || "offer not configured"}</small>
+                  </span>
+                  <span>{item.currency} {item.price ?? "not priced"}</span>
+                  <span>{item.risk_status}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+  );
+
   if (!draft || !draftId) {
-    return <section className="workspace"><div className="empty-state">Select and prepare a saved draft before publishing.</div></section>;
+    return (
+      <section className="workspace">
+        <div className="empty-state">Select and prepare a saved draft before publishing.</div>
+        {batchPublishSection}
+      </section>
+    );
   }
 
   const configReady = Boolean(
@@ -915,6 +1057,7 @@ export function PublishingPage({
       </section>
 
       {status && <p className="status-line">{status}</p>}
+      {batchPublishSection}
       {jobs.length > 0 && <section className="saved-section"><div className="section-heading"><div><h3>Publish jobs</h3></div><span>{jobs.length}</span></div><div className="job-list">{jobs.map((job) => {
         const canRetry = (job.status === "blocked" || job.status === "failed") && !job.errors.includes("publish_outcome_unknown_manual_reconciliation_required");
         return <div className="job-row" key={job.id}><span>#{job.id} · draft #{job.product_draft_id} · store #{job.store_id}{job.shipping_mode ? ` · ${job.shipping_mode}` : ""}{job.shipping_logistic_type ? `/${job.shipping_logistic_type}` : ""}</span><strong>{job.status}</strong><button className="secondary-button" disabled={!canRetry || Boolean(job.item_id) || busy === `retry-${job.id}`} onClick={() => retryJob(job.id)}><RefreshCw size={16} /> Retry</button></div>;

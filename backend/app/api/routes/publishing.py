@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,10 +11,14 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.publish_job import PublishJob, PublishJobStatus
+from app.models.product_draft import ProductDraft
 from app.models.store import Store
 from app.schemas.drafts import ProductDraftCreate
 from app.schemas.publishing import (
     ListingChoice,
+    PublishBatchEnqueueRequest,
+    PublishBatchEnqueueResult,
+    PublishBatchItem,
     PublishExecutionResult,
     PublishJobRead,
     PublishValidationResult,
@@ -44,7 +49,7 @@ from app.services.publish_jobs import (
     replay_publish_result,
     to_publish_job_read,
 )
-from app.services.reviews import get_publish_review
+from app.services.reviews import get_latest_behavioral_review, get_publish_review
 
 router = APIRouter(prefix="/api/publishing", tags=["publishing"])
 settings = get_settings()
@@ -259,6 +264,164 @@ def publish_enqueue_from_draft(
         listing_choice=listing_choice,
     )
     return to_publish_job_read(job)
+
+
+@router.post("/enqueue-batch", response_model=PublishBatchEnqueueResult)
+def publish_enqueue_batch(
+    payload: PublishBatchEnqueueRequest,
+    db: Session = Depends(get_db),
+) -> PublishBatchEnqueueResult:
+    if not payload.acknowledge_publish:
+        raise HTTPException(
+            status_code=422,
+            detail="publish_acknowledgement_required",
+        )
+
+    draft_ids = list(dict.fromkeys(payload.draft_ids))
+    batch_id = uuid4().hex
+    item_by_draft_id: dict[int, PublishBatchItem] = {}
+    candidates: list[tuple[int, int, ProductDraftCreate, ReviewResponse, ListingChoice]] = []
+    shipping_errors_by_selection: dict[tuple[int, str, str], list[str]] = {}
+
+    for draft_id in draft_ids:
+        model = db.get(ProductDraft, draft_id)
+        if model is None:
+            item_by_draft_id[draft_id] = PublishBatchItem(
+                draft_id=draft_id,
+                outcome="not_found",
+                errors=["product_draft_not_found"],
+            )
+            continue
+        try:
+            draft, listing_choice = build_configured_draft(db, draft_id)
+            latest_review = get_latest_behavioral_review(db, model)
+            review = get_publish_review(
+                db,
+                draft_id,
+                latest_review.id if latest_review is not None else None,
+            )
+            human_approved = is_product_draft_approved(db, draft_id)
+        except HTTPException as exc:
+            item_by_draft_id[draft_id] = PublishBatchItem(
+                draft_id=draft_id,
+                outcome="not_ready",
+                errors=publish_blocking_errors(exc.detail),
+            )
+            continue
+
+        store = db.get(Store, listing_choice.store_id) if listing_choice.store_id else None
+        if store is None:
+            item_by_draft_id[draft_id] = PublishBatchItem(
+                draft_id=draft_id,
+                outcome="not_ready",
+                errors=["configured_store_not_found"],
+            )
+            continue
+
+        validation = validate_publish_request(
+            draft=draft,
+            review=review,
+            listing_choice=listing_choice,
+            valid_listing_type_ids=SERVER_LISTING_TYPE_IDS,
+            human_approved=human_approved,
+        )
+        errors = [
+            *validation.errors,
+            *validate_store_category_listing_type(
+                db,
+                store.id,
+                draft.target_category_id,
+                listing_choice.listing_type_id,
+                require_verified_metadata=settings.allow_live_publish,
+                max_age_seconds=settings.listing_type_cache_ttl_seconds,
+            ),
+            *validate_store_delivery(
+                store.id,
+                store.site_id,
+                store.oauth_status,
+                listing_choice,
+            ),
+            *validate_category_attributes(
+                db,
+                draft.target_category_id,
+                listing_choice.attributes,
+                require_verified_metadata=settings.allow_live_publish,
+            ),
+        ]
+        shipping_key = (
+            store.id,
+            listing_choice.shipping_mode,
+            listing_choice.shipping_logistic_type,
+        )
+        if not errors:
+            if shipping_key not in shipping_errors_by_selection:
+                shipping_errors_by_selection[shipping_key] = _validate_current_store_shipping(
+                    db,
+                    store,
+                    listing_choice,
+                )
+            errors.extend(shipping_errors_by_selection[shipping_key])
+        if errors:
+            item_by_draft_id[draft_id] = PublishBatchItem(
+                draft_id=draft_id,
+                outcome="not_ready",
+                errors=errors,
+            )
+            continue
+        candidates.append((draft_id, store.id, draft, review, listing_choice))
+
+    for draft_id, store_id, draft, review, listing_choice in candidates:
+        job = create_publish_job(
+            db=db,
+            product_draft_id=draft_id,
+            store_id=store_id,
+            requested_by="operator",
+            draft=draft,
+            review=review,
+            listing_choice=listing_choice,
+            valid_listing_type_ids=SERVER_LISTING_TYPE_IDS,
+            commit=False,
+        )
+        replayed = bool(getattr(job, "_idempotent_replay", False))
+        _audit_publish_request(
+            db=db,
+            action="publish.queue_replayed" if replayed else "publish.queued",
+            job=job,
+            listing_choice=listing_choice,
+            commit=False,
+        )
+        item_by_draft_id[draft_id] = PublishBatchItem(
+            draft_id=draft_id,
+            outcome="existing" if replayed else "queued",
+            job=to_publish_job_read(job),
+        )
+
+    items = [item_by_draft_id[draft_id] for draft_id in draft_ids]
+    create_audit_event(
+        db=db,
+        actor_type="operator",
+        actor_id="operator",
+        action="publish.batch.queued",
+        entity_type="publish_batch",
+        entity_id=batch_id,
+        after={
+            "draft_ids": draft_ids,
+            "queued_count": sum(item.outcome == "queued" for item in items),
+            "existing_count": sum(item.outcome == "existing" for item in items),
+            "not_ready_count": sum(item.outcome == "not_ready" for item in items),
+            "not_found_count": sum(item.outcome == "not_found" for item in items),
+        },
+        commit=False,
+    )
+    db.commit()
+    return PublishBatchEnqueueResult(
+        batch_id=batch_id,
+        queued_count=sum(item.outcome == "queued" for item in items),
+        existing_count=sum(item.outcome == "existing" for item in items),
+        not_ready_count=sum(item.outcome == "not_ready" for item in items),
+        not_found_count=sum(item.outcome == "not_found" for item in items),
+        items=items,
+    )
 
 
 def _validate_current_store_shipping(
@@ -662,6 +825,7 @@ def _audit_publish_request(
     action: str,
     job: PublishJob,
     listing_choice: ListingChoice,
+    commit: bool = True,
 ) -> None:
     create_audit_event(
         db=db,
@@ -679,6 +843,7 @@ def _audit_publish_request(
             "shipping_mode": listing_choice.shipping_mode,
             "shipping_logistic_type": listing_choice.shipping_logistic_type,
         },
+        commit=commit,
     )
 
 

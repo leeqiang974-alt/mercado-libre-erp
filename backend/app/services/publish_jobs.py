@@ -23,6 +23,7 @@ def create_publish_job(
     listing_choice: ListingChoice,
     valid_listing_type_ids: list[str] | None = None,
     initial_status: PublishJobStatus = PublishJobStatus.PENDING,
+    commit: bool = True,
 ) -> PublishJob:
     idempotency_key = _publish_idempotency_key(
         product_draft_id,
@@ -71,6 +72,9 @@ def create_publish_job(
         },
     )
     db.add(job)
+    if not commit:
+        db.flush()
+        return job
     try:
         db.commit()
     except IntegrityError:

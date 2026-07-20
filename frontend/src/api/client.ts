@@ -209,6 +209,20 @@ export type PublishJobRecord = {
   errors: string[];
 };
 
+export type PublishBatchEnqueueResult = {
+  batch_id: string;
+  queued_count: number;
+  existing_count: number;
+  not_ready_count: number;
+  not_found_count: number;
+  items: {
+    draft_id: number;
+    outcome: "queued" | "existing" | "not_ready" | "not_found";
+    errors: string[];
+    job: PublishJobRecord | null;
+  }[];
+};
+
 export type DraftListingConfig = {
   id: number;
   product_draft_id: number;
@@ -990,6 +1004,19 @@ export async function enqueuePublishFromDraft(
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<PublishJobRecord>;
+}
+
+export async function enqueuePublishBatch(draftIds: number[]) {
+  const response = await fetch(`${API_BASE}/api/publishing/enqueue-batch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      draft_ids: draftIds,
+      acknowledge_publish: true,
+    }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<PublishBatchEnqueueResult>;
 }
 
 export async function listAuditEvents(limit = 100) {

@@ -1,4 +1,5 @@
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -232,6 +233,108 @@ def test_publish_enqueue_from_draft_creates_pending_job(monkeypatch):
         assert event.after_json["store_id"] == 1
         assert event.after_json["shipping_mode"] == "me2"
         assert event.after_json["shipping_logistic_type"] == "drop_off"
+
+
+def test_publish_batch_requires_acknowledgement():
+    client, testing_session = make_client()
+
+    response = client.post(
+        "/api/publishing/enqueue-batch",
+        json={"draft_ids": [1], "acknowledge_publish": False},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "publish_acknowledgement_required"
+    with testing_session() as db:
+        assert db.query(PublishJob).count() == 0
+
+
+def test_publish_batch_queues_ready_drafts_and_replays_exact_job(monkeypatch):
+    async def shipping_preferences(self, path):
+        assert self.access_token == "access-token"
+        assert path == "/users/seller-1/shipping_preferences"
+        return {
+            "modes": ["me2"],
+            "logistics": [{"mode": "me2", "types": [{"type": "drop_off"}]}],
+        }
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing.MercadoLibreClient, "get", shipping_preferences)
+    client, testing_session = make_client()
+    seed_publish_review(testing_session)
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+
+    first = client.post(
+        "/api/publishing/enqueue-batch",
+        json={"draft_ids": [1, 1, 999], "acknowledge_publish": True},
+    )
+    second = client.post(
+        "/api/publishing/enqueue-batch",
+        json={"draft_ids": [1], "acknowledge_publish": True},
+    )
+
+    assert first.status_code == 200
+    assert first.json()["queued_count"] == 1
+    assert first.json()["not_found_count"] == 1
+    assert [item["draft_id"] for item in first.json()["items"]] == [1, 999]
+    assert first.json()["items"][0]["job"]["status"] == "pending"
+    assert second.status_code == 200
+    assert second.json()["existing_count"] == 1
+    assert second.json()["items"][0]["job"]["id"] == first.json()["items"][0]["job"]["id"]
+    with testing_session() as db:
+        assert db.query(PublishJob).count() == 1
+        assert db.query(AuditEvent).filter(AuditEvent.action == "publish.batch.queued").count() == 2
+
+
+def test_publish_batch_reports_unapproved_draft_without_queueing(monkeypatch):
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    client, testing_session = make_client()
+    seed_publish_review(testing_session)
+
+    response = client.post(
+        "/api/publishing/enqueue-batch",
+        json={"draft_ids": [1], "acknowledge_publish": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["not_ready_count"] == 1
+    assert "human_approval_required" in response.json()["items"][0]["errors"]
+    with testing_session() as db:
+        assert db.query(PublishJob).count() == 0
+
+
+def test_publish_batch_rolls_back_jobs_when_batch_audit_fails(monkeypatch):
+    async def shipping_preferences(self, path):
+        return {
+            "modes": ["me2"],
+            "logistics": [{"mode": "me2", "types": [{"type": "drop_off"}]}],
+        }
+
+    real_create_audit_event = publishing.create_audit_event
+
+    def fail_batch_audit(*args, **kwargs):
+        if kwargs.get("action") == "publish.batch.queued":
+            raise RuntimeError("audit unavailable")
+        return real_create_audit_event(*args, **kwargs)
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing.MercadoLibreClient, "get", shipping_preferences)
+    monkeypatch.setattr(publishing, "create_audit_event", fail_batch_audit)
+    client, testing_session = make_client()
+    seed_publish_review(testing_session)
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        client.post(
+            "/api/publishing/enqueue-batch",
+            json={"draft_ids": [1], "acknowledge_publish": True},
+        )
+
+    with testing_session() as db:
+        assert db.query(PublishJob).count() == 0
+        assert db.query(AuditEvent).filter(
+            AuditEvent.action.in_(["publish.queued", "publish.batch.queued"])
+        ).count() == 0
 
 
 def test_publish_enqueue_from_draft_rejects_unapproved_job(monkeypatch):

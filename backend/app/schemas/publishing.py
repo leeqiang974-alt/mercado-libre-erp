@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -36,3 +38,24 @@ class PublishJobRead(BaseModel):
     shipping_mode: str = ""
     shipping_logistic_type: str = ""
     errors: list[str] = Field(default_factory=list)
+
+
+class PublishBatchEnqueueRequest(BaseModel):
+    draft_ids: list[int] = Field(min_length=1, max_length=50)
+    acknowledge_publish: bool = False
+
+
+class PublishBatchItem(BaseModel):
+    draft_id: int
+    outcome: Literal["queued", "existing", "not_ready", "not_found"]
+    errors: list[str] = Field(default_factory=list)
+    job: PublishJobRead | None = None
+
+
+class PublishBatchEnqueueResult(BaseModel):
+    batch_id: str
+    queued_count: int
+    existing_count: int
+    not_ready_count: int
+    not_found_count: int
+    items: list[PublishBatchItem]

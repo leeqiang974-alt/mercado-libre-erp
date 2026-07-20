@@ -62,6 +62,7 @@ Implemented:
 - OAuth callback resolves and persists the seller's real Mercado Libre `site_id`; enqueue, direct execution, and workers enforce store/site matching.
 - Guarded publish execution from saved draft listing configuration.
 - Queued publish execution from saved draft listing configuration.
+- Batch publish intake accepts up to 50 saved drafts after an explicit publication acknowledgement. Each draft independently reuses the latest persisted review, human approval, authorized store/site, seller listing-type eligibility, category attributes, and current non-FULL shipping gates; exact jobs are idempotently reused, while ready job rows and their audit events commit atomically.
 - Backend publish worker CLI for processing pending publish jobs in batches.
 - Persisted publish jobs for blocked, failed, and published execution attempts.
 - Publish job list API for reviewing status, errors, item IDs, and permalinks.
