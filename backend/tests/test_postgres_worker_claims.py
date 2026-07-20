@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.models.collection_job import CollectionJob
-from app.models.source_product import SourceProduct
+from app.models.source_product import SourceProduct, SourceProductStatus
 from app.models.product_draft import ProductDraft
 from app.models.publish_job import PublishJob
 from app.models.review_result import ReviewDecision, ReviewResult
@@ -22,6 +22,7 @@ from app.schemas.reviews import ReviewResponse
 from app.services.publish_jobs import create_publish_job
 from app.services.drafts import update_draft_content
 from app.workers import collection_worker
+from app.services import source_products as source_products_service
 
 
 POSTGRES_URL = os.getenv("TEST_POSTGRES_URL", "")
@@ -195,6 +196,76 @@ def test_two_postgres_requests_reuse_one_collection_job():
         with testing_session() as db:
             for job in db.query(CollectionJob).filter(CollectionJob.source_url.contains(asin)):
                 db.delete(job)
+            db.commit()
+        engine.dispose()
+
+
+@pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")
+def test_two_postgres_requests_reuse_one_source_variant_draft(monkeypatch):
+    engine = create_engine(POSTGRES_URL, pool_pre_ping=True)
+    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    asin = f"B{uuid4().hex[:9].upper()}"
+    with testing_session() as db:
+        source = SourceProduct(
+            source_url=f"https://amazon.com/dp/{asin}",
+            asin=asin,
+            raw_status=SourceProductStatus.COLLECTED,
+            title="Concurrent variant",
+            source_price=15,
+            source_currency="USD",
+            variants_json=[
+                {
+                    "asin": asin,
+                    "attributes": {"Color": "Black"},
+                    "image_urls": [],
+                    "selected": True,
+                }
+            ],
+        )
+        db.add(source)
+        db.commit()
+        source_id = source.id
+
+    original_create = source_products_service.create_product_draft
+    both_queries_finished = Barrier(2)
+
+    def synchronized_create(*args, **kwargs):
+        both_queries_finished.wait(timeout=10)
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(
+        source_products_service, "create_product_draft", synchronized_create
+    )
+
+    def create_variant_draft():
+        with testing_session() as db:
+            source = db.get(SourceProduct, source_id)
+            draft, _ = source_products_service.create_or_get_source_variant_draft(
+                db, source, asin, "MLM"
+            )
+            return draft.id
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            draft_ids = list(pool.map(lambda _: create_variant_draft(), range(2)))
+        assert draft_ids[0] == draft_ids[1]
+        with testing_session() as db:
+            assert (
+                db.query(ProductDraft)
+                .filter(
+                    ProductDraft.source_product_id == source_id,
+                    ProductDraft.source_variant_asin == asin,
+                    ProductDraft.target_site_id == "MLM",
+                )
+                .count()
+                == 1
+            )
+    finally:
+        with testing_session() as db:
+            db.query(ProductDraft).filter(
+                ProductDraft.source_product_id == source_id
+            ).delete()
+            db.query(SourceProduct).filter(SourceProduct.id == source_id).delete()
             db.commit()
         engine.dispose()
 

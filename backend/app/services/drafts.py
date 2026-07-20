@@ -28,10 +28,17 @@ def update_draft_content(
 
 
 def create_product_draft(
-    db: Session, draft: ProductDraftCreate, source_product_id: int | None = None
+    db: Session,
+    draft: ProductDraftCreate,
+    source_product_id: int | None = None,
+    source_variant_asin: str = "",
+    source_variant_attributes: dict[str, str] | None = None,
+    commit: bool = True,
 ) -> ProductDraft:
     model = ProductDraft(
         source_product_id=source_product_id,
+        source_variant_asin=source_variant_asin,
+        source_variant_attributes_json=source_variant_attributes or {},
         target_site_id=draft.target_site_id,
         target_category_id=draft.target_category_id,
         title=draft.title,
@@ -47,14 +54,20 @@ def create_product_draft(
         image_urls_json=draft.image_urls,
     )
     db.add(model)
-    db.commit()
-    db.refresh(model)
+    if commit:
+        db.commit()
+        db.refresh(model)
+    else:
+        db.flush()
     return model
 
 
 def to_draft_read(model: ProductDraft) -> ProductDraftRead:
     return ProductDraftRead(
         id=model.id,
+        source_product_id=model.source_product_id,
+        source_variant_asin=model.source_variant_asin,
+        source_variant_attributes=model.source_variant_attributes_json or {},
         title=model.title,
         description=model.description,
         brand=model.brand,

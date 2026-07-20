@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from app.schemas.source_products import SourceProductSummaryRead
+
 
 class CollectionJobRead(BaseModel):
     id: int
@@ -15,6 +17,7 @@ class CollectionJobRead(BaseModel):
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    source_product: SourceProductSummaryRead | None = None
 
 
 class CollectionBatchItemRead(BaseModel):

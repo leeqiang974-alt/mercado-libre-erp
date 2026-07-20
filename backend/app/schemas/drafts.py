@@ -20,6 +20,9 @@ class ProductDraftCreate(BaseModel):
 
 class ProductDraftRead(ProductDraftCreate):
     id: int
+    source_product_id: int | None = None
+    source_variant_asin: str = ""
+    source_variant_attributes: dict[str, str] = Field(default_factory=dict)
     status: str
     risk_status: str
 

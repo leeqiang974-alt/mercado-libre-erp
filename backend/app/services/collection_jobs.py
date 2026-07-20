@@ -6,11 +6,15 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.collection_job import CollectionJob, CollectionJobStatus
-from app.models.source_product import SourceProductStatus
+from app.models.source_product import SourceProduct, SourceProductStatus
 from app.schemas.collection_jobs import CollectionJobRead
 from app.services.amazon.collector import CollectionResult
 from app.services.drafts import create_product_draft
-from app.services.source_products import create_source_product
+from app.services.source_products import (
+    create_source_product,
+    selected_source_variant,
+    to_source_product_summary,
+)
 
 Collector = Callable[[str, str], Awaitable[CollectionResult]]
 
@@ -47,7 +51,19 @@ def list_collection_jobs(
         .limit(limit)
         .all()
     )
-    return [to_collection_job_read(row) for row in rows]
+    source_ids = {row.source_product_id for row in rows if row.source_product_id is not None}
+    sources = (
+        {
+            source.id: source
+            for source in db.query(SourceProduct).filter(SourceProduct.id.in_(source_ids)).all()
+        }
+        if source_ids
+        else {}
+    )
+    return [
+        to_collection_job_read(row, sources.get(row.source_product_id))
+        for row in rows
+    ]
 
 
 def recover_stale_collection_jobs(db: Session, stale_after_seconds: int) -> int:
@@ -136,32 +152,59 @@ async def run_collection_job(
         db.refresh(job)
         return job
 
-    status_map = {
-        "collected": SourceProductStatus.COLLECTED,
-        "needs_manual_action": SourceProductStatus.NEEDS_MANUAL_ACTION,
-        "failed": SourceProductStatus.FAILED,
-    }
-    source = create_source_product(
-        db,
-        source_url=job.source_url,
-        status=status_map[result.status.value],
-        collection_error="" if result.status.value == "collected" else result.message,
-    )
-    draft = None
-    if result.draft is not None:
-        draft = create_product_draft(db, result.draft, source_product_id=source.id)
+    try:
+        status_map = {
+            "collected": SourceProductStatus.COLLECTED,
+            "needs_manual_action": SourceProductStatus.NEEDS_MANUAL_ACTION,
+            "failed": SourceProductStatus.FAILED,
+        }
+        source = create_source_product(
+            db,
+            source_url=job.source_url,
+            status=status_map[result.status.value],
+            collection_error="" if result.status.value == "collected" else result.message,
+            snapshot=result.source_snapshot,
+            collection_method="browser_page",
+        )
+        draft = None
+        if result.draft is not None:
+            variant_asin, variant_attributes = selected_source_variant(
+                result.source_snapshot, source.asin
+            )
+            draft = create_product_draft(
+                db,
+                result.draft,
+                source_product_id=source.id,
+                source_variant_asin=variant_asin,
+                source_variant_attributes=variant_attributes,
+                commit=False,
+            )
 
-    job.source_product_id = source.id
-    job.draft_id = draft.id if draft else None
-    job.message = result.message
-    job.completed_at = datetime.now(UTC)
-    job.status = _job_status_from_result(result)
-    db.commit()
+        job.source_product_id = source.id
+        job.draft_id = draft.id if draft else None
+        job.message = result.message
+        job.completed_at = datetime.now(UTC)
+        job.status = _job_status_from_result(result)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        job = db.get(CollectionJob, job_id)
+        if job is None:
+            raise
+        job.source_product_id = None
+        job.draft_id = None
+        job.message = f"Collection persistence failed: {exc}"
+        job.completed_at = datetime.now(UTC)
+        job.status = CollectionJobStatus.FAILED
+        db.commit()
     db.refresh(job)
     return job
 
 
-def to_collection_job_read(job: CollectionJob) -> CollectionJobRead:
+def to_collection_job_read(
+    job: CollectionJob,
+    source_product: SourceProduct | None = None,
+) -> CollectionJobRead:
     return CollectionJobRead(
         id=job.id,
         source_url=job.source_url,
@@ -173,6 +216,9 @@ def to_collection_job_read(job: CollectionJob) -> CollectionJobRead:
         created_at=job.created_at,
         started_at=job.started_at,
         completed_at=job.completed_at,
+        source_product=(
+            to_source_product_summary(source_product) if source_product is not None else None
+        ),
     )
 
 

@@ -506,6 +506,36 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .collection-job-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .collection-job-copy span { color: #697586; font-size: 12px; }
 .collection-job-copy p { margin: 2px 0 0; color: #52606d; font-size: 13px; overflow-wrap: anywhere; }
+.source-snapshot-review { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #e4e8ed; }
+.source-snapshot-review > img { width: 64px; height: 64px; object-fit: contain; background: #f5f7fa; }
+.source-snapshot-copy { display: grid; gap: 3px; min-width: 0; max-width: 100%; }
+.source-snapshot-copy > strong { white-space: normal; overflow-wrap: anywhere; }
+.source-snapshot-copy span,
+.source-detail li,
+.collection-job-copy { min-width: 0; max-width: 100%; overflow-wrap: anywhere; word-break: break-word; }
+.source-detail { display: grid; gap: 8px; min-width: 0; max-width: 100%; margin-top: 5px; }
+.source-detail ul { min-width: 0; max-width: 100%; margin: 0; padding-left: 18px; color: #52606d; font-size: 12px; }
+.source-image-gallery { display: flex; gap: 6px; max-width: 100%; overflow-x: auto; padding-bottom: 3px; }
+.source-image-gallery img { width: 68px; height: 68px; flex: 0 0 68px; object-fit: contain; border: 1px solid #d7dee8; background: #fff; }
+.source-variant-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 150px; overflow-y: auto; margin-top: 5px; }
+.source-variant-list > span { border: 1px solid #d7dee8; display: grid; gap: 1px; min-width: 0; max-width: 100%; padding: 5px 7px; font-size: 11px; }
+.source-variant-list > span.selected { border-color: #2563eb; box-shadow: inset 2px 0 #2563eb; }
+.source-variant-list strong { min-width: 0; font-size: 11px; white-space: normal; overflow-wrap: anywhere; }
+.source-variant-list small { color: #697586; }
+.source-unavailable { margin: 4px 0 0; color: #a33a20; overflow-wrap: anywhere; }
+.source-variant-list .icon-text-button {
+  width: 100%;
+  min-width: 0;
+  min-height: 26px;
+  margin-top: 4px;
+  padding: 3px 6px;
+  border: 1px solid #ccd2da;
+  background: #f7f9fb;
+  color: #1f2933;
+  font-size: 11px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .collection-job-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .collection-job-actions button { min-width: 82px; }
 

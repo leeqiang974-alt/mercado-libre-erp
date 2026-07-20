@@ -1,6 +1,6 @@
 from enum import Enum
 
-from sqlalchemy import Float, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Float, ForeignKey, Index, Integer, JSON, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -16,9 +16,22 @@ class ProductDraftStatus(str, Enum):
 
 class ProductDraft(Base):
     __tablename__ = "product_drafts"
+    __table_args__ = (
+        Index(
+            "uq_product_drafts_source_variant_site",
+            "source_product_id",
+            "source_variant_asin",
+            "target_site_id",
+            unique=True,
+            postgresql_where=text("source_variant_asin <> ''"),
+            sqlite_where=text("source_variant_asin <> ''"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source_product_id: Mapped[int | None] = mapped_column(ForeignKey("source_products.id"), nullable=True)
+    source_variant_asin: Mapped[str] = mapped_column(String(10), default="")
+    source_variant_attributes_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
     target_site_id: Mapped[str] = mapped_column(String(8), default="MLM")
     target_category_id: Mapped[str] = mapped_column(String(40), default="")
     title: Mapped[str] = mapped_column(String(200))

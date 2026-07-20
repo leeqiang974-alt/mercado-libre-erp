@@ -18,6 +18,9 @@ export type ProductDraft = {
 
 export type ProductDraftRead = ProductDraft & {
   id: number;
+  source_product_id: number | null;
+  source_variant_asin: string;
+  source_variant_attributes: Record<string, string>;
   status: string;
   risk_status: string;
 };
@@ -200,6 +203,52 @@ export type CollectionJobRecord = {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+  source_product: SourceProductSummary | null;
+};
+
+export type AmazonSourceVariant = {
+  asin: string;
+  attributes: Record<string, string>;
+  image_urls: string[];
+  selected: boolean;
+};
+
+export type SourceProductRecord = {
+  id: number;
+  source: string;
+  source_url: string;
+  asin: string;
+  status: string;
+  collection_method: string;
+  collected_at: string | null;
+  collection_error: string;
+  snapshot: {
+    source_url: string;
+    title: string;
+    price: { amount: number | null; currency: string };
+    brand: string;
+    bullets: string[];
+    description: string;
+    images: string[];
+    variants: AmazonSourceVariant[];
+    technical_details: Record<string, string>;
+  } | null;
+};
+
+export type SourceProductSummary = {
+  id: number;
+  asin: string;
+  status: string;
+  collection_method: string;
+  title: string;
+  brand: string;
+  source_price: number | null;
+  source_currency: string;
+  primary_image_url: string;
+  image_count: number;
+  variant_count: number;
+  has_snapshot: boolean;
+  collection_error: string;
 };
 
 export type CollectionBatchItem = {
@@ -283,6 +332,29 @@ export async function listCollectionJobs(limit = 100, offset = 0) {
   const response = await fetch(`${API_BASE}/api/imports/amazon-url/jobs?${params}`);
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<CollectionJobRecord[]>;
+}
+
+export async function getSourceProduct(sourceProductId: number) {
+  const response = await fetch(`${API_BASE}/api/imports/source-products/${sourceProductId}`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<SourceProductRecord>;
+}
+
+export async function createSourceVariantDraft(
+  sourceProductId: number,
+  variantAsin: string,
+  targetSiteId: string,
+) {
+  const response = await fetch(
+    `${API_BASE}/api/imports/source-products/${sourceProductId}/variants/${variantAsin}/draft`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_site_id: targetSiteId }),
+    },
+  );
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<ProductDraftRead>;
 }
 
 export async function runCollectionJob(jobId: number) {

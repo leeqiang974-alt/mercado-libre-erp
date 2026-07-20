@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel
 
 from app.schemas.drafts import ProductDraftCreate
+from app.schemas.source_products import AmazonSourceSnapshot
 from app.services.amazon.normalizer import normalize_amazon_product
 from app.services.amazon.parser import (
     extract_amazon_asin,
@@ -27,6 +28,7 @@ class CollectionResult(BaseModel):
     draft: ProductDraftCreate | None = None
     source_product_id: int | None = None
     draft_id: int | None = None
+    source_snapshot: AmazonSourceSnapshot | None = None
 
 
 HtmlFetcher = Callable[[str], Awaitable[str]]
@@ -200,9 +202,11 @@ async def collect_amazon_page(
         )
     assert parsed is not None
     draft = normalize_amazon_product(parsed, target_site_id=target_site_id)
+    source_snapshot = AmazonSourceSnapshot.model_validate(parsed)
     return CollectionResult(
         status=CollectionStatus.COLLECTED,
         source_url=source_url,
         message="collected",
         draft=draft,
+        source_snapshot=source_snapshot,
     )

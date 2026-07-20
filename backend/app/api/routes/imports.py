@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.core.config import get_settings
-from app.schemas.drafts import PersistedDraftResponse, ProductDraftCreate
+from app.schemas.drafts import PersistedDraftResponse, ProductDraftCreate, ProductDraftRead
 from app.services.amazon.collector import (
     CollectionResult,
     collect_amazon_page,
@@ -15,9 +15,14 @@ from app.services.amazon.collector import (
     validate_amazon_snapshot,
 )
 from app.services.amazon.normalizer import normalize_amazon_product
-from app.services.drafts import create_product_draft
-from app.services.source_products import create_source_product
-from app.models.source_product import SourceProductStatus
+from app.services.drafts import create_product_draft, to_draft_read
+from app.services.source_products import (
+    create_or_get_source_variant_draft,
+    create_source_product,
+    selected_source_variant,
+    to_source_product_read,
+)
+from app.models.source_product import SourceProduct, SourceProductStatus
 from app.services.collection_jobs import (
     create_collection_job,
     create_collection_jobs,
@@ -32,6 +37,7 @@ from app.schemas.collection_jobs import (
 )
 from app.models.collection_job import CollectionJob
 from app.services.meli.sites import SITE_CURRENCIES
+from app.schemas.source_products import SourceProductRead, SourceVariantDraftCreate
 
 router = APIRouter(prefix="/api/imports", tags=["imports"])
 settings = get_settings()
@@ -75,8 +81,17 @@ def import_amazon_html(
         collection_error=(
             "Operator-provided HTML snapshot; ASIN matched but content was not independently fetched."
         ),
+        snapshot=parsed,
+        collection_method="operator_snapshot",
     )
-    model = create_product_draft(db, draft, source_product_id=source.id)
+    variant_asin, variant_attributes = selected_source_variant(parsed, source.asin)
+    model = create_product_draft(
+        db,
+        draft,
+        source_product_id=source.id,
+        source_variant_asin=variant_asin,
+        source_variant_attributes=variant_attributes,
+    )
     return PersistedDraftResponse(id=model.id, draft=draft)
 
 
@@ -99,10 +114,21 @@ async def import_amazon_url(
         source_url=source_url,
         status=status_map[result.status.value],
         collection_error="" if result.status.value == "collected" else result.message,
+        snapshot=result.source_snapshot,
+        collection_method="browser_page",
     )
     draft_model = None
     if result.draft:
-        draft_model = create_product_draft(db, result.draft, source_product_id=source.id)
+        variant_asin, variant_attributes = selected_source_variant(
+            result.source_snapshot, source.asin
+        )
+        draft_model = create_product_draft(
+            db,
+            result.draft,
+            source_product_id=source.id,
+            source_variant_asin=variant_asin,
+            source_variant_attributes=variant_attributes,
+        )
     else:
         db.commit()
     return result.model_copy(
@@ -129,7 +155,8 @@ def create_amazon_url_collection_job(
         source_url=normalized_url,
         target_site_id=target_site_id,
     )
-    return to_collection_job_read(job)
+    source = db.get(SourceProduct, job.source_product_id) if job.source_product_id else None
+    return to_collection_job_read(job, source)
 
 
 @router.post("/amazon-url/jobs/batch", response_model=CollectionBatchRead)
@@ -221,6 +248,42 @@ def get_amazon_url_collection_jobs(
     return list_collection_jobs(db, limit=limit, offset=offset)
 
 
+@router.get("/source-products/{source_product_id}", response_model=SourceProductRead)
+def get_source_product(
+    source_product_id: int,
+    db: Session = Depends(get_db),
+) -> SourceProductRead:
+    source = db.get(SourceProduct, source_product_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Source product not found.")
+    return to_source_product_read(source)
+
+
+@router.post(
+    "/source-products/{source_product_id}/variants/{variant_asin}/draft",
+    response_model=ProductDraftRead,
+)
+def create_source_variant_product_draft(
+    source_product_id: int,
+    variant_asin: str,
+    payload: SourceVariantDraftCreate,
+    db: Session = Depends(get_db),
+) -> ProductDraftRead:
+    source = db.get(SourceProduct, source_product_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Source product not found.")
+    target_site_id = _target_site_or_422(payload.target_site_id)
+    try:
+        draft, _ = create_or_get_source_variant_draft(
+            db, source, variant_asin, target_site_id
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return to_draft_read(draft)
+
+
 @router.post("/amazon-url/jobs/{job_id}/run", response_model=CollectionJobRead)
 async def run_amazon_url_collection_job(
     job_id: int, db: Session = Depends(get_db)
@@ -231,7 +294,8 @@ async def run_amazon_url_collection_job(
         collector=collect_amazon_page,
         timeout_seconds=settings.job_execution_timeout_seconds,
     )
-    return to_collection_job_read(job)
+    source = db.get(SourceProduct, job.source_product_id) if job.source_product_id else None
+    return to_collection_job_read(job, source)
 
 
 def _normalized_amazon_url_or_422(source_url: str) -> str:

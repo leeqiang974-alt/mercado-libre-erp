@@ -16,7 +16,9 @@ from app.models.product_draft import ProductDraft
 from app.models.registry import import_all_models
 from app.models.source_product import SourceProduct, SourceProductStatus
 from app.schemas.drafts import ProductDraftCreate
+from app.schemas.source_products import AmazonSourceSnapshot
 from app.services.amazon.collector import CollectionResult, CollectionStatus
+from app.services import collection_jobs as collection_jobs_service
 
 
 def make_client():
@@ -303,6 +305,27 @@ def test_running_collection_job_persists_source_and_draft(monkeypatch):
                 stock=3,
                 image_urls=["https://example.com/a.jpg"],
             ),
+            source_snapshot=AmazonSourceSnapshot(
+                source_url=source_url,
+                title="Queued Bottle",
+                price={"amount": 12.5, "currency": "USD"},
+                brand="TrailPro",
+                bullets=["Leak proof"],
+                images=["https://example.com/a.jpg", "https://example.com/b.jpg"],
+                variants=[
+                    {
+                        "asin": "B000TEST01",
+                        "attributes": {"Color": "Black"},
+                        "image_urls": ["https://example.com/black.jpg"],
+                        "selected": True,
+                    },
+                    {
+                        "asin": "B000TEST02",
+                        "attributes": {"Color": "Blue"},
+                        "image_urls": ["https://example.com/blue.jpg"],
+                    },
+                ],
+            ),
         )
 
     monkeypatch.setattr(imports, "collect_amazon_page", fake_collect)
@@ -319,10 +342,68 @@ def test_running_collection_job_persists_source_and_draft(monkeypatch):
     assert body["status"] == "completed"
     assert body["source_product_id"] == 1
     assert body["draft_id"] == 1
+    assert body["source_product"]["collection_method"] == "browser_page"
+    assert body["source_product"]["title"] == "Queued Bottle"
+    assert body["source_product"]["image_count"] == 2
+    assert body["source_product"]["variant_count"] == 2
+    assert body["source_product"]["has_snapshot"] is True
+    assert body["source_product"]["collection_error"] == ""
     with testing_session() as db:
-        assert db.query(SourceProduct).one().raw_status == SourceProductStatus.COLLECTED
-        assert db.query(ProductDraft).one().title == "Queued Bottle"
+        source = db.query(SourceProduct).one()
+        assert source.raw_status == SourceProductStatus.COLLECTED
+        assert source.asin == "B000TEST01"
+        assert source.source_price == 12.5
+        assert source.source_currency == "USD"
+        assert len(source.image_urls_json) == 2
+        assert len(source.variants_json) == 2
+        initial_draft = db.query(ProductDraft).one()
+        assert initial_draft.title == "Queued Bottle"
+        assert initial_draft.source_variant_asin == "B000TEST01"
+        assert initial_draft.source_variant_attributes_json == {"Color": "Black"}
         assert db.query(CollectionJob).one().status == CollectionJobStatus.COMPLETED
+
+    listed = client.get("/api/imports/amazon-url/jobs")
+    assert listed.status_code == 200
+    assert listed.json()[0]["source_product"]["brand"] == "TrailPro"
+    detail = client.get("/api/imports/source-products/1")
+    assert detail.status_code == 200
+    assert detail.json()["snapshot"]["title"] == "Queued Bottle"
+    assert len(detail.json()["snapshot"]["images"]) == 2
+    assert detail.json()["snapshot"]["variants"][1]["attributes"] == {"Color": "Blue"}
+
+    variant_draft = client.post(
+        "/api/imports/source-products/1/variants/B000TEST02/draft",
+        json={"target_site_id": "MLM"},
+    )
+    assert variant_draft.status_code == 200
+    assert variant_draft.json()["id"] == 2
+    assert variant_draft.json()["source_product_id"] == 1
+    assert variant_draft.json()["source_variant_asin"] == "B000TEST02"
+    assert variant_draft.json()["source_variant_attributes"] == {"Color": "Blue"}
+    assert variant_draft.json()["image_urls"] == ["https://example.com/blue.jpg"]
+    assert variant_draft.json()["source_price"] is None
+    assert variant_draft.json()["source_currency"] == "USD"
+    assert "Amazon variant:\nColor: Blue" in variant_draft.json()["description"]
+
+    repeated = client.post(
+        "/api/imports/source-products/1/variants/B000TEST02/draft",
+        json={"target_site_id": "MLM"},
+    )
+    assert repeated.status_code == 200
+    assert repeated.json()["id"] == 2
+    with testing_session() as db:
+        assert db.query(ProductDraft).count() == 2
+
+    missing_variant = client.post(
+        "/api/imports/source-products/1/variants/B000TEST99/draft",
+        json={"target_site_id": "MLM"},
+    )
+    assert missing_variant.status_code == 404
+    unsupported_site = client.post(
+        "/api/imports/source-products/1/variants/B000TEST02/draft",
+        json={"target_site_id": "BAD"},
+    )
+    assert unsupported_site.status_code == 422
 
 
 def test_running_collection_job_records_manual_action(monkeypatch):
@@ -347,11 +428,62 @@ def test_running_collection_job_records_manual_action(monkeypatch):
     body = response.json()
     assert body["status"] == "needs_manual_action"
     assert body["draft_id"] is None
+    assert body["source_product"]["has_snapshot"] is False
+    assert "manual action" in body["source_product"]["collection_error"]
     with testing_session() as db:
         source = db.query(SourceProduct).one()
         assert source.raw_status == SourceProductStatus.NEEDS_MANUAL_ACTION
         assert "manual action" in source.collection_error
         assert db.query(ProductDraft).count() == 0
+
+
+def test_collection_persistence_failure_rolls_back_source_and_draft(monkeypatch):
+    async def fake_collect(source_url: str, target_site_id: str):
+        return CollectionResult(
+            status=CollectionStatus.COLLECTED,
+            source_url=source_url,
+            message="collected",
+            draft=ProductDraftCreate(
+                title="Atomic Bottle",
+                target_site_id=target_site_id,
+                source_price=10,
+                source_currency="USD",
+                currency="MXN",
+            ),
+            source_snapshot=AmazonSourceSnapshot(
+                source_url=source_url,
+                title="Atomic Bottle",
+                price={"amount": 10, "currency": "USD"},
+            ),
+        )
+
+    original_create = collection_jobs_service.create_product_draft
+
+    def fail_after_draft_flush(*args, **kwargs):
+        original_create(*args, **kwargs)
+        raise RuntimeError("simulated persistence interruption")
+
+    monkeypatch.setattr(imports, "collect_amazon_page", fake_collect)
+    monkeypatch.setattr(
+        collection_jobs_service, "create_product_draft", fail_after_draft_flush
+    )
+    client, testing_session = make_client()
+    created = client.post(
+        "/api/imports/amazon-url/jobs",
+        json={"source_url": "https://amazon.com/dp/B000TEST01", "target_site_id": "MLM"},
+    )
+
+    response = client.post(f"/api/imports/amazon-url/jobs/{created.json()['id']}/run")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert "persistence failed" in response.json()["message"]
+    with testing_session() as db:
+        assert db.query(SourceProduct).count() == 0
+        assert db.query(ProductDraft).count() == 0
+        job = db.query(CollectionJob).one()
+        assert job.status == CollectionJobStatus.FAILED
+        assert job.source_product_id is None
 
 
 def test_collection_job_records_unexpected_collector_failure(monkeypatch):

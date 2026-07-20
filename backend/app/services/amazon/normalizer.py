@@ -14,9 +14,9 @@ def normalize_amazon_product(parsed: dict, target_site_id: str) -> ProductDraftC
         )
     price = parsed.get("price", {})
     return ProductDraftCreate(
-        title=parsed.get("title", ""),
+        title=parsed.get("title", "")[:200],
         description="\n\n".join(description_parts),
-        brand=parsed.get("brand", ""),
+        brand=parsed.get("brand", "")[:120],
         target_site_id=target_site_id,
         source_price=price.get("amount"),
         source_currency=price.get("currency", ""),

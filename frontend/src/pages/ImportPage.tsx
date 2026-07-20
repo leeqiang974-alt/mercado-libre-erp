@@ -1,23 +1,28 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
   Clock3,
   FileCode2,
+  FilePlus2,
   Link2,
   ListPlus,
   LoaderCircle,
   Play,
   RefreshCw,
   RotateCcw,
+  Search,
   Upload,
 } from "lucide-react";
 import {
   createCollectionJobsBatch,
+  createSourceVariantDraft,
+  getSourceProduct,
   listCollectionJobs,
   runCollectionJob,
   type CollectionBatchResult,
   type CollectionJobRecord,
+  type SourceProductRecord,
 } from "../api/client";
 import { MERCADO_LIBRE_SITES } from "../domain/sites";
 
@@ -85,21 +90,39 @@ export function ImportPage({
   const [collectionJobs, setCollectionJobs] = useState<CollectionJobRecord[]>([]);
   const [busyAction, setBusyAction] = useState("");
   const [error, setError] = useState("");
+  const [sourceDetails, setSourceDetails] = useState<Record<number, SourceProductRecord>>({});
+  const [expandedSourceId, setExpandedSourceId] = useState<number | null>(null);
+  const [variantDraftIds, setVariantDraftIds] = useState<Record<string, number>>({});
+  const collectionRequestEpoch = useRef(0);
 
   const refreshCollectionJobs = useCallback(async (showError = true) => {
+    const requestEpoch = ++collectionRequestEpoch.current;
     try {
-      setCollectionJobs(await listCollectionJobs());
+      const jobs = await listCollectionJobs();
+      if (requestEpoch === collectionRequestEpoch.current) {
+        setCollectionJobs(jobs);
+      }
     } catch (jobError) {
-      if (showError) {
+      if (showError && requestEpoch === collectionRequestEpoch.current) {
         setError(jobError instanceof Error ? jobError.message : "Failed to load collection jobs");
       }
     }
   }, []);
 
   useEffect(() => {
-    void refreshCollectionJobs();
-    const timer = window.setInterval(() => void refreshCollectionJobs(false), 5000);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer = 0;
+    async function poll() {
+      await refreshCollectionJobs(false);
+      if (!cancelled) {
+        timer = window.setTimeout(() => void poll(), 5000);
+      }
+    }
+    void poll();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [refreshCollectionJobs]);
 
   async function runUrlCollection() {
@@ -159,6 +182,48 @@ export function ImportPage({
     setTargetSiteId(job.target_site_id);
     setMode("html");
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function toggleSourceReview(sourceProductId: number) {
+    if (expandedSourceId === sourceProductId) {
+      setExpandedSourceId(null);
+      return;
+    }
+    setExpandedSourceId(sourceProductId);
+    if (sourceDetails[sourceProductId]) return;
+    setBusyAction(`source-${sourceProductId}`);
+    setError("");
+    try {
+      const source = await getSourceProduct(sourceProductId);
+      setSourceDetails((current) => ({ ...current, [sourceProductId]: source }));
+    } catch (sourceError) {
+      setExpandedSourceId(null);
+      setError(sourceError instanceof Error ? sourceError.message : "Failed to load source product");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function useSourceVariant(
+    sourceProductId: number,
+    variantAsin: string,
+    variantTargetSiteId: string,
+  ) {
+    const key = `${sourceProductId}:${variantAsin}:${variantTargetSiteId}`;
+    setBusyAction(`variant-${key}`);
+    setError("");
+    try {
+      const draft = await createSourceVariantDraft(
+        sourceProductId,
+        variantAsin,
+        variantTargetSiteId,
+      );
+      setVariantDraftIds((current) => ({ ...current, [key]: draft.id }));
+    } catch (variantError) {
+      setError(variantError instanceof Error ? variantError.message : "Failed to create variant draft");
+    } finally {
+      setBusyAction("");
+    }
   }
 
   const isBusy = Boolean(busyAction);
@@ -369,9 +434,89 @@ export function ImportPage({
                     <strong title={job.source_url}>{shortSource(job.source_url)}</strong>
                     <span>#{job.id} · {job.target_site_id} · {new Date(job.created_at).toLocaleString()}</span>
                     {job.message && <p>{job.message}</p>}
+                    {job.source_product && (
+                      <div className="source-snapshot-review">
+                        {job.source_product.primary_image_url && (
+                          <img src={job.source_product.primary_image_url} alt="" />
+                        )}
+                        <div className="source-snapshot-copy">
+                          <strong>{job.source_product.title}</strong>
+                          <span>
+                            {job.source_product.collection_method === "browser_page" ? "Page collected" : "Operator snapshot"}
+                            {job.source_product.brand ? ` · ${job.source_product.brand}` : ""}
+                          </span>
+                          <span>
+                            {job.source_product.source_currency} {job.source_product.source_price ?? "-"}
+                            {` · ${job.source_product.image_count} images`}
+                            {` · ${job.source_product.variant_count} variants`}
+                          </span>
+                          {!job.source_product.has_snapshot && (
+                            <p className="source-unavailable">
+                              {job.source_product.collection_error || "Source details were not captured."}
+                            </p>
+                          )}
+                          {expandedSourceId === job.source_product.id && sourceDetails[job.source_product.id]?.snapshot && (
+                            <div className="source-detail">
+                              <div className="source-image-gallery">
+                                {sourceDetails[job.source_product.id].snapshot!.images.map((imageUrl) => (
+                                  <img src={imageUrl} alt="" key={imageUrl} />
+                                ))}
+                              </div>
+                              {sourceDetails[job.source_product.id].snapshot!.bullets.length > 0 && (
+                                <ul>
+                                  {sourceDetails[job.source_product.id].snapshot!.bullets.map((bullet) => (
+                                    <li key={bullet}>{bullet}</li>
+                                  ))}
+                                </ul>
+                              )}
+                              <div className="source-variant-list">
+                                {sourceDetails[job.source_product.id].snapshot!.variants.map((variant) => (
+                                  <span className={variant.selected ? "selected" : ""} key={variant.asin}>
+                                    <strong>{Object.values(variant.attributes).join(" · ") || variant.asin}</strong>
+                                    <small>{variant.asin}</small>
+                                    <button
+                                      className="icon-text-button"
+                                      disabled={isBusy}
+                                      onClick={() => void useSourceVariant(
+                                        job.source_product!.id,
+                                        variant.asin,
+                                        job.target_site_id,
+                                      )}
+                                    >
+                                      {busyAction === `variant-${job.source_product!.id}:${variant.asin}:${job.target_site_id}` ? (
+                                        <LoaderCircle className="spin" size={14} />
+                                      ) : (
+                                        <FilePlus2 size={14} />
+                                      )}
+                                      {variantDraftIds[`${job.source_product!.id}:${variant.asin}:${job.target_site_id}`]
+                                        ? `Draft #${variantDraftIds[`${job.source_product!.id}:${variant.asin}:${job.target_site_id}`]}`
+                                        : `Create ${job.target_site_id} draft`}
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div className="collection-job-actions">
                     {job.draft_id && <span className="record-id">Draft #{job.draft_id}</span>}
+                    {job.source_product?.has_snapshot && (
+                      <button
+                        className="secondary-button"
+                        disabled={isBusy}
+                        onClick={() => void toggleSourceReview(job.source_product!.id)}
+                      >
+                        {busyAction === `source-${job.source_product.id}` ? (
+                          <LoaderCircle className="spin" size={16} />
+                        ) : (
+                          <Search size={16} />
+                        )}
+                        {expandedSourceId === job.source_product.id ? "Close source" : "Review source"}
+                      </button>
+                    )}
                     {needsSnapshot && (
                       <button
                         className="secondary-button"

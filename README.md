@@ -67,6 +67,8 @@ python -m app.worker --queue publish --loop --interval 30 --limit 10
 - Run queued Amazon URL collection jobs through a backend worker CLI.
 - Run API, collection worker, and publish worker services through Docker Compose.
 - Persist successful URL collections as source products and product drafts.
+- Persist reviewable Amazon source snapshots with the original image gallery, bullets, technical details, and discovered ASIN variants.
+- Review collected source evidence from the collection queue and create idempotent, site-specific drafts from individual Amazon variants.
 - Persist failed/manual-action URL collections as source products for later handling.
 - List saved drafts.
 - Generate a Mercado Libre OAuth authorization URL and persist the connected store callback as a token reference.

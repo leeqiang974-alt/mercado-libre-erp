@@ -13,6 +13,8 @@ APP_URL = "http://127.0.0.1:5173"
 
 
 def mock_store_capabilities(page: Page) -> None:
+    page.route("**/api/imports/amazon-url/jobs?*", fulfill_collection_jobs)
+    page.route("**/api/imports/source-products/**", fulfill_source_product)
     page.route(
         "**/api/stores",
         lambda route: route.fulfill(
@@ -36,10 +38,111 @@ def mock_store_capabilities(page: Page) -> None:
             ),
         ),
     )
-    page.route(
-        "**/api/reviews/drafts/*",
-        fulfill_review_history,
+    page.route("**/api/reviews/drafts/*", fulfill_review_history)
+
+
+def _source_image(color: str) -> str:
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120">'
+        f'<rect width="120" height="120" fill="{color}"/></svg>'
     )
+    from urllib.parse import quote
+
+    return f"data:image/svg+xml,{quote(svg)}"
+
+
+def fulfill_collection_jobs(route) -> None:
+    row = {
+        "id": 7001,
+        "source_url": "https://amazon.com/dp/B000TEST01",
+        "target_site_id": "MLM",
+        "status": "completed",
+        "message": "collected",
+        "source_product_id": 8001,
+        "draft_id": 2,
+        "created_at": "2026-07-20T12:00:00",
+        "started_at": "2026-07-20T12:00:01",
+        "completed_at": "2026-07-20T12:00:04",
+        "source_product": {
+            "id": 8001,
+            "asin": "B000TEST01",
+            "status": "collected",
+            "collection_method": "browser_page",
+            "title": "TrailPro Variant Bottle",
+            "brand": "TrailProUltraLongUnbrokenOutdoorEquipmentBrandNameForMobileLayout",
+            "source_price": 24.99,
+            "source_currency": "USD",
+            "primary_image_url": _source_image("#2563eb"),
+            "image_count": 3,
+            "variant_count": 3,
+            "has_snapshot": True,
+            "collection_error": "",
+        },
+    }
+    route.fulfill(status=200, content_type="application/json", body=json.dumps([row]))
+
+
+def fulfill_source_product(route) -> None:
+    if "/variants/" in route.request.url:
+        asin = route.request.url.split("/variants/", 1)[1].split("/", 1)[0]
+        body = json.loads(route.request.post_data or "{}")
+        draft = {
+            "id": 8103,
+            "source_product_id": 8001,
+            "source_variant_asin": asin,
+            "source_variant_attributes": {"Color": "Blue", "Size": "32 oz"},
+            "title": "TrailPro Variant Bottle",
+            "description": "Insulated bottle.",
+            "brand": "TrailPro",
+            "target_site_id": body.get("target_site_id", "MLM"),
+            "target_category_id": "",
+            "condition": "new",
+            "source_price": 24.99,
+            "source_currency": "USD",
+            "price": None,
+            "currency": "MXN",
+            "stock": 1,
+            "listing_type_id": "",
+            "image_urls": [],
+            "attributes": [],
+            "status": "draft",
+            "risk_status": "unreviewed",
+        }
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(draft))
+        return
+    source = {
+        "id": 8001,
+        "source": "amazon_page",
+        "source_url": "https://amazon.com/dp/B000TEST01",
+        "asin": "B000TEST01",
+        "status": "collected",
+        "collection_method": "browser_page",
+        "collected_at": "2026-07-20T12:00:04",
+        "collection_error": "",
+        "snapshot": {
+            "source_url": "https://amazon.com/dp/B000TEST01",
+            "title": "TrailPro Variant Bottle",
+            "price": {"amount": 24.99, "currency": "USD"},
+            "brand": "TrailProUltraLongUnbrokenOutdoorEquipmentBrandNameForMobileLayout",
+            "bullets": [
+                "Leak proof lid",
+                "ThreeSizesWithAnExtremelyLongUnbrokenSourceBulletForMobileOverflowValidation",
+            ],
+            "description": "Insulated bottle.",
+            "images": [
+                _source_image("#2563eb"),
+                _source_image("#16803c"),
+                _source_image("#d92d20"),
+            ],
+            "variants": [
+                {"asin": "B000TEST01", "attributes": {"Color": "Black", "Size": "20 oz"}, "image_urls": [], "selected": True},
+                {"asin": "B000TEST02", "attributes": {"Color": "Blue", "Size": "20 oz"}, "image_urls": [], "selected": False},
+                {"asin": "B000TEST03", "attributes": {"Color": "Blue", "Size": "32 oz SuperInsulatedOutdoorExpeditionEdition"}, "image_urls": [], "selected": False},
+            ],
+            "technical_details": {"Material": "Stainless steel"},
+        },
+    }
+    route.fulfill(status=200, content_type="application/json", body=json.dumps(source))
 
 
 def fulfill_review_history(route) -> None:
@@ -132,6 +235,15 @@ def inspect_import_workspace(page: Page) -> dict[str, object]:
     page.get_by_role("tab", name="HTML snapshot", exact=True).click()
     page.get_by_label("Amazon HTML snapshot", exact=True).wait_for()
     page.get_by_role("tab", name="URL collector", exact=True).click()
+    page.get_by_text("TrailPro Variant Bottle", exact=True).wait_for()
+    page.get_by_role("button", name="Review source", exact=True).click()
+    page.get_by_text("Blue · 32 oz SuperInsulatedOutdoorExpeditionEdition", exact=True).wait_for()
+    source_images = page.locator(".source-image-gallery img").count()
+    source_variants = page.locator(".source-variant-list > span").count()
+    assert source_images == 3, f"Expected 3 source images, got {source_images}"
+    assert source_variants == 3, f"Expected 3 source variants, got {source_variants}"
+    page.get_by_role("button", name="Create MLM draft", exact=True).last.click()
+    page.get_by_role("button", name="Draft #8103", exact=True).wait_for()
     url_input = page.get_by_label("Amazon product URLs", exact=True)
     url_input.fill("https://example.com/not-amazon\nnot-a-url")
     page.get_by_role("button", name="Add 2 to queue", exact=True).click()
@@ -146,6 +258,8 @@ def inspect_import_workspace(page: Page) -> dict[str, object]:
         "site_options": option_count,
         "job_count": page.locator(".collection-job").count(),
         "batch_result_count": batch_result_count,
+        "source_images": source_images,
+        "source_variants": source_variants,
         "horizontal_overflow": page.evaluate("document.documentElement.scrollWidth > innerWidth"),
     }
 
