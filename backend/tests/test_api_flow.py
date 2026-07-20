@@ -3,6 +3,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api.routes import publishing
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
@@ -45,7 +46,11 @@ def teardown_function():
     app.dependency_overrides.clear()
 
 
-def test_import_review_publish_preview_flow():
+def test_import_review_publish_preview_flow(monkeypatch):
+    def current_shipping(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(publishing, "_validate_current_store_shipping", current_shipping)
     client = make_client()
     imported = client.post(
         "/api/imports/amazon-html",

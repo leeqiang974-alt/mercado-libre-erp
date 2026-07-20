@@ -24,6 +24,7 @@ Implemented:
 - Mercado Libre metadata proxy for listing types, category prediction, and category attributes.
 - Authorized-store shipping preferences API with explicit non-FULL filtering and operator-selectable shipping mode/logistic type.
 - Versioned listing configuration binds site, authorized store, Classic/Premium choice, and non-FULL shipping; changing delivery invalidates prior AI review and approval.
+- Saved-draft preview and enqueue re-fetch the authorized store's current shipping preferences and fail closed when the selected non-FULL option was removed or the provider cannot be verified; execution performs the same check again before `/items`.
 - Mercado Libre metadata cache and refresh APIs for listing types and category attributes.
 - Persisted Mercado Libre draft listing configuration for category, listing type, fulfillment, and attributes.
 - Persisted operator approval records for draft publish gates.
@@ -57,7 +58,7 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 161 passed, with 4 PostgreSQL-only tests skipped in the default run.
+- Backend suite: 168 passed, with 4 PostgreSQL-only tests skipped in the default run.
 - Docker PostgreSQL integration run: 4 passed, including concurrent collection and publish-job deduplication plus atomic draft-version invalidation under simultaneous edits.
 - PostgreSQL migrations through `20260720_0012` backfilled collection identities, indexed site/identity lookup, and added versioned store/shipping delivery fields.
 - The complete Alembic chain upgraded to head and downgraded to base successfully on a disposable D-drive SQLite database.

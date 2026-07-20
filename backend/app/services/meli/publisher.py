@@ -8,7 +8,10 @@ from app.services.meli.payload_builder import (
     SUPPORTED_NON_FULL_LOGISTIC_TYPES,
     build_item_payload,
 )
-from app.services.meli.shipping import list_non_full_shipping_options, resolve_non_full_shipping
+from app.services.meli.shipping import (
+    find_non_full_shipping_selection,
+    resolve_non_full_shipping,
+)
 from app.services.meli.sites import expected_currency
 
 SUPPORTED_LISTING_TYPE_IDS = {"gold_special", "gold_pro"}
@@ -119,17 +122,12 @@ async def execute_publish(
             status="blocked",
             errors=["shipping_preferences_unavailable"],
         )
-    available_shipping = list_non_full_shipping_options(shipping_preferences)
     shipping = resolve_non_full_shipping(shipping_preferences)
     if listing_choice.shipping_mode and listing_choice.shipping_logistic_type:
-        shipping = next(
-            (
-                option
-                for option in available_shipping
-                if option.mode == listing_choice.shipping_mode
-                and option.logistic_type == listing_choice.shipping_logistic_type
-            ),
-            None,
+        shipping = find_non_full_shipping_selection(
+            shipping_preferences,
+            listing_choice.shipping_mode,
+            listing_choice.shipping_logistic_type,
         )
         if not shipping:
             return PublishExecutionResult(

@@ -1,5 +1,7 @@
+import asyncio
 from datetime import UTC, datetime
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -30,6 +32,7 @@ from app.services.meli.publisher import (
     validate_publish_request,
     validate_store_delivery,
 )
+from app.services.meli.shipping import find_non_full_shipping_selection
 from app.services.meli.token_vault import resolve_fresh_store_access_token
 from app.services.publish_jobs import (
     complete_publish_job,
@@ -97,6 +100,8 @@ def publish_preview(
         else ["configured_store_not_found"]
     )
     errors = [*validation.errors, *store_errors]
+    if not errors and store is not None:
+        errors.extend(_validate_current_store_shipping(db, store, payload.listing_choice))
     return validation.model_copy(update={"allowed": not errors, "errors": errors})
 
 
@@ -117,7 +122,15 @@ def publish_preview_from_draft(
         valid_listing_type_ids=SERVER_LISTING_TYPE_IDS,
         human_approved=human_approved,
     )
-    return _with_category_attribute_validation(db, draft, listing_choice, validation)
+    validation = _with_category_attribute_validation(db, draft, listing_choice, validation)
+    if validation.allowed and listing_choice.store_id is not None:
+        store = db.get(Store, listing_choice.store_id)
+        if store is not None:
+            errors = _validate_current_store_shipping(db, store, listing_choice)
+            validation = validation.model_copy(
+                update={"allowed": not errors, "errors": errors}
+            )
+    return validation
 
 
 @router.post("/execute", response_model=PublishExecutionResult)
@@ -197,6 +210,8 @@ def publish_enqueue_from_draft(
             require_verified_metadata=settings.allow_live_publish,
         )
     )
+    if not validation_errors:
+        validation_errors.extend(_validate_current_store_shipping(db, store, listing_choice))
     if validation_errors:
         raise HTTPException(status_code=422, detail=validation_errors)
     job = create_publish_job(
@@ -220,6 +235,58 @@ def publish_enqueue_from_draft(
         listing_choice=listing_choice,
     )
     return to_publish_job_read(job)
+
+
+def _validate_current_store_shipping(
+    db: Session,
+    store: Store,
+    listing_choice: ListingChoice,
+) -> list[str]:
+    store_errors = validate_store_delivery(
+        store.id,
+        store.site_id,
+        store.oauth_status,
+        listing_choice,
+    )
+    if store_errors:
+        return store_errors
+    seller_id = store.seller_id
+    try:
+        access_token = asyncio.run(
+            resolve_fresh_store_access_token(
+                db=db,
+                store=store,
+                encryption_key=settings.token_encryption_key,
+                oauth_client=create_oauth_client(),
+            )
+        )
+    except httpx.HTTPError:
+        db.rollback()
+        return ["store_token_refresh_unavailable"]
+    except ValueError:
+        db.rollback()
+        return ["store_token_refresh_response_invalid"]
+    if not access_token:
+        db.rollback()
+        return ["store_access_token_required"]
+
+    # Release the read transaction before waiting on the external provider.
+    db.rollback()
+    try:
+        preferences = asyncio.run(
+            MercadoLibreClient(access_token=access_token).get(
+                f"/users/{seller_id}/shipping_preferences"
+            )
+        )
+    except httpx.HTTPError:
+        return ["shipping_preferences_unavailable"]
+
+    selected_available = find_non_full_shipping_selection(
+        preferences,
+        listing_choice.shipping_mode,
+        listing_choice.shipping_logistic_type,
+    )
+    return [] if selected_available else ["selected_non_full_shipping_option_unavailable"]
 
 
 @router.post("/jobs/{job_id}/retry", response_model=PublishExecutionResult)

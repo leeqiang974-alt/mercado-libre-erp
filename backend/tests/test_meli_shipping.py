@@ -1,4 +1,5 @@
 from app.services.meli.shipping import (
+    find_non_full_shipping_selection,
     list_non_full_shipping_options,
     resolve_non_full_shipping,
     resolve_non_full_shipping_mode,
@@ -77,3 +78,21 @@ def test_malformed_or_inactive_shipping_preferences_fail_closed():
             ],
         }
     ) == []
+
+
+def test_selected_shipping_lookup_is_normalized_and_never_returns_full():
+    preferences = {
+        "modes": ["me2"],
+        "logistics": [
+            {
+                "mode": "me2",
+                "types": ["fulfillment", "drop_off"],
+            }
+        ],
+    }
+
+    selected = find_non_full_shipping_selection(preferences, " ME2 ", " DROP_OFF ")
+
+    assert selected is not None
+    assert (selected.mode, selected.logistic_type) == ("me2", "drop_off")
+    assert find_non_full_shipping_selection(preferences, "me2", "fulfillment") is None

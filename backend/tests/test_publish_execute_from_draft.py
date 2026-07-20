@@ -1,3 +1,4 @@
+import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -167,7 +168,16 @@ def test_publish_execute_from_draft_uses_saved_config_and_persists_job(monkeypat
 
 
 def test_publish_enqueue_from_draft_creates_pending_job(monkeypatch):
+    async def shipping_preferences(self, path):
+        assert self.access_token == "access-token"
+        assert path == "/users/seller-1/shipping_preferences"
+        return {
+            "modes": ["me2"],
+            "logistics": [{"mode": "me2", "types": [{"type": "drop_off"}]}],
+        }
+
     monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing.MercadoLibreClient, "get", shipping_preferences)
     client, testing_session = make_client()
     review_result_id = seed_publish_review(testing_session)
     client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
@@ -306,3 +316,206 @@ def test_preview_blocks_store_disconnected_after_configuration(monkeypatch):
     assert response.status_code == 200
     assert response.json()["allowed"] is False
     assert "store_not_connected" in response.json()["errors"]
+
+
+def test_preview_blocks_shipping_selection_removed_from_store(monkeypatch):
+    async def changed_shipping_preferences(self, path):
+        return {
+            "modes": ["me2"],
+            "logistics": [{"mode": "me2", "types": [{"type": "self_service"}]}],
+        }
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(
+        publishing.MercadoLibreClient,
+        "get",
+        changed_shipping_preferences,
+    )
+    client, testing_session = make_client()
+    review_result_id = seed_publish_review(testing_session)
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+
+    response = client.post(
+        "/api/publishing/preview-from-draft",
+        json={
+            "product_draft_id": 1,
+            "review": review_payload() | {"review_result_id": review_result_id},
+            "valid_listing_type_ids": ["gold_special"],
+            "human_approved": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "allowed": False,
+        "errors": ["selected_non_full_shipping_option_unavailable"],
+    }
+
+
+def test_enqueue_rejects_removed_shipping_without_creating_job(monkeypatch):
+    async def changed_shipping_preferences(self, path):
+        return {
+            "modes": ["me2"],
+            "logistics": [{"mode": "me2", "types": [{"type": "self_service"}]}],
+        }
+
+    async def unexpected_publish(**kwargs):
+        raise AssertionError("enqueue preflight must never call /items")
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(
+        publishing.MercadoLibreClient,
+        "get",
+        changed_shipping_preferences,
+    )
+    monkeypatch.setattr(publishing, "execute_publish", unexpected_publish)
+    client, testing_session = make_client()
+    review_result_id = seed_publish_review(testing_session)
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+
+    response = client.post(
+        "/api/publishing/enqueue-from-draft",
+        json=execute_payload(review_result_id),
+    )
+
+    assert response.status_code == 422
+    assert "selected_non_full_shipping_option_unavailable" in response.text
+    with testing_session() as db:
+        assert db.query(PublishJob).count() == 0
+
+
+def test_preview_reports_shipping_preferences_provider_failure(monkeypatch):
+    async def failed_shipping_preferences(self, path):
+        request = httpx.Request("GET", f"https://api.mercadolibre.com{path}")
+        raise httpx.ConnectError("provider unavailable", request=request)
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(
+        publishing.MercadoLibreClient,
+        "get",
+        failed_shipping_preferences,
+    )
+    client, testing_session = make_client()
+    review_result_id = seed_publish_review(testing_session)
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+
+    response = client.post(
+        "/api/publishing/preview-from-draft",
+        json={
+            "product_draft_id": 1,
+            "review": review_payload() | {"review_result_id": review_result_id},
+            "valid_listing_type_ids": ["gold_special"],
+            "human_approved": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "allowed": False,
+        "errors": ["shipping_preferences_unavailable"],
+    }
+
+
+def test_generic_preview_rechecks_current_store_shipping(monkeypatch):
+    async def changed_shipping_preferences(self, path):
+        return {
+            "modes": ["me2"],
+            "logistics": [{"mode": "me2", "types": [{"type": "self_service"}]}],
+        }
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(
+        publishing.MercadoLibreClient,
+        "get",
+        changed_shipping_preferences,
+    )
+    client, _ = make_client()
+
+    response = client.post(
+        "/api/publishing/preview",
+        json={
+            "draft": {
+                "title": "Bottle",
+                "description": "Leak proof.",
+                "target_site_id": "MLM",
+                "target_category_id": "MLM123",
+                "price": 100,
+                "currency": "MXN",
+                "stock": 2,
+                "image_urls": ["https://example.com/a.jpg"],
+            },
+            "review": review_payload(),
+            "listing_choice": {
+                "site_id": "MLM",
+                "store_id": 1,
+                "listing_type_id": "gold_special",
+                "fulfillment": "not_full",
+                "shipping_mode": "me2",
+                "shipping_logistic_type": "drop_off",
+            },
+            "valid_listing_type_ids": ["gold_special"],
+            "human_approved": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["allowed"] is False
+    assert "selected_non_full_shipping_option_unavailable" in response.json()["errors"]
+
+
+def test_enqueue_provider_failure_does_not_create_job(monkeypatch):
+    async def failed_shipping_preferences(self, path):
+        request = httpx.Request("GET", f"https://api.mercadolibre.com{path}")
+        raise httpx.ConnectError("provider unavailable", request=request)
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(
+        publishing.MercadoLibreClient,
+        "get",
+        failed_shipping_preferences,
+    )
+    client, testing_session = make_client()
+    review_result_id = seed_publish_review(testing_session)
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+
+    response = client.post(
+        "/api/publishing/enqueue-from-draft",
+        json=execute_payload(review_result_id),
+    )
+
+    assert response.status_code == 422
+    assert "shipping_preferences_unavailable" in response.text
+    with testing_session() as db:
+        assert db.query(PublishJob).count() == 0
+
+
+def test_preview_reports_store_token_refresh_failure(monkeypatch):
+    async def failed_token_refresh(*args, **kwargs):
+        request = httpx.Request("POST", "https://api.mercadolibre.com/oauth/token")
+        response = httpx.Response(401, request=request)
+        raise httpx.HTTPStatusError("refresh rejected", request=request, response=response)
+
+    monkeypatch.setattr(
+        publishing,
+        "resolve_fresh_store_access_token",
+        failed_token_refresh,
+    )
+    client, testing_session = make_client()
+    review_result_id = seed_publish_review(testing_session)
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+
+    response = client.post(
+        "/api/publishing/preview-from-draft",
+        json={
+            "product_draft_id": 1,
+            "review": review_payload() | {"review_result_id": review_result_id},
+            "valid_listing_type_ids": ["gold_special"],
+            "human_approved": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "allowed": False,
+        "errors": ["store_token_refresh_unavailable"],
+    }

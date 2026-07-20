@@ -210,7 +210,14 @@ def test_missing_listing_config_can_be_read_as_optional():
     assert response.json() is None
 
 
-def test_publish_preview_from_saved_draft_config():
+def test_publish_preview_from_saved_draft_config(monkeypatch):
+    def current_shipping(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(
+        "app.api.routes.publishing._validate_current_store_shipping",
+        current_shipping,
+    )
     client, testing_session = make_client()
     client.put("/api/drafts/1/listing-config", json=config_payload())
     review_result_id = seed_publish_review(testing_session)

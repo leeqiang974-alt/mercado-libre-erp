@@ -104,7 +104,20 @@ def seed_publish_review(testing_session, draft_id: int) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_amazon_to_pre_listing_queue_and_worker_flow():
+async def test_amazon_to_pre_listing_queue_and_worker_flow(monkeypatch):
+    async def shipping_preferences(self, path):
+        assert self.access_token == "e2e-access-token"
+        assert path == "/users/seller-e2e/shipping_preferences"
+        return {
+            "modes": ["me2"],
+            "logistics": [{"mode": "me2", "types": [{"type": "drop_off"}]}],
+        }
+
+    monkeypatch.setattr("app.api.routes.publishing.settings.token_encryption_key", "e2e-secret")
+    monkeypatch.setattr(
+        "app.api.routes.publishing.MercadoLibreClient.get",
+        shipping_preferences,
+    )
     client, testing_session = make_client()
 
     imported = client.post(

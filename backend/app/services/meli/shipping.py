@@ -27,6 +27,23 @@ def resolve_non_full_shipping(preferences: dict) -> NonFullShippingSelection | N
     return options[0] if options else None
 
 
+def find_non_full_shipping_selection(
+    preferences: dict,
+    mode: str,
+    logistic_type: str,
+) -> NonFullShippingSelection | None:
+    normalized_mode = mode.strip().lower()
+    normalized_type = logistic_type.strip().lower()
+    return next(
+        (
+            option
+            for option in list_non_full_shipping_options(preferences)
+            if option.mode == normalized_mode and option.logistic_type == normalized_type
+        ),
+        None,
+    )
+
+
 def list_non_full_shipping_options(preferences: dict) -> list[NonFullShippingSelection]:
     if not isinstance(preferences, dict):
         return []
