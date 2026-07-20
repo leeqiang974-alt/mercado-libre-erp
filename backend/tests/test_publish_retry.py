@@ -66,10 +66,13 @@ def make_client():
         db.add(
             DraftListingConfig(
                 product_draft_id=1,
+                store_id=store.id,
                 site_id="MLM",
                 category_id="MLM123",
                 listing_type_id="gold_special",
                 fulfillment="classic",
+                shipping_mode="me2",
+                shipping_logistic_type="drop_off",
                 attributes_json=[{"id": "BRAND", "value_name": "Demo"}],
             )
         )
@@ -174,6 +177,8 @@ def test_blocked_publish_job_can_be_retried_from_saved_draft_config(monkeypatch)
         assert retry.request_summary_json["review_provider"] == "claude+nvidia_behavioral_audit"
         assert retry_audit.entity_id == "1"
         assert retry_audit.after_json["retry_store_id"] == 1
+        assert retry_audit.after_json["shipping_mode"] == "me2"
+        assert retry_audit.after_json["shipping_logistic_type"] == "drop_off"
 
 
 def test_published_publish_job_cannot_be_retried():

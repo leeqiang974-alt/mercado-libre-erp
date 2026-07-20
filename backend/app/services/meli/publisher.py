@@ -8,7 +8,7 @@ from app.services.meli.payload_builder import (
     SUPPORTED_NON_FULL_LOGISTIC_TYPES,
     build_item_payload,
 )
-from app.services.meli.shipping import resolve_non_full_shipping
+from app.services.meli.shipping import list_non_full_shipping_options, resolve_non_full_shipping
 from app.services.meli.sites import expected_currency
 
 SUPPORTED_LISTING_TYPE_IDS = {"gold_special", "gold_pro"}
@@ -25,6 +25,32 @@ def validate_site_currency(site_id: str, currency: str) -> list[str]:
     if required and currency.strip().upper() != required:
         return ["target_currency_mismatch"]
     return []
+
+
+def validate_delivery_binding(
+    execution_store_id: int | None, listing_choice: ListingChoice
+) -> list[str]:
+    errors: list[str] = []
+    if listing_choice.store_id is None:
+        errors.append("authorized_store_selection_required")
+    elif execution_store_id is not None and listing_choice.store_id != execution_store_id:
+        errors.append("configured_store_mismatch")
+    if not listing_choice.shipping_mode or not listing_choice.shipping_logistic_type:
+        errors.append("non_full_shipping_selection_required")
+    return errors
+
+
+def validate_store_delivery(
+    store_id: int,
+    store_site_id: str,
+    oauth_status: str,
+    listing_choice: ListingChoice,
+) -> list[str]:
+    return [
+        *validate_store_site_match(store_site_id, listing_choice.site_id),
+        *validate_delivery_binding(store_id, listing_choice),
+        *([] if oauth_status == "connected" else ["store_not_connected"]),
+    ]
 
 
 def validate_publish_request(
@@ -49,7 +75,12 @@ def validate_publish_request(
         errors.append("ai_review_needs_human_review")
     errors.extend(validate_site_currency(listing_choice.site_id, draft.currency))
     try:
-        build_item_payload(draft, listing_choice)
+        build_item_payload(
+            draft,
+            listing_choice,
+            shipping_mode=listing_choice.shipping_mode or None,
+            shipping_logistic_type=listing_choice.shipping_logistic_type or None,
+        )
     except ValueError as exc:
         errors.append(str(exc))
     return PublishValidationResult(allowed=not errors, errors=errors)
@@ -88,7 +119,23 @@ async def execute_publish(
             status="blocked",
             errors=["shipping_preferences_unavailable"],
         )
+    available_shipping = list_non_full_shipping_options(shipping_preferences)
     shipping = resolve_non_full_shipping(shipping_preferences)
+    if listing_choice.shipping_mode and listing_choice.shipping_logistic_type:
+        shipping = next(
+            (
+                option
+                for option in available_shipping
+                if option.mode == listing_choice.shipping_mode
+                and option.logistic_type == listing_choice.shipping_logistic_type
+            ),
+            None,
+        )
+        if not shipping:
+            return PublishExecutionResult(
+                status="blocked",
+                errors=["selected_non_full_shipping_option_unavailable"],
+            )
     if not shipping:
         return PublishExecutionResult(
             status="blocked",

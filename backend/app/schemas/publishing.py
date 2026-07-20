@@ -3,8 +3,11 @@ from pydantic import BaseModel, Field
 
 class ListingChoice(BaseModel):
     site_id: str
+    store_id: int | None = None
     listing_type_id: str
     fulfillment: str = "not_full"
+    shipping_mode: str = ""
+    shipping_logistic_type: str = ""
     attributes: list[dict] = Field(default_factory=list)
 
 

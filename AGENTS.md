@@ -27,6 +27,7 @@
 - Treat a lost or ambiguous Mercado Libre create-item response as an unknown outcome that requires store reconciliation; never retry it automatically.
 - Treat operator-provided Amazon HTML as a manual source. Require the requested ASIN to match a strong page identity signal, and never label it as independently collected.
 - Live publishing requires PostgreSQL row locking. SQLite is allowed only while live publishing is disabled.
+- Every write that can invalidate review or approval must atomically increment the draft content version in the database. Verify shared write paths with a real PostgreSQL concurrent-session test so simultaneous pricing, listing, store, or shipping edits cannot preserve a stale review.
 
 ## Verification
 

@@ -14,6 +14,8 @@ from app.services.meli.oauth import (
     verify_state_token,
 )
 from app.services.meli.token_vault import upsert_store_token
+from app.services.meli.shipping import list_non_full_shipping_options
+from app.services.meli.token_vault import resolve_fresh_store_access_token
 
 router = APIRouter(prefix="/api/stores", tags=["stores"])
 settings = get_settings()
@@ -106,3 +108,43 @@ def list_stores(db: Session = Depends(get_db)) -> list[dict[str, str]]:
         }
         for store in db.query(Store).order_by(Store.id.desc()).all()
     ]
+
+
+@router.get("/{store_id}/shipping-options")
+async def get_store_shipping_options(
+    store_id: int, db: Session = Depends(get_db)
+) -> dict[str, object]:
+    store = db.get(Store, store_id)
+    if store is None:
+        raise HTTPException(status_code=404, detail="Store not found.")
+    if store.oauth_status != "connected":
+        raise HTTPException(status_code=409, detail="Store is not connected.")
+    try:
+        access_token = await resolve_fresh_store_access_token(
+            db=db,
+            store=store,
+            encryption_key=settings.token_encryption_key,
+            oauth_client=create_oauth_client(),
+        )
+        if not access_token:
+            raise HTTPException(status_code=409, detail="Store access token is unavailable.")
+        preferences = await create_meli_client(access_token).get(
+            f"/users/{store.seller_id}/shipping_preferences"
+        )
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Mercado Libre shipping preferences are unavailable.",
+        ) from exc
+    options = list_non_full_shipping_options(preferences)
+    return {
+        "store_id": store.id,
+        "site_id": store.site_id,
+        "verified": True,
+        "options": [
+            {"mode": option.mode, "logistic_type": option.logistic_type}
+            for option in options
+        ],
+    }

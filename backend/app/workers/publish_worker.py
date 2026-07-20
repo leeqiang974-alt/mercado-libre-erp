@@ -19,7 +19,7 @@ from app.services.meli.publisher import (
     SUPPORTED_LISTING_TYPE_IDS,
     execute_publish,
     validate_publish_request,
-    validate_store_site_match,
+    validate_store_delivery,
 )
 from app.services.meli.token_vault import resolve_fresh_store_access_token
 from app.services.publish_jobs import complete_publish_job, recover_stale_publish_jobs
@@ -112,8 +112,12 @@ async def run_pending_publish_job(
         store = db.get(Store, job.store_id)
         if store is None:
             result = PublishExecutionResult(status="failed", errors=["store_not_found"])
-        elif (site_errors := validate_store_site_match(store.site_id, listing_choice.site_id)):
-            result = PublishExecutionResult(status="blocked", errors=site_errors)
+        elif (
+            delivery_errors := validate_store_delivery(
+                store.id, store.site_id, store.oauth_status, listing_choice
+            )
+        ):
+            result = PublishExecutionResult(status="blocked", errors=delivery_errors)
         else:
             validation = validate_publish_request(
                 draft=draft,
@@ -227,6 +231,8 @@ def _audit_publish_job(db: Session, job: PublishJob, result: PublishExecutionRes
             "product_draft_id": job.product_draft_id,
             "store_id": job.store_id,
             "listing_type_id": summary.get("listing_type_id", ""),
+            "shipping_mode": summary.get("shipping_mode", ""),
+            "shipping_logistic_type": summary.get("shipping_logistic_type", ""),
         },
         after={
             "status": result.status,

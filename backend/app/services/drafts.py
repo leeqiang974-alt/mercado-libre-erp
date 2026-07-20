@@ -1,7 +1,30 @@
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.models.product_draft import ProductDraft
 from app.schemas.drafts import ProductDraftCreate, ProductDraftRead
+
+
+def update_draft_content(
+    db: Session,
+    product_draft_id: int,
+    **values: object,
+) -> None:
+    """Update draft fields and invalidate review with an atomic version increment."""
+    # Sessions disable autoflush; preserve pending config changes before direct SQL.
+    db.flush()
+    result = db.execute(
+        update(ProductDraft)
+        .where(ProductDraft.id == product_draft_id)
+        .values(
+            **values,
+            content_version=ProductDraft.content_version + 1,
+            risk_status="unreviewed",
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        raise LookupError("Product draft not found.")
 
 
 def create_product_draft(

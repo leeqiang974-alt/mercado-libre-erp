@@ -8,6 +8,7 @@ from app.models.draft_pricing_config import DraftPricingConfig
 from app.models.product_draft import ProductDraft
 from app.schemas.pricing import DraftPricingRead, DraftPricingUpsert
 from app.services.audit_events import create_audit_event
+from app.services.drafts import update_draft_content
 
 
 def calculate_target_price(payload: DraftPricingUpsert) -> tuple[float, float]:
@@ -53,12 +54,14 @@ def upsert_draft_pricing(
     config.landed_cost = landed_cost
     config.target_price = target_price
     config.updated_at = datetime.now(UTC)
-    draft.source_price = payload.source_price
-    draft.source_currency = payload.source_currency
-    draft.price = target_price
-    draft.currency = payload.target_currency
-    draft.content_version += 1
-    draft.risk_status = "unreviewed"
+    update_draft_content(
+        db,
+        product_draft_id,
+        source_price=payload.source_price,
+        source_currency=payload.source_currency,
+        price=target_price,
+        currency=payload.target_currency,
+    )
     db.commit()
     db.refresh(config)
     create_audit_event(

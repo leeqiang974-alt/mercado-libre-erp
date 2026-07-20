@@ -22,6 +22,8 @@ Implemented:
 - Persisted product drafts for HTML snapshot imports.
 - Persisted product drafts for successful URL collections.
 - Mercado Libre metadata proxy for listing types, category prediction, and category attributes.
+- Authorized-store shipping preferences API with explicit non-FULL filtering and operator-selectable shipping mode/logistic type.
+- Versioned listing configuration binds site, authorized store, Classic/Premium choice, and non-FULL shipping; changing delivery invalidates prior AI review and approval.
 - Mercado Libre metadata cache and refresh APIs for listing types and category attributes.
 - Persisted Mercado Libre draft listing configuration for category, listing type, fulfillment, and attributes.
 - Persisted operator approval records for draft publish gates.
@@ -55,14 +57,13 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 150 passed, with 2 PostgreSQL-only tests skipped in the default run.
-- Docker PostgreSQL integration run: 2 passed, including concurrent request deduplication.
-- PostgreSQL migration `20260720_0010` backfilled all local collection identities, normalized historical site IDs, and created the site/identity index.
+- Backend suite: 161 passed, with 4 PostgreSQL-only tests skipped in the default run.
+- Docker PostgreSQL integration run: 4 passed, including concurrent collection and publish-job deduplication plus atomic draft-version invalidation under simultaneous edits.
+- PostgreSQL migrations through `20260720_0012` backfilled collection identities, indexed site/identity lookup, and added versioned store/shipping delivery fields.
 - The complete Alembic chain upgraded to head and downgraded to base successfully on a disposable D-drive SQLite database.
 - Frontend production build passed.
-- Desktop and mobile browser smoke passed for all 18 sites, Classic/Premium controls, batch result rows, overflow, console errors, and failed responses.
+- Desktop and mobile browser smoke passed for all 18 sites, Classic/Premium controls, two verified non-FULL shipping options, batch result rows, overflow, console errors, and failed responses.
 
 Next production phase:
 
-- Add Mercado Libre shipping options metadata refresh.
 - Add provider prompt versioning and review-model version analytics.

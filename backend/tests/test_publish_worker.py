@@ -66,10 +66,13 @@ def make_session():
         db.add(
             DraftListingConfig(
                 product_draft_id=1,
+                store_id=store.id,
                 site_id="MLM",
                 category_id="MLM123",
                 listing_type_id="gold_special",
                 fulfillment="classic",
+                shipping_mode="me2",
+                shipping_logistic_type="drop_off",
                 attributes_json=[{"id": "BRAND", "value_name": "Demo"}],
             )
         )

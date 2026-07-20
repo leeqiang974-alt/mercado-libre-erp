@@ -117,3 +117,66 @@ def test_callback_exchanges_code_without_returning_tokens(monkeypatch):
     stores_response = client.get("/api/stores")
     assert stores_response.json()[0]["site_id"] == "MLM"
     assert "token_reference" not in stores_response.json()[0]
+
+
+def test_store_shipping_options_exclude_full(monkeypatch):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/users/me":
+            return httpx.Response(200, json={"id": 123, "site_id": "MLM"})
+        if request.url.path == "/users/123/shipping_preferences":
+            return httpx.Response(
+                200,
+                json={
+                    "modes": ["me2", "me1"],
+                    "logistics": [
+                        {"mode": "me2", "types": ["fulfillment", "drop_off"]}
+                    ],
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "access-token",
+                "refresh_token": "refresh-token",
+                "expires_in": 21600,
+                "user_id": 123,
+            },
+        )
+
+    monkeypatch.setattr(
+        stores,
+        "create_oauth_client",
+        lambda: MercadoLibreOAuthClient(
+            client_id="client-123",
+            client_secret="secret-456",
+            redirect_uri="http://localhost:8000/api/stores/meli/callback",
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+    monkeypatch.setattr(
+        stores,
+        "create_meli_client",
+        lambda access_token: MercadoLibreClient(
+            access_token=access_token,
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+    client = make_client()
+    state = create_state_token(stores.settings.token_encryption_key)
+    client.get(
+        f"/api/stores/meli/callback?code=code-789&state={state}",
+        follow_redirects=False,
+    )
+
+    response = client.get("/api/stores/1/shipping-options")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "store_id": 1,
+        "site_id": "MLM",
+        "verified": True,
+        "options": [
+            {"mode": "me2", "logistic_type": "drop_off"},
+            {"mode": "me1", "logistic_type": "default"},
+        ],
+    }

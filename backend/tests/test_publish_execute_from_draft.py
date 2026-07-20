@@ -7,6 +7,7 @@ from app.api.routes import publishing
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
+from app.models.audit_event import AuditEvent
 from app.models.product_draft import ProductDraft
 from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.publish_job import PublishJob, PublishJobStatus
@@ -74,9 +75,12 @@ def make_client(with_config: bool = True):
             "/api/drafts/1/listing-config",
             json={
                 "site_id": "MLM",
+                "store_id": 1,
                 "category_id": "MLM123",
                 "listing_type_id": "gold_special",
                 "fulfillment": "not_full",
+                "shipping_mode": "me2",
+                "shipping_logistic_type": "drop_off",
                 "attributes": [{"id": "BRAND", "value_name": "Acme"}],
             },
         )
@@ -183,6 +187,10 @@ def test_publish_enqueue_from_draft_creates_pending_job(monkeypatch):
         assert job.status == PublishJobStatus.PENDING
         assert job.request_summary_json["review_provider"] == "claude+nvidia_behavioral_audit"
         assert job.request_summary_json["listing_type_id"] == "gold_special"
+        event = db.query(AuditEvent).filter(AuditEvent.action == "publish.queued").one()
+        assert event.after_json["store_id"] == 1
+        assert event.after_json["shipping_mode"] == "me2"
+        assert event.after_json["shipping_logistic_type"] == "drop_off"
 
 
 def test_publish_enqueue_from_draft_rejects_unapproved_job(monkeypatch):
@@ -238,9 +246,15 @@ def test_publish_execute_replays_existing_result_without_duplicate_item(monkeypa
     assert calls == 1
     with testing_session() as db:
         assert db.query(PublishJob).count() == 1
+        assert (
+            db.query(AuditEvent)
+            .filter(AuditEvent.action == "publish.idempotent_replay")
+            .count()
+            == 1
+        )
 
 
-def test_listing_change_invalidates_existing_review_and_approval(monkeypatch):
+def test_shipping_change_invalidates_existing_review_and_approval(monkeypatch):
     monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
     client, testing_session = make_client()
     review_result_id = seed_publish_review(testing_session)
@@ -249,10 +263,13 @@ def test_listing_change_invalidates_existing_review_and_approval(monkeypatch):
         "/api/drafts/1/listing-config",
         json={
             "site_id": "MLM",
-            "category_id": "MLM456",
-            "listing_type_id": "gold_pro",
+            "store_id": 1,
+            "category_id": "MLM123",
+            "listing_type_id": "gold_special",
             "fulfillment": "not_full",
-            "attributes": [],
+            "shipping_mode": "me2",
+            "shipping_logistic_type": "self_service",
+            "attributes": [{"id": "BRAND", "value_name": "Acme"}],
         },
     )
     assert changed.status_code == 200
@@ -264,3 +281,28 @@ def test_listing_change_invalidates_existing_review_and_approval(monkeypatch):
 
     assert response.status_code == 422
     assert "review_for_stale_draft_version" in response.text
+
+
+def test_preview_blocks_store_disconnected_after_configuration(monkeypatch):
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    client, testing_session = make_client()
+    review_result_id = seed_publish_review(testing_session)
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+    with testing_session() as db:
+        store = db.get(Store, 1)
+        store.oauth_status = "disconnected"
+        db.commit()
+
+    response = client.post(
+        "/api/publishing/preview-from-draft",
+        json={
+            "product_draft_id": 1,
+            "review": review_payload() | {"review_result_id": review_result_id},
+            "valid_listing_type_ids": ["gold_special"],
+            "human_approved": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["allowed"] is False
+    assert "store_not_connected" in response.json()["errors"]

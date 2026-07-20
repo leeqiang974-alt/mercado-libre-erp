@@ -26,8 +26,9 @@ from app.services.meli.oauth import MercadoLibreOAuthClient
 from app.services.meli.publisher import (
     SUPPORTED_LISTING_TYPE_IDS,
     execute_publish,
+    validate_delivery_binding,
     validate_publish_request,
-    validate_store_site_match,
+    validate_store_delivery,
 )
 from app.services.meli.token_vault import resolve_fresh_store_access_token
 from app.services.publish_jobs import (
@@ -77,14 +78,26 @@ class PublishFromDraftExecuteRequest(PublishFromDraftPreviewRequest):
 
 
 @router.post("/preview", response_model=PublishValidationResult)
-def publish_preview(payload: PublishPreviewRequest) -> PublishValidationResult:
-    return validate_publish_request(
+def publish_preview(
+    payload: PublishPreviewRequest, db: Session = Depends(get_db)
+) -> PublishValidationResult:
+    validation = validate_publish_request(
         draft=payload.draft,
         review=payload.review,
         listing_choice=payload.listing_choice,
         valid_listing_type_ids=SERVER_LISTING_TYPE_IDS,
         human_approved=payload.human_approved,
     )
+    store = db.get(Store, payload.listing_choice.store_id) if payload.listing_choice.store_id else None
+    store_errors = (
+        validate_store_delivery(
+            store.id, store.site_id, store.oauth_status, payload.listing_choice
+        )
+        if store is not None
+        else ["configured_store_not_found"]
+    )
+    errors = [*validation.errors, *store_errors]
+    return validation.model_copy(update={"allowed": not errors, "errors": errors})
 
 
 @router.post("/preview-from-draft", response_model=PublishValidationResult)
@@ -170,8 +183,12 @@ def publish_enqueue_from_draft(
         valid_listing_type_ids=SERVER_LISTING_TYPE_IDS,
         human_approved=human_approved,
     )
-    site_errors = validate_store_site_match(store.site_id, listing_choice.site_id)
-    validation_errors = [*validation.errors, *site_errors]
+    validation_errors = [
+        *validation.errors,
+        *validate_store_delivery(
+            store.id, store.site_id, store.oauth_status, listing_choice
+        ),
+    ]
     validation_errors.extend(
         validate_category_attributes(
             db,
@@ -191,6 +208,16 @@ def publish_enqueue_from_draft(
         review=review,
         listing_choice=listing_choice,
         valid_listing_type_ids=SERVER_LISTING_TYPE_IDS,
+    )
+    _audit_publish_request(
+        db=db,
+        action=(
+            "publish.queue_replayed"
+            if getattr(job, "_idempotent_replay", False)
+            else "publish.queued"
+        ),
+        job=job,
+        listing_choice=listing_choice,
     )
     return to_publish_job_read(job)
 
@@ -249,6 +276,8 @@ async def retry_publish_job(job_id: int, db: Session = Depends(get_db)) -> Publi
             "retry_product_draft_id": job.product_draft_id,
             "retry_store_id": job.store_id,
             "listing_type_id": listing_choice.listing_type_id,
+            "shipping_mode": listing_choice.shipping_mode,
+            "shipping_logistic_type": listing_choice.shipping_logistic_type,
         },
     )
     return await _execute_with_payload(
@@ -290,6 +319,12 @@ async def _execute_with_payload(
         initial_status=PublishJobStatus.VALIDATING,
     )
     if execution_job is None and getattr(job, "_idempotent_replay", False):
+        _audit_publish_request(
+            db=db,
+            action="publish.idempotent_replay",
+            job=job,
+            listing_choice=listing_choice,
+        )
         return replay_publish_result(job)
 
     validation = validate_publish_request(
@@ -301,7 +336,9 @@ async def _execute_with_payload(
     )
     validation_errors = [
         *validation.errors,
-        *validate_store_site_match(store.site_id, listing_choice.site_id),
+        *validate_store_delivery(
+            store.id, store.site_id, store.oauth_status, listing_choice
+        ),
         *validate_category_attributes(
             db,
             draft.target_category_id,
@@ -379,8 +416,21 @@ def _with_category_attribute_validation(
     listing_choice: ListingChoice,
     validation: PublishValidationResult,
 ) -> PublishValidationResult:
+    store = db.get(Store, listing_choice.store_id) if listing_choice.store_id else None
+    store_errors = (
+        ["configured_store_not_found"]
+        if store is None and listing_choice.store_id is not None
+        else (
+            validate_store_delivery(
+                store.id, store.site_id, store.oauth_status, listing_choice
+            )
+            if store is not None
+            else validate_delivery_binding(None, listing_choice)
+        )
+    )
     errors = [
         *validation.errors,
+        *store_errors,
         *validate_category_attributes(
             db,
             draft.target_category_id,
@@ -411,6 +461,8 @@ def _audit_publish_execution(
             "product_draft_id": product_draft_id,
             "store_id": store_id,
             "listing_type_id": listing_choice.listing_type_id,
+            "shipping_mode": listing_choice.shipping_mode,
+            "shipping_logistic_type": listing_choice.shipping_logistic_type,
             "human_approved": human_approved,
         },
         after={
@@ -421,6 +473,31 @@ def _audit_publish_execution(
             "shipping_logistic_type": result.shipping_logistic_type,
             "errors": result.errors,
             "store_id": store_id,
+        },
+    )
+
+
+def _audit_publish_request(
+    db: Session,
+    action: str,
+    job: PublishJob,
+    listing_choice: ListingChoice,
+) -> None:
+    create_audit_event(
+        db=db,
+        actor_type="operator",
+        actor_id="operator",
+        action=action,
+        entity_type="publish_job",
+        entity_id=str(job.id),
+        before={},
+        after={
+            "product_draft_id": job.product_draft_id,
+            "store_id": job.store_id,
+            "site_id": listing_choice.site_id,
+            "listing_type_id": listing_choice.listing_type_id,
+            "shipping_mode": listing_choice.shipping_mode,
+            "shipping_logistic_type": listing_choice.shipping_logistic_type,
         },
     )
 

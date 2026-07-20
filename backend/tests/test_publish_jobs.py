@@ -17,8 +17,11 @@ from app.models.registry import import_all_models
 from app.models.store import Store
 from app.models.review_result import ReviewDecision, ReviewResult
 from app.models.token_credential import TokenCredential
-from app.schemas.publishing import PublishExecutionResult
+from app.schemas.drafts import ProductDraftCreate
+from app.schemas.publishing import ListingChoice, PublishExecutionResult
+from app.schemas.reviews import ReviewResponse
 from app.services.meli.token_vault import encrypt_token_value
+from app.services.publish_jobs import _publish_idempotency_key
 
 
 def make_client(with_token: bool = True):
@@ -65,10 +68,13 @@ def make_client(with_token: bool = True):
             [
                 DraftListingConfig(
                     product_draft_id=draft.id,
+                    store_id=store.id,
                     site_id="MLM",
                     category_id="MLM123",
                     listing_type_id="gold_special",
                     fulfillment="not_full",
+                    shipping_mode="me2",
+                    shipping_logistic_type="drop_off",
                     attributes_json=[],
                 ),
                 ProductDraftApproval(
@@ -131,8 +137,11 @@ def payload():
         },
         "listing_choice": {
             "site_id": "MLM",
+            "store_id": 1,
             "listing_type_id": "gold_special",
             "fulfillment": "not_full",
+            "shipping_mode": "me2",
+            "shipping_logistic_type": "drop_off",
         },
         "valid_listing_type_ids": ["gold_special"],
         "human_approved": True,
@@ -184,6 +193,20 @@ def test_publish_execute_persists_published_job(monkeypatch):
         assert job.status == PublishJobStatus.PUBLISHED
         assert job.meli_item_id == "MLM123"
         assert job.permalink == "https://example.com/MLM123"
+        assert job.request_summary_json["store_id"] == 1
+        assert job.request_summary_json["shipping_mode"] == "me2"
+        assert job.request_summary_json["shipping_logistic_type"] == "drop_off"
+
+
+def test_shipping_selection_changes_publish_idempotency_key():
+    draft = ProductDraftCreate(**payload()["draft"])
+    review = ReviewResponse(**payload()["review"])
+    first = ListingChoice(**payload()["listing_choice"])
+    second = first.model_copy(update={"shipping_logistic_type": "self_service"})
+
+    assert _publish_idempotency_key(1, 1, draft, review, first) != _publish_idempotency_key(
+        1, 1, draft, review, second
+    )
 
 
 def test_publish_execute_quarantines_unexpected_adapter_exception(monkeypatch):

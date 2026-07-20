@@ -75,9 +75,12 @@ def make_client(with_config: bool = True):
             "/api/drafts/1/listing-config",
             json={
                 "site_id": "MLM",
+                "store_id": 1,
                 "category_id": "MLM123",
                 "listing_type_id": "gold_special",
                 "fulfillment": "not_full",
+                "shipping_mode": "me2",
+                "shipping_logistic_type": "drop_off",
                 "attributes": [],
             },
         )

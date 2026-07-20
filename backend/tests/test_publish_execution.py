@@ -134,6 +134,91 @@ async def test_execute_publish_blocks_when_store_only_offers_full():
 
 
 @pytest.mark.asyncio
+async def test_execute_publish_blocks_when_selected_shipping_is_no_longer_available():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "modes": ["me2"],
+                "logistics": [{"mode": "me2", "types": ["drop_off"]}],
+            },
+        )
+
+    draft = valid_draft()
+    result = await execute_publish(
+        client=MercadoLibreClient(
+            access_token="access-token",
+            transport=httpx.MockTransport(handler),
+        ),
+        draft=draft,
+        review=review_draft_locally(draft),
+        listing_choice=ListingChoice(
+            site_id="MLM",
+            listing_type_id="gold_special",
+            shipping_mode="me2",
+            shipping_logistic_type="self_service",
+        ),
+        valid_listing_type_ids=["gold_special"],
+        human_approved=True,
+        allow_live_publish=True,
+        seller_id="seller-1",
+    )
+
+    assert result.status == "blocked"
+    assert result.errors == ["selected_non_full_shipping_option_unavailable"]
+
+
+@pytest.mark.asyncio
+async def test_execute_publish_uses_operator_selected_non_full_shipping():
+    requests = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "modes": ["me2"],
+                    "logistics": [
+                        {"mode": "me2", "types": ["drop_off", "self_service"]}
+                    ],
+                },
+            )
+        return httpx.Response(
+            201,
+            json={
+                "id": "MLM-SELECTED-1",
+                "site_id": "MLM",
+                "shipping": {"mode": "me2", "logistic_type": "self_service"},
+            },
+        )
+
+    draft = valid_draft()
+    result = await execute_publish(
+        client=MercadoLibreClient(
+            access_token="access-token",
+            transport=httpx.MockTransport(handler),
+        ),
+        draft=draft,
+        review=review_draft_locally(draft),
+        listing_choice=ListingChoice(
+            site_id="MLM",
+            listing_type_id="gold_special",
+            shipping_mode="me2",
+            shipping_logistic_type="self_service",
+        ),
+        valid_listing_type_ids=["gold_special"],
+        human_approved=True,
+        allow_live_publish=True,
+        seller_id="seller-1",
+    )
+
+    assert result.status == "published"
+    assert result.shipping_logistic_type == "self_service"
+    assert b'"logistic_type":"self_service"' in requests[1].content
+
+
+@pytest.mark.asyncio
 async def test_execute_publish_returns_retryable_failure_for_meli_rejection():
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":

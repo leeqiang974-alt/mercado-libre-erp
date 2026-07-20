@@ -47,8 +47,11 @@ def payload():
         },
         "listing_choice": {
             "site_id": "MLM",
+            "store_id": 1,
             "listing_type_id": "gold_special",
             "fulfillment": "not_full",
+            "shipping_mode": "me2",
+            "shipping_logistic_type": "drop_off",
         },
         "valid_listing_type_ids": ["gold_special"],
         "human_approved": True,
@@ -78,7 +81,7 @@ def make_client(with_store: bool = True, token_expires_in_seconds: int = 7200):
             db.flush()
             db.add(
                 TokenCredential(
-                    store_id=store.id,
+                    store_id=store.id if with_store else None,
                     token_reference="meli:seller-1",
                     encrypted_access_token=encrypt_token_value("access-token", "test-secret"),
                     encrypted_refresh_token=encrypt_token_value("refresh-token", "test-secret"),
@@ -102,10 +105,13 @@ def make_client(with_store: bool = True, token_expires_in_seconds: int = 7200):
             [
                 DraftListingConfig(
                     product_draft_id=draft.id,
+                    store_id=store.id if with_store else None,
                     site_id="MLM",
                     category_id="MLM123",
                     listing_type_id="gold_special",
                     fulfillment="not_full",
+                    shipping_mode="me2",
+                    shipping_logistic_type="drop_off",
                     attributes_json=[],
                 ),
                 ProductDraftApproval(

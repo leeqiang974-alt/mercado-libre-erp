@@ -88,6 +88,27 @@ def test_pricing_is_calculated_saved_and_audited():
         assert event.after_json["price"] == 420
 
 
+def test_existing_pricing_config_update_persists_new_calculation():
+    client, _ = make_client()
+    payload = {
+        "source_price": 10,
+        "source_currency": "USD",
+        "target_currency": "MXN",
+        "exchange_rate": 18,
+        "rounding_increment": 10,
+    }
+    client.put("/api/drafts/1/pricing", json=payload)
+
+    response = client.put(
+        "/api/drafts/1/pricing",
+        json=payload | {"exchange_rate": 20},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["exchange_rate"] == 20
+    assert client.get("/api/drafts/1/pricing").json()["exchange_rate"] == 20
+
+
 def test_pricing_rejects_impossible_rate_total():
     client, _ = make_client()
 

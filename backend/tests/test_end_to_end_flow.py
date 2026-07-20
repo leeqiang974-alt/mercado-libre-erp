@@ -138,9 +138,12 @@ async def test_amazon_to_pre_listing_queue_and_worker_flow():
         f"/api/drafts/{draft_id}/listing-config",
         json={
             "site_id": "MLM",
+            "store_id": 1,
             "category_id": "MLM123",
             "listing_type_id": "gold_pro",
             "fulfillment": "not_full",
+            "shipping_mode": "me2",
+            "shipping_logistic_type": "drop_off",
             "attributes": [{"id": "BRAND", "value_name": "TrailPro"}],
         },
     )
@@ -216,7 +219,7 @@ def test_full_fulfillment_is_rejected_before_queueing():
 
 
 def test_selected_site_requires_matching_authorized_store_before_queueing():
-    client, testing_session = make_client()
+    client, _ = make_client()
     imported = client.post(
         "/api/imports/amazon-html",
         json={
@@ -230,26 +233,14 @@ def test_selected_site_requires_matching_authorized_store_before_queueing():
         f"/api/drafts/{draft_id}/listing-config",
         json={
             "site_id": "MLA",
+            "store_id": 1,
             "category_id": "MLA123",
             "listing_type_id": "gold_special",
             "fulfillment": "not_full",
+            "shipping_mode": "me2",
+            "shipping_logistic_type": "drop_off",
             "attributes": [],
         },
     )
-    assert configured.status_code == 200
-    reviewed = seed_publish_review(testing_session, draft_id)
-    client.post(f"/api/drafts/{draft_id}/approval", json={"approved_by": "operator"})
-
-    response = client.post(
-        "/api/publishing/enqueue-from-draft",
-        json={
-            "product_draft_id": draft_id,
-            "store_id": 1,
-            "review": reviewed,
-            "valid_listing_type_ids": ["gold_special"],
-            "human_approved": True,
-        },
-    )
-
-    assert response.status_code == 422
-    assert "store_site_mismatch" in response.text
+    assert configured.status_code == 422
+    assert "Store site does not match listing site" in configured.text

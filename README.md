@@ -77,7 +77,7 @@ python -m app.worker --queue publish --loop --interval 30 --limit 10
 - Cache Mercado Libre listing types and category attributes, with explicit refresh endpoints.
 - Save Mercado Libre category, listing type, fulfillment, and attribute values as draft listing configuration.
 - Persist operator approval for drafts before publish-from-draft execution.
-- Build and validate non-FULL Mercado Libre item payloads.
+- Load verified non-FULL shipping options from the authorized store, bind the operator's selection to the versioned draft, and build the validated Mercado Libre item payload.
 - Preview publishing from saved draft listing configuration.
 - Execute a guarded publish adapter only when `ALLOW_LIVE_PUBLISH=true`.
 - Execute guarded publishing directly from saved draft listing configuration.

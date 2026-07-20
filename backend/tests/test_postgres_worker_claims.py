@@ -10,12 +10,158 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models.collection_job import CollectionJob
 from app.models.source_product import SourceProduct
+from app.models.product_draft import ProductDraft
+from app.models.publish_job import PublishJob
+from app.models.review_result import ReviewDecision, ReviewResult
+from app.models.store import Store
 from app.api.routes.imports import AmazonUrlImport, create_amazon_url_collection_job
 from app.services.amazon.collector import CollectionResult, CollectionStatus
+from app.schemas.drafts import ProductDraftCreate
+from app.schemas.publishing import ListingChoice
+from app.schemas.reviews import ReviewResponse
+from app.services.publish_jobs import create_publish_job
+from app.services.drafts import update_draft_content
 from app.workers import collection_worker
 
 
 POSTGRES_URL = os.getenv("TEST_POSTGRES_URL", "")
+
+
+@pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")
+def test_postgres_concurrent_draft_changes_increment_every_version():
+    engine = create_engine(POSTGRES_URL, pool_pre_ping=True)
+    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    marker = uuid4().hex
+    with testing_session() as db:
+        draft = ProductDraft(
+            title=f"Version test {marker}",
+            target_site_id="MLM",
+            price=100,
+            currency="MXN",
+            stock=1,
+        )
+        db.add(draft)
+        db.commit()
+        db.refresh(draft)
+        starting_version = draft.content_version
+        review = ReviewResult(
+            product_draft_id=draft.id,
+            provider="claude+nvidia_behavioral_audit",
+            risk_level="low",
+            decision=ReviewDecision.PASS,
+            reasons_json={"reason_codes": [], "reasons": []},
+            suggested_changes_json={},
+            draft_version=starting_version,
+        )
+        db.add(review)
+        db.commit()
+        draft_id = draft.id
+        review_id = review.id
+
+    both_updates_ready = Barrier(2)
+
+    def change_draft(sequence: int):
+        with testing_session() as db:
+            both_updates_ready.wait(timeout=10)
+            update_draft_content(db, draft_id, title=f"Version test {marker}-{sequence}")
+            db.commit()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(change_draft, range(2)))
+        with testing_session() as db:
+            current = db.get(ProductDraft, draft_id)
+            persisted_review = db.get(ReviewResult, review_id)
+            assert current.content_version == starting_version + 2
+            assert current.risk_status == "unreviewed"
+            assert persisted_review.draft_version != current.content_version
+    finally:
+        with testing_session() as db:
+            db.query(ReviewResult).filter(ReviewResult.id == review_id).delete()
+            db.query(ProductDraft).filter(ProductDraft.id == draft_id).delete()
+            db.commit()
+        engine.dispose()
+
+
+@pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")
+def test_two_postgres_requests_reuse_one_publish_job():
+    engine = create_engine(POSTGRES_URL, pool_pre_ping=True)
+    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    marker = uuid4().hex
+    with testing_session() as db:
+        store = Store(
+            site_id="MLM",
+            seller_id=f"concurrent-{marker}",
+            display_name="Concurrent test store",
+            oauth_status="connected",
+        )
+        draft_row = ProductDraft(
+            title=f"Concurrent {marker}",
+            target_site_id="MLM",
+            target_category_id="MLM123",
+            price=100,
+            currency="MXN",
+            stock=1,
+            image_urls_json=["https://example.com/a.jpg"],
+        )
+        db.add_all([store, draft_row])
+        db.commit()
+        db.refresh(store)
+        db.refresh(draft_row)
+        store_id = store.id
+        draft_id = draft_row.id
+
+    draft = ProductDraftCreate(
+        title=f"Concurrent {marker}",
+        target_site_id="MLM",
+        target_category_id="MLM123",
+        price=100,
+        currency="MXN",
+        stock=1,
+        image_urls=["https://example.com/a.jpg"],
+    )
+    review = ReviewResponse(
+        provider="claude+nvidia_behavioral_audit",
+        decision="pass",
+        risk_level="low",
+        reason_codes=[],
+        reasons=[],
+    )
+    listing_choice = ListingChoice(
+        site_id="MLM",
+        store_id=store_id,
+        listing_type_id="gold_special",
+        shipping_mode="me2",
+        shipping_logistic_type="drop_off",
+    )
+    both_requests_ready = Barrier(2)
+
+    def create_job():
+        with testing_session() as db:
+            both_requests_ready.wait(timeout=10)
+            return create_publish_job(
+                db=db,
+                product_draft_id=draft_id,
+                store_id=store_id,
+                requested_by="operator",
+                draft=draft,
+                review=review,
+                listing_choice=listing_choice,
+            ).id
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            job_ids = list(pool.map(lambda _: create_job(), range(2)))
+        assert job_ids[0] == job_ids[1]
+        with testing_session() as db:
+            assert db.query(PublishJob).filter(PublishJob.product_draft_id == draft_id).count() == 1
+    finally:
+        with testing_session() as db:
+            db.query(PublishJob).filter(PublishJob.product_draft_id == draft_id).delete()
+            db.query(ProductDraft).filter(ProductDraft.id == draft_id).delete()
+            db.query(Store).filter(Store.id == store_id).delete()
+            db.commit()
+        engine.dispose()
 
 
 @pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")

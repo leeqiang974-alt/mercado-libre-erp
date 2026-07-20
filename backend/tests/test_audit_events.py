@@ -65,10 +65,13 @@ def make_client():
             [
                 DraftListingConfig(
                     product_draft_id=draft.id,
+                    store_id=store.id,
                     site_id="MLM",
                     category_id="MLM123",
                     listing_type_id="gold_special",
                     fulfillment="not_full",
+                    shipping_mode="me2",
+                    shipping_logistic_type="drop_off",
                     attributes_json=[],
                 ),
                 ProductDraftApproval(
@@ -141,8 +144,11 @@ def execute_payload():
         | {"provider": "claude+nvidia_behavioral_audit", "review_result_id": 1},
         "listing_choice": {
             "site_id": "MLM",
+            "store_id": 1,
             "listing_type_id": "gold_special",
             "fulfillment": "not_full",
+            "shipping_mode": "me2",
+            "shipping_logistic_type": "drop_off",
         },
         "valid_listing_type_ids": ["gold_special"],
         "human_approved": True,

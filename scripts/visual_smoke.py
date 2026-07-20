@@ -11,6 +11,32 @@ CHROME = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
 APP_URL = "http://127.0.0.1:5173"
 
 
+def mock_store_capabilities(page: Page) -> None:
+    page.route(
+        "**/api/stores",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=(
+                '[{"id":"9001","site_id":"MLM","seller_id":"visual-test",'
+                '"display_name":"Visual Test Store","oauth_status":"connected"}]'
+            ),
+        ),
+    )
+    page.route(
+        "**/api/stores/9001/shipping-options",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=(
+                '{"store_id":9001,"site_id":"MLM","verified":true,"options":['
+                '{"mode":"me2","logistic_type":"drop_off"},'
+                '{"mode":"me2","logistic_type":"self_service"}]}'
+            ),
+        ),
+    )
+
+
 def select_first_draft(page: Page) -> None:
     page.get_by_role("button", name="Drafts", exact=True).click()
     rows = page.locator(".draft-row")
@@ -68,11 +94,19 @@ def inspect_publish_workspace(page: Page) -> dict[str, object]:
         "() => Array.from(document.querySelectorAll('.listing-choice button')).every((button) => !button.disabled)",
         timeout=7000,
     )
-    page.get_by_text("FULL is always excluded.", exact=False).wait_for()
+    shipping = page.locator(".shipping-choice select")
+    shipping.wait_for()
+    shipping.locator("option").nth(2).wait_for(state="attached", timeout=7000)
+    assert shipping.locator("option").count() == 3
+    assert "fulfillment" not in shipping.inner_text().lower()
+    shipping.select_option("me2:self_service")
+    page.get_by_text("FULL is filtered out and cannot be saved.", exact=False).wait_for()
     return {
         "site_options": option_count,
         "classic_enabled": classic.is_enabled(),
         "premium_enabled": premium.is_enabled(),
+        "shipping_options": shipping.locator("option").count() - 1,
+        "selected_shipping": shipping.input_value(),
         "horizontal_overflow": page.evaluate("document.documentElement.scrollWidth > innerWidth"),
     }
 
@@ -113,6 +147,7 @@ def main() -> None:
             if response.status >= 400
             else None,
         )
+        mock_store_capabilities(desktop)
         desktop.goto(APP_URL, wait_until="networkidle")
         desktop.get_by_text("Integration readiness", exact=True).wait_for()
         desktop.screenshot(path=ARTIFACTS / "overview-desktop.png", full_page=True)
@@ -138,6 +173,7 @@ def main() -> None:
             if response.status >= 400
             else None,
         )
+        mock_store_capabilities(mobile)
         mobile.goto(APP_URL, wait_until="networkidle")
         mobile_import = inspect_import_workspace(mobile)
         mobile.screenshot(path=ARTIFACTS / "import-mobile.png", full_page=True)

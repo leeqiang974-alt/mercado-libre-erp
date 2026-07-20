@@ -1,6 +1,18 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+SUPPORTED_SHIPPING_MODES = {"me2", "me1", "not_specified"}
+SUPPORTED_NON_FULL_LOGISTIC_TYPES = {
+    "drop_off",
+    "cross_docking",
+    "xd_drop_off",
+    "self_service",
+    "turbo",
+    "default",
+    "not_specified",
+}
 
 
 class ListingAttributeValue(BaseModel):
@@ -10,9 +22,12 @@ class ListingAttributeValue(BaseModel):
 
 class DraftListingConfigUpsert(BaseModel):
     site_id: str
+    store_id: int | None = None
     category_id: str
     listing_type_id: str
     fulfillment: str = "not_full"
+    shipping_mode: str = ""
+    shipping_logistic_type: str = ""
     attributes: list[ListingAttributeValue] = Field(default_factory=list)
 
     @field_validator("fulfillment")
@@ -22,6 +37,34 @@ class DraftListingConfigUpsert(BaseModel):
         if normalized == "full":
             raise ValueError("FULL fulfillment is excluded from this system.")
         return normalized
+
+    @field_validator("shipping_mode")
+    @classmethod
+    def validate_shipping_mode(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized and normalized not in SUPPORTED_SHIPPING_MODES:
+            raise ValueError("Unsupported non-FULL shipping mode.")
+        return normalized
+
+    @field_validator("shipping_logistic_type")
+    @classmethod
+    def validate_shipping_logistic_type(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized == "fulfillment":
+            raise ValueError("FULL fulfillment is excluded from this system.")
+        if normalized and normalized not in SUPPORTED_NON_FULL_LOGISTIC_TYPES:
+            raise ValueError("Unsupported non-FULL logistic type.")
+        return normalized
+
+    @model_validator(mode="after")
+    def require_complete_shipping_selection(self):
+        if bool(self.shipping_mode) != bool(self.shipping_logistic_type):
+            raise ValueError("Shipping mode and logistic type must be selected together.")
+        if self.store_id is not None and not self.shipping_mode:
+            raise ValueError("A connected store requires a non-FULL shipping selection.")
+        if self.shipping_mode and self.store_id is None:
+            raise ValueError("Shipping selection must be bound to a connected store.")
+        return self
 
 
 class DraftListingConfigRead(DraftListingConfigUpsert):

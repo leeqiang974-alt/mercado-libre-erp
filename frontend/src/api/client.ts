@@ -69,12 +69,20 @@ export type DraftListingConfig = {
   id: number;
   product_draft_id: number;
   site_id: string;
+  store_id: number | null;
   category_id: string;
   listing_type_id: string;
   fulfillment: string;
+  shipping_mode: string;
+  shipping_logistic_type: string;
   attributes: { id: string; value_name: string }[];
   created_at: string;
   updated_at: string;
+};
+
+export type ShippingOption = {
+  mode: string;
+  logistic_type: string;
 };
 
 export type DraftApproval = {
@@ -346,6 +354,17 @@ export async function listStores() {
   return response.json() as Promise<StoreRecord[]>;
 }
 
+export async function getStoreShippingOptions(storeId: number) {
+  const response = await fetch(`${API_BASE}/api/stores/${storeId}/shipping-options`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<{
+    store_id: number;
+    site_id: string;
+    verified: boolean;
+    options: ShippingOption[];
+  }>;
+}
+
 export async function getListingTypes(siteId: string) {
   const response = await fetch(`${API_BASE}/api/metadata/sites/${siteId}/listing-types`);
   if (!response.ok) throw new Error(await response.text());
@@ -408,9 +427,12 @@ export async function saveDraftListingConfig(
   productDraftId: number,
   payload: {
     site_id: string;
+    store_id: number;
     category_id: string;
     listing_type_id: string;
     fulfillment: string;
+    shipping_mode: string;
+    shipping_logistic_type: string;
     attributes: { id: string; value_name: string }[];
   },
 ) {

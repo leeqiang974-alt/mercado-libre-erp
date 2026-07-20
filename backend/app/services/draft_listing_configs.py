@@ -5,9 +5,12 @@ from sqlalchemy.orm import Session
 
 from app.models.draft_listing_config import DraftListingConfig
 from app.models.product_draft import ProductDraft
+from app.models.store import Store
 from app.schemas.draft_listing_config import DraftListingConfigRead, DraftListingConfigUpsert
 from app.schemas.drafts import ProductDraftCreate
 from app.schemas.publishing import ListingChoice
+from app.services.audit_events import create_audit_event
+from app.services.drafts import update_draft_content
 
 
 def upsert_draft_listing_config(
@@ -18,6 +21,14 @@ def upsert_draft_listing_config(
     draft = db.get(ProductDraft, product_draft_id)
     if draft is None:
         raise HTTPException(status_code=404, detail="Product draft not found.")
+    if payload.store_id is not None:
+        store = db.get(Store, payload.store_id)
+        if store is None:
+            raise HTTPException(status_code=404, detail="Store not found.")
+        if store.oauth_status != "connected":
+            raise HTTPException(status_code=409, detail="Store is not connected.")
+        if store.site_id.strip().upper() != payload.site_id.strip().upper():
+            raise HTTPException(status_code=422, detail="Store site does not match listing site.")
 
     config = (
         db.query(DraftListingConfig)
@@ -27,19 +38,55 @@ def upsert_draft_listing_config(
     if config is None:
         config = DraftListingConfig(product_draft_id=product_draft_id)
         db.add(config)
+        before = {}
+    else:
+        before = {
+            "site_id": config.site_id,
+            "store_id": config.store_id,
+            "category_id": config.category_id,
+            "listing_type_id": config.listing_type_id,
+            "shipping_mode": config.shipping_mode,
+            "shipping_logistic_type": config.shipping_logistic_type,
+            "attributes": config.attributes_json or [],
+        }
 
     config.site_id = payload.site_id
+    config.store_id = payload.store_id
     config.category_id = payload.category_id
     config.listing_type_id = payload.listing_type_id
     config.fulfillment = payload.fulfillment
+    config.shipping_mode = payload.shipping_mode
+    config.shipping_logistic_type = payload.shipping_logistic_type
     config.attributes_json = [attribute.model_dump() for attribute in payload.attributes]
     config.updated_at = datetime.now(UTC)
 
-    draft.target_site_id = payload.site_id
-    draft.target_category_id = payload.category_id
-    draft.listing_type_id = payload.listing_type_id
-    draft.content_version += 1
-    draft.risk_status = "unreviewed"
+    update_draft_content(
+        db,
+        product_draft_id,
+        target_site_id=payload.site_id,
+        target_category_id=payload.category_id,
+        listing_type_id=payload.listing_type_id,
+    )
+    create_audit_event(
+        db,
+        actor_type="human",
+        actor_id="operator",
+        action="draft_listing_config_updated",
+        entity_type="product_draft",
+        entity_id=str(product_draft_id),
+        before=before,
+        after={
+            "site_id": config.site_id,
+            "store_id": config.store_id,
+            "category_id": config.category_id,
+            "listing_type_id": config.listing_type_id,
+            "fulfillment": config.fulfillment,
+            "shipping_mode": config.shipping_mode,
+            "shipping_logistic_type": config.shipping_logistic_type,
+            "attributes": config.attributes_json or [],
+        },
+        commit=False,
+    )
     db.commit()
     db.refresh(config)
     return config
@@ -78,8 +125,11 @@ def build_configured_draft(db: Session, product_draft_id: int) -> tuple[ProductD
         ),
         ListingChoice(
             site_id=config.site_id,
+            store_id=config.store_id,
             listing_type_id=config.listing_type_id,
             fulfillment=config.fulfillment,
+            shipping_mode=config.shipping_mode,
+            shipping_logistic_type=config.shipping_logistic_type,
             attributes=config.attributes_json or [],
         ),
     )
@@ -90,9 +140,12 @@ def to_listing_config_read(config: DraftListingConfig) -> DraftListingConfigRead
         id=config.id,
         product_draft_id=config.product_draft_id,
         site_id=config.site_id,
+        store_id=config.store_id,
         category_id=config.category_id,
         listing_type_id=config.listing_type_id,
         fulfillment=config.fulfillment,
+        shipping_mode=config.shipping_mode,
+        shipping_logistic_type=config.shipping_logistic_type,
         attributes=config.attributes_json or [],
         created_at=config.created_at,
         updated_at=config.updated_at,

@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -6,10 +7,14 @@ from sqlalchemy.pool import StaticPool
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
+from app.models.audit_event import AuditEvent
+from app.models.draft_listing_config import DraftListingConfig
 from app.models.product_draft import ProductDraft
 from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.registry import import_all_models
 from app.models.review_result import ReviewDecision, ReviewResult
+from app.models.store import Store
+from app.services import draft_listing_configs
 
 
 def make_client():
@@ -34,6 +39,14 @@ def make_client():
                 image_urls_json=["https://example.com/a.jpg"],
             )
         )
+        db.add(
+            Store(
+                site_id="MLM",
+                seller_id="seller-1",
+                display_name="Test store",
+                oauth_status="connected",
+            )
+        )
         db.commit()
 
     def override_get_db():
@@ -54,9 +67,12 @@ def teardown_function():
 def config_payload():
     return {
         "site_id": "MLM",
+        "store_id": 1,
         "category_id": "MLM123",
         "listing_type_id": "gold_special",
         "fulfillment": "not_full",
+        "shipping_mode": "me2",
+        "shipping_logistic_type": "drop_off",
         "attributes": [
             {"id": "BRAND", "value_name": "Acme"},
             {"id": "MODEL", "value_name": "B-100"},
@@ -101,8 +117,11 @@ def test_listing_config_can_be_saved_and_read_for_draft():
     assert response.status_code == 200
     body = response.json()
     assert body["product_draft_id"] == 1
+    assert body["store_id"] == 1
     assert body["category_id"] == "MLM123"
     assert body["listing_type_id"] == "gold_special"
+    assert body["shipping_mode"] == "me2"
+    assert body["shipping_logistic_type"] == "drop_off"
     assert body["attributes"][0]["id"] == "BRAND"
 
     get_response = client.get("/api/drafts/1/listing-config")
@@ -115,6 +134,45 @@ def test_listing_config_can_be_saved_and_read_for_draft():
         assert draft.listing_type_id == "gold_special"
 
 
+def test_existing_listing_config_update_persists_new_shipping_selection():
+    client, testing_session = make_client()
+    client.put("/api/drafts/1/listing-config", json=config_payload())
+
+    response = client.put(
+        "/api/drafts/1/listing-config",
+        json=config_payload() | {"shipping_logistic_type": "self_service"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["shipping_logistic_type"] == "self_service"
+    assert client.get("/api/drafts/1/listing-config").json()[
+        "shipping_logistic_type"
+    ] == "self_service"
+    with testing_session() as db:
+        latest = db.query(AuditEvent).order_by(AuditEvent.id.desc()).first()
+        assert latest.action == "draft_listing_config_updated"
+        assert latest.before_json["shipping_logistic_type"] == "drop_off"
+        assert latest.after_json["shipping_logistic_type"] == "self_service"
+
+
+def test_listing_config_rolls_back_when_audit_write_fails(monkeypatch):
+    client, testing_session = make_client()
+
+    def fail_audit(*args, **kwargs):
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr(draft_listing_configs, "create_audit_event", fail_audit)
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        client.put("/api/drafts/1/listing-config", json=config_payload())
+
+    with testing_session() as db:
+        draft = db.get(ProductDraft, 1)
+        assert draft.target_category_id == ""
+        assert draft.content_version == 1
+        assert db.query(DraftListingConfig).count() == 0
+        assert db.query(AuditEvent).count() == 0
+
+
 def test_listing_config_rejects_full_fulfillment():
     client, _ = make_client()
     payload = config_payload() | {"fulfillment": " FULL "}
@@ -123,6 +181,24 @@ def test_listing_config_rejects_full_fulfillment():
 
     assert response.status_code == 422
     assert "FULL fulfillment is excluded" in response.text
+
+
+def test_listing_config_rejects_full_or_incomplete_shipping_selection():
+    client, _ = make_client()
+
+    full = client.put(
+        "/api/drafts/1/listing-config",
+        json=config_payload() | {"shipping_logistic_type": "fulfillment"},
+    )
+    incomplete = client.put(
+        "/api/drafts/1/listing-config",
+        json=config_payload() | {"shipping_logistic_type": ""},
+    )
+
+    assert full.status_code == 422
+    assert "FULL fulfillment is excluded" in full.text
+    assert incomplete.status_code == 422
+    assert "must be selected together" in incomplete.text
 
 
 def test_missing_listing_config_can_be_read_as_optional():

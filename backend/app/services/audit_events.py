@@ -13,6 +13,7 @@ def create_audit_event(
     entity_id: str,
     before: dict | None = None,
     after: dict | None = None,
+    commit: bool = True,
 ) -> AuditEvent:
     event = AuditEvent(
         actor_type=actor_type,
@@ -24,8 +25,11 @@ def create_audit_event(
         after_json=after or {},
     )
     db.add(event)
-    db.commit()
-    db.refresh(event)
+    if commit:
+        db.commit()
+        db.refresh(event)
+    else:
+        db.flush()
     return event
 
 

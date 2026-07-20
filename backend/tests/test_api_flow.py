@@ -7,6 +7,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.registry import import_all_models
+from app.models.store import Store
 
 
 def make_client():
@@ -18,6 +19,16 @@ def make_client():
     import_all_models()
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    with testing_session() as db:
+        db.add(
+            Store(
+                site_id="MLM",
+                seller_id="api-flow",
+                display_name="API Flow Store",
+                oauth_status="connected",
+            )
+        )
+        db.commit()
 
     def override_get_db():
         db = testing_session()
@@ -78,11 +89,14 @@ def test_import_review_publish_preview_flow():
         json={
             "draft": draft,
             "review": reviewed.json(),
-            "listing_choice": {
-                "site_id": "MLM",
-                "listing_type_id": "gold_special",
-                "fulfillment": "not_full",
-            },
+                "listing_choice": {
+                    "site_id": "MLM",
+                    "store_id": 1,
+                    "listing_type_id": "gold_special",
+                    "fulfillment": "not_full",
+                    "shipping_mode": "me2",
+                    "shipping_logistic_type": "drop_off",
+                },
             "valid_listing_type_ids": ["gold_special", "gold_pro"],
             "human_approved": True,
         },

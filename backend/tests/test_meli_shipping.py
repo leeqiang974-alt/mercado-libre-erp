@@ -1,4 +1,8 @@
-from app.services.meli.shipping import resolve_non_full_shipping, resolve_non_full_shipping_mode
+from app.services.meli.shipping import (
+    list_non_full_shipping_options,
+    resolve_non_full_shipping,
+    resolve_non_full_shipping_mode,
+)
 
 
 def test_me2_is_selected_when_any_non_full_logistic_type_is_active():
@@ -37,3 +41,39 @@ def test_no_mode_is_selected_when_only_full_or_custom_is_available():
     }
 
     assert resolve_non_full_shipping_mode(preferences) is None
+
+
+def test_all_supported_non_full_options_are_listed_in_priority_order():
+    preferences = {
+        "modes": ["me2", "me1", "not_specified", "custom"],
+        "logistics": [
+            {
+                "mode": "me2",
+                "types": ["fulfillment", "self_service", "drop_off"],
+            }
+        ],
+    }
+
+    assert [
+        (option.mode, option.logistic_type)
+        for option in list_non_full_shipping_options(preferences)
+    ] == [
+        ("me2", "drop_off"),
+        ("me2", "self_service"),
+        ("me1", "default"),
+        ("not_specified", "not_specified"),
+    ]
+
+
+def test_malformed_or_inactive_shipping_preferences_fail_closed():
+    assert list_non_full_shipping_options({"modes": None, "logistics": None}) == []
+    assert list_non_full_shipping_options({"modes": ["me2"], "logistics": [None, "bad"]}) == []
+    assert list_non_full_shipping_options(
+        {
+            "modes": ["me1", "not_specified"],
+            "logistics": [
+                {"mode": "me1", "status": "inactive", "types": None},
+                {"mode": "not_specified", "status": "inactive"},
+            ],
+        }
+    ) == []

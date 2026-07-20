@@ -3,6 +3,8 @@ import hashlib
 import json
 
 from fastapi import HTTPException
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.publish_job import PublishJob, PublishJobStatus
@@ -29,6 +31,11 @@ def create_publish_job(
         review,
         listing_choice,
     )
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_name))"),
+            {"lock_name": f"publish_job:{idempotency_key}"},
+        )
     existing = (
         db.query(PublishJob)
         .filter(PublishJob.idempotency_key == idempotency_key)
@@ -47,10 +54,13 @@ def create_publish_job(
         request_summary_json={
             "title": draft.title,
             "site_id": draft.target_site_id,
+            "store_id": listing_choice.store_id,
             "category_id": draft.target_category_id,
             "listing_type_id": listing_choice.listing_type_id,
             "valid_listing_type_ids": valid_listing_type_ids or [listing_choice.listing_type_id],
             "fulfillment": listing_choice.fulfillment,
+            "shipping_mode": listing_choice.shipping_mode,
+            "shipping_logistic_type": listing_choice.shipping_logistic_type,
             "review_provider": review.provider,
             "review_result_id": review.review_result_id,
             "review_decision": review.decision,
@@ -61,7 +71,19 @@ def create_publish_job(
         },
     )
     db.add(job)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = (
+            db.query(PublishJob)
+            .filter(PublishJob.idempotency_key == idempotency_key)
+            .one_or_none()
+        )
+        if existing is None:
+            raise
+        existing._idempotent_replay = True
+        return existing
     db.refresh(job)
     return job
 
