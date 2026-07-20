@@ -27,6 +27,10 @@ from app.services.draft_listing_configs import (
 )
 from app.services.draft_pricing import get_draft_pricing, require_current_draft_pricing
 from app.services.integration_credentials import resolve_integration_credentials
+from app.services.provider_pricing import (
+    active_provider_model_price_id,
+    estimate_review_cost,
+)
 from app.services.reviews import (
     ReviewBatchAudit,
     ReviewExecution,
@@ -71,6 +75,10 @@ async def review_claude(
     review_subject = _provider_review_subject(db, product_draft_id, draft)
     credentials = resolve_integration_credentials(db, settings)
     client = ClaudeReviewClient(api_key=credentials.claude_api_key, model=settings.claude_model)
+    price_config_id = active_provider_model_price_id(
+        db, provider="claude", model=getattr(client, "model", "")
+    )
+    db.commit()
     started = perf_counter()
     try:
         response = await client.review_draft(review_subject)
@@ -87,6 +95,8 @@ async def review_claude(
         prompt_version=getattr(client, "prompt_version", ""),
         duration_ms=_elapsed_ms(started),
         expected_draft_version=draft_version,
+        price_config_id=price_config_id,
+        price_config_captured=True,
     )
 
 
@@ -100,6 +110,10 @@ async def review_nvidia(
     review_subject = _provider_review_subject(db, product_draft_id, draft)
     credentials = resolve_integration_credentials(db, settings)
     client = NvidiaReviewClient(api_key=credentials.nvidia_api_key, model=settings.nvidia_model)
+    price_config_id = active_provider_model_price_id(
+        db, provider="nvidia", model=getattr(client, "model", "")
+    )
+    db.commit()
     started = perf_counter()
     try:
         response = await client.pre_screen_draft(review_subject)
@@ -116,6 +130,8 @@ async def review_nvidia(
         prompt_version=getattr(client, "prompt_version", ""),
         duration_ms=_elapsed_ms(started),
         expected_draft_version=draft_version,
+        price_config_id=price_config_id,
+        price_config_captured=True,
     )
 
 
@@ -135,6 +151,13 @@ async def behavioral_audit(
     claude_client = ClaudeReviewClient(
         api_key=credentials.claude_api_key, model=settings.claude_model
     )
+    nvidia_price_config_id = active_provider_model_price_id(
+        db, provider="nvidia", model=getattr(nvidia_client, "model", "")
+    )
+    claude_price_config_id = active_provider_model_price_id(
+        db, provider="claude", model=getattr(claude_client, "model", "")
+    )
+    db.commit()
     nvidia_started = perf_counter()
     try:
         nvidia = await nvidia_client.pre_screen_draft(review_subject)
@@ -152,6 +175,8 @@ async def behavioral_audit(
         prompt_version=getattr(nvidia_client, "prompt_version", ""),
         duration_ms=nvidia_duration_ms,
         expected_draft_version=draft_version,
+        price_config_id=nvidia_price_config_id,
+        price_config_captured=True,
     )
 
     claude_started = perf_counter()
@@ -171,6 +196,8 @@ async def behavioral_audit(
         prompt_version=getattr(claude_client, "prompt_version", ""),
         duration_ms=claude_duration_ms,
         expected_draft_version=draft_version,
+        price_config_id=claude_price_config_id,
+        price_config_captured=True,
     )
     aggregate = _aggregate_reviews(nvidia, claude)
     if product_draft_id is not None:
@@ -316,9 +343,26 @@ def _persist_if_requested(
     prompt_version: str = "",
     duration_ms: int = 0,
     expected_draft_version: int | None = None,
+    price_config_id: int | None = None,
+    price_config_captured: bool = False,
 ) -> ReviewResponse:
     if product_draft_id is None:
-        return response
+        cost = estimate_review_cost(
+            db,
+            provider=response.provider,
+            model=model,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            price_config_id=price_config_id,
+            price_config_captured=price_config_captured,
+        )
+        return response.model_copy(
+            update={
+                "price_config_id": cost.price_config_id,
+                "estimated_cost_amount": cost.amount,
+                "estimated_cost_currency": cost.currency,
+            }
+        )
     result = persist_review_result(
         db,
         product_draft_id,
@@ -327,8 +371,17 @@ def _persist_if_requested(
         prompt_version=prompt_version,
         duration_ms=duration_ms,
         expected_draft_version=expected_draft_version,
+        price_config_id=price_config_id,
+        price_config_captured=price_config_captured,
     )
-    return response.model_copy(update={"review_result_id": result.id})
+    return response.model_copy(
+        update={
+            "review_result_id": result.id,
+            "price_config_id": result.price_config_id,
+            "estimated_cost_amount": result.estimated_cost_amount,
+            "estimated_cost_currency": result.estimated_cost_currency,
+        }
+    )
 
 
 def _persist_provider_if_requested(
@@ -339,6 +392,8 @@ def _persist_provider_if_requested(
     prompt_version: str = "",
     duration_ms: int = 0,
     expected_draft_version: int | None = None,
+    price_config_id: int | None = None,
+    price_config_captured: bool = False,
 ) -> ReviewResponse:
     try:
         return _persist_if_requested(
@@ -349,6 +404,8 @@ def _persist_provider_if_requested(
             prompt_version=prompt_version,
             duration_ms=duration_ms,
             expected_draft_version=expected_draft_version,
+            price_config_id=price_config_id,
+            price_config_captured=price_config_captured,
         )
     except HTTPException as exc:
         if (
@@ -366,6 +423,8 @@ def _persist_provider_if_requested(
             prompt_version=prompt_version,
             duration_ms=duration_ms,
             draft_version=expected_draft_version,
+            price_config_id=price_config_id,
+            price_config_captured=price_config_captured,
         )
         raise
 
@@ -387,6 +446,12 @@ def _aggregate_reviews(*responses: ReviewResponse) -> ReviewResponse:
     else:
         risk_level = "low"
 
+    costs = [response.estimated_cost_amount for response in responses]
+    currencies = {response.estimated_cost_currency for response in responses}
+    estimated_cost_amount = sum(costs) if all(cost is not None for cost in costs) else None
+    estimated_cost_currency = currencies.pop() if len(currencies) == 1 else ""
+    if estimated_cost_amount is None:
+        estimated_cost_currency = ""
     return ReviewResponse(
         provider="claude+nvidia_behavioral_audit",
         decision=decision,
@@ -400,6 +465,8 @@ def _aggregate_reviews(*responses: ReviewResponse) -> ReviewResponse:
         input_tokens=_sum_optional(response.input_tokens for response in responses),
         output_tokens=_sum_optional(response.output_tokens for response in responses),
         total_tokens=_sum_optional(response.total_tokens for response in responses),
+        estimated_cost_amount=estimated_cost_amount,
+        estimated_cost_currency=estimated_cost_currency,
     )
 
 

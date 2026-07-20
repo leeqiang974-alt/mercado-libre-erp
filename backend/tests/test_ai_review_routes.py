@@ -19,6 +19,11 @@ def resolve_credentials_from_test_settings(monkeypatch):
             nvidia_api_key=settings.nvidia_api_key,
         ),
     )
+    monkeypatch.setattr(
+        reviews,
+        "active_provider_model_price_id",
+        lambda db, *, provider, model: None,
+    )
 
 
 def draft_payload():

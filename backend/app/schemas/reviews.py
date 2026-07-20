@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -50,6 +51,9 @@ class ReviewResponse(BaseModel):
     output_tokens: int | None = None
     total_tokens: int | None = None
     provider_request_id: str = ""
+    price_config_id: int | None = None
+    estimated_cost_amount: Decimal | None = None
+    estimated_cost_currency: str = ""
 
     @model_validator(mode="after")
     def validate_decision_risk_consistency(self):
@@ -74,6 +78,9 @@ class ReviewResultRead(BaseModel):
     output_tokens: int | None = None
     total_tokens: int | None = None
     provider_request_id: str = ""
+    price_config_id: int | None = None
+    estimated_cost_amount: Decimal | None = None
+    estimated_cost_currency: str = ""
     decision: str
     risk_level: str
     reason_codes: list[str]

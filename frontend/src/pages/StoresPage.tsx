@@ -1,15 +1,19 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Activity, CheckCircle2, CircleAlert, KeyRound, Link2, RefreshCw, Save, Store as StoreIcon, Trash2 } from "lucide-react";
+import { Activity, CheckCircle2, CircleAlert, DollarSign, KeyRound, Link2, RefreshCw, Save, Store as StoreIcon, Trash2 } from "lucide-react";
 import {
+  deactivateProviderModelPrice,
   getIntegrationCredentialStatus,
   getMeliAuthorizationUrl,
+  getProviderModelPrices,
   listStores,
   runIntegrationDiagnostics,
   saveIntegrationCredentials,
+  saveProviderModelPrice,
   type IntegrationDiagnosticResult,
   type IntegrationDiagnostics,
   type IntegrationCredentialStatus,
   type IntegrationCredentialsUpdate,
+  type ProviderModelPrice,
   type StoreRecord,
 } from "../api/client";
 
@@ -27,6 +31,12 @@ export function StoresPage() {
   const [savingCredentials, setSavingCredentials] = useState(false);
   const [diagnosing, setDiagnosing] = useState(false);
   const [diagnostics, setDiagnostics] = useState<IntegrationDiagnostics | null>(null);
+  const [modelPrices, setModelPrices] = useState<ProviderModelPrice[]>([]);
+  const [savingPrice, setSavingPrice] = useState<"claude" | "nvidia" | null>(null);
+  const [priceInputs, setPriceInputs] = useState({
+    claude: { currency: "USD", input: "", output: "" },
+    nvidia: { currency: "USD", input: "", output: "" },
+  });
   const hasCredentialChanges = Object.values(credentials).some((value) => value.trim());
 
   async function refreshStores() {
@@ -51,7 +61,29 @@ export function StoresPage() {
     void getIntegrationCredentialStatus()
       .then(setCredentialStatus)
       .catch((error) => setStatus(error instanceof Error ? error.message : "Failed to load credentials"));
+    void getProviderModelPrices()
+      .then(setModelPrices)
+      .catch((error) => setStatus(error instanceof Error ? error.message : "Failed to load model prices"));
   }, []);
+
+  useEffect(() => {
+    if (!credentialStatus) return;
+    setPriceInputs((current) => {
+      const next = { ...current };
+      for (const provider of ["claude", "nvidia"] as const) {
+        const model = provider === "claude" ? credentialStatus.claude_model : credentialStatus.nvidia_model;
+        const price = modelPrices.find((item) => item.provider === provider && item.model === model);
+        if (price) {
+          next[provider] = {
+            currency: price.currency,
+            input: String(price.input_price_per_million),
+            output: String(price.output_price_per_million),
+          };
+        }
+      }
+      return next;
+    });
+  }, [credentialStatus, modelPrices]);
 
   async function saveCredentials() {
     const payload = Object.fromEntries(
@@ -113,6 +145,59 @@ export function StoresPage() {
       setStatus(error instanceof Error ? error.message : "Connection diagnostics failed");
     } finally {
       setDiagnosing(false);
+    }
+  }
+
+  async function saveModelPrice(provider: "claude" | "nvidia") {
+    if (!credentialStatus) return;
+    const values = priceInputs[provider];
+    const decimalPattern = /^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/;
+    const inputPrice = values.input.trim();
+    const outputPrice = values.output.trim();
+    const currency = values.currency.trim().toUpperCase();
+    if (!decimalPattern.test(inputPrice) || !decimalPattern.test(outputPrice)) {
+      setStatus("Enter non-negative model prices with up to six decimal places.");
+      return;
+    }
+    if (!/^[A-Z]{3}$/.test(currency)) {
+      setStatus("Enter a three-letter currency code.");
+      return;
+    }
+    setSavingPrice(provider);
+    setStatus("");
+    try {
+      await saveProviderModelPrice({
+        provider,
+        model: provider === "claude" ? credentialStatus.claude_model : credentialStatus.nvidia_model,
+        currency,
+        input_price_per_million: inputPrice,
+        output_price_per_million: outputPrice,
+      });
+      setModelPrices(await getProviderModelPrices());
+      setStatus(`${provider === "claude" ? "Claude" : "NVIDIA"} model price version saved.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to save model price");
+    } finally {
+      setSavingPrice(null);
+    }
+  }
+
+  async function clearModelPrice(provider: "claude" | "nvidia") {
+    if (!credentialStatus) return;
+    const model = provider === "claude" ? credentialStatus.claude_model : credentialStatus.nvidia_model;
+    const current = modelPrices.find((item) => item.provider === provider && item.model === model);
+    if (!current) return;
+    setSavingPrice(provider);
+    setStatus("");
+    try {
+      await deactivateProviderModelPrice(current.id);
+      setModelPrices(await getProviderModelPrices());
+      setPriceInputs((values) => ({ ...values, [provider]: { currency: "USD", input: "", output: "" } }));
+      setStatus(`${provider === "claude" ? "Claude" : "NVIDIA"} model price deactivated.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to deactivate model price");
+    } finally {
+      setSavingPrice(null);
     }
   }
 
@@ -196,6 +281,45 @@ export function StoresPage() {
             <small className="diagnostic-checked-at">Checked {new Date(diagnostics.checked_at).toLocaleString()}</small>
           </>
         )}
+      </section>
+
+      <section className="integration-settings">
+        <div className="section-heading">
+          <div>
+            <h3>AI model prices</h3>
+            <p>Currency per million input and output tokens</p>
+          </div>
+        </div>
+        <div className="credential-provider-list">
+          {(["claude", "nvidia"] as const).map((provider) => {
+            const model = provider === "claude" ? credentialStatus?.claude_model ?? "" : credentialStatus?.nvidia_model ?? "";
+            const current = modelPrices.find((item) => item.provider === provider && item.model === model);
+            return (
+              <div className="credential-provider-row model-price-row" key={provider}>
+                <div className="credential-provider-name">
+                  <DollarSign size={18} />
+                  <span><strong>{provider === "claude" ? "Claude" : "NVIDIA"}</strong><small>{model}{current ? ` · ${current.currency} · version ${current.version}` : " · USD · unpriced"}</small></span>
+                </div>
+                <label>
+                  Input / 1M
+                  <input type="number" min="0" step="0.000001" value={priceInputs[provider].input} onChange={(event) => setPriceInputs((values) => ({ ...values, [provider]: { ...values[provider], input: event.target.value } }))} />
+                </label>
+                <label>
+                  Output / 1M
+                  <input type="number" min="0" step="0.000001" value={priceInputs[provider].output} onChange={(event) => setPriceInputs((values) => ({ ...values, [provider]: { ...values[provider], output: event.target.value } }))} />
+                </label>
+                <label>
+                  Currency
+                  <input value={priceInputs[provider].currency} maxLength={3} onChange={(event) => setPriceInputs((values) => ({ ...values, [provider]: { ...values[provider], currency: event.target.value.toUpperCase() } }))} />
+                </label>
+                <div className="price-row-actions">
+                  <button className="icon-button" title={`Save ${provider} model price`} aria-label={`Save ${provider} model price`} disabled={savingPrice !== null || !model || !priceInputs[provider].input || !priceInputs[provider].output} onClick={() => saveModelPrice(provider)}><Save size={16} /></button>
+                  <button className="icon-button secondary-button" title={`Deactivate ${provider} model price`} aria-label={`Deactivate ${provider} model price`} disabled={savingPrice !== null || !current} onClick={() => clearModelPrice(provider)}><Trash2 size={16} /></button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </section>
 
       <div className="section-heading">

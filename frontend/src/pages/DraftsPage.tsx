@@ -340,6 +340,11 @@ export function DraftsPage({
                             ? `${result.total_tokens} tokens · ${result.input_tokens ?? "?"} in / ${result.output_tokens ?? "?"} out`
                             : "Tokens unavailable"}
                         </small>
+                        <small>
+                          {result.estimated_cost_amount !== null
+                            ? `${result.estimated_cost_currency} ${formatCost(result.estimated_cost_amount)}${result.price_config_id ? ` · price #${result.price_config_id}` : " · combined"}`
+                            : result.price_config_id ? `Cost unavailable · price #${result.price_config_id}` : "Cost unavailable"}
+                        </small>
                       </span>
                       <strong className={result.decision === "pass" && result.provider_status === "completed" ? "success-text" : ""}>{result.decision}</strong>
                     </div>
@@ -378,6 +383,13 @@ export function DraftsPage({
       </section>
     </section>
   );
+}
+
+function formatCost(value: number | string) {
+  const raw = String(value);
+  const match = /^(\d+)(?:\.(\d+))?$/.exec(raw);
+  if (!match) return raw;
+  return `${match[1]}.${(match[2] ?? "").padEnd(8, "0").slice(0, 8)}`;
 }
 
 function ReviewSummary({ value }: { value: Record<string, unknown> }) {

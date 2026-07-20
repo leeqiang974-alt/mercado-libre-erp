@@ -16,6 +16,7 @@ from app.services.meli.payload_builder import (
     SUPPORTED_SHIPPING_MODES,
 )
 from app.services.audit_events import create_audit_event
+from app.services.provider_pricing import ReviewCostSnapshot, estimate_review_cost
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,8 @@ class ReviewExecution:
     prompt_version: str = ""
     duration_ms: int = 0
     provider_status: str = "completed"
+    price_config_id: int | None = None
+    price_config_captured: bool = False
 
 
 @dataclass(frozen=True)
@@ -44,6 +47,8 @@ def persist_review_result(
     duration_ms: int = 0,
     provider_status: str = "completed",
     expected_draft_version: int | None = None,
+    price_config_id: int | None = None,
+    price_config_captured: bool = False,
 ) -> ReviewResult:
     return persist_review_results(
         db,
@@ -55,6 +60,8 @@ def persist_review_result(
                 prompt_version=prompt_version,
                 duration_ms=duration_ms,
                 provider_status=provider_status,
+                price_config_id=price_config_id,
+                price_config_captured=price_config_captured,
             )
         ],
         expected_draft_version=expected_draft_version,
@@ -70,10 +77,19 @@ def persist_stale_review_result(
     prompt_version: str = "",
     duration_ms: int = 0,
     draft_version: int,
+    price_config_id: int | None = None,
+    price_config_captured: bool = False,
 ) -> ReviewResult:
     draft = db.get(ProductDraft, product_draft_id)
     if draft is None:
         raise HTTPException(status_code=404, detail=f"Product draft {product_draft_id} not found.")
+    cost = _review_cost_snapshot(
+        db,
+        response,
+        model,
+        price_config_id=price_config_id,
+        price_config_captured=price_config_captured,
+    )
     result = ReviewResult(
         product_draft_id=product_draft_id,
         provider=response.provider,
@@ -85,6 +101,9 @@ def persist_stale_review_result(
         output_tokens=response.output_tokens,
         total_tokens=response.total_tokens,
         provider_request_id=response.provider_request_id,
+        price_config_id=cost.price_config_id,
+        estimated_cost_amount=cost.amount,
+        estimated_cost_currency=cost.currency,
         risk_level=response.risk_level,
         decision=ReviewDecision(response.decision),
         reasons_json={"reason_codes": response.reason_codes, "reasons": response.reasons},
@@ -115,6 +134,9 @@ def persist_stale_review_result(
             "output_tokens": response.output_tokens,
             "total_tokens": response.total_tokens,
             "provider_request_id": response.provider_request_id,
+            "price_config_id": cost.price_config_id,
+            "estimated_cost_amount": str(cost.amount) if cost.amount is not None else None,
+            "estimated_cost_currency": cost.currency,
         },
         commit=False,
     )
@@ -159,6 +181,16 @@ def persist_review_results(
             detail="draft_content_version_changed_during_review",
         )
 
+    costs = [
+        _review_cost_snapshot(
+            db,
+            execution.response,
+            execution.model,
+            price_config_id=execution.price_config_id,
+            price_config_captured=execution.price_config_captured,
+        )
+        for execution in executions
+    ]
     results = [
         ReviewResult(
             product_draft_id=product_draft_id,
@@ -171,6 +203,9 @@ def persist_review_results(
             output_tokens=execution.response.output_tokens,
             total_tokens=execution.response.total_tokens,
             provider_request_id=execution.response.provider_request_id,
+            price_config_id=cost.price_config_id,
+            estimated_cost_amount=cost.amount,
+            estimated_cost_currency=cost.currency,
             risk_level=execution.response.risk_level,
             decision=ReviewDecision(execution.response.decision),
             reasons_json={
@@ -180,7 +215,7 @@ def persist_review_results(
             suggested_changes_json=execution.response.suggested_changes,
             draft_version=draft_version,
         )
-        for execution in executions
+        for execution, cost in zip(executions, costs, strict=True)
     ]
     db.add_all(results)
     db.flush()
@@ -206,6 +241,13 @@ def persist_review_results(
                 "output_tokens": response.output_tokens,
                 "total_tokens": response.total_tokens,
                 "provider_request_id": response.provider_request_id,
+                "price_config_id": result.price_config_id,
+                "estimated_cost_amount": (
+                    str(result.estimated_cost_amount)
+                    if result.estimated_cost_amount is not None
+                    else None
+                ),
+                "estimated_cost_currency": result.estimated_cost_currency,
             },
             commit=False,
         )
@@ -259,6 +301,9 @@ def get_publish_review(
         output_tokens=result.output_tokens,
         total_tokens=result.total_tokens,
         provider_request_id=result.provider_request_id,
+        price_config_id=result.price_config_id,
+        estimated_cost_amount=result.estimated_cost_amount,
+        estimated_cost_currency=result.estimated_cost_currency,
     )
 
 
@@ -351,10 +396,40 @@ def to_review_result_read(result: ReviewResult) -> ReviewResultRead:
         output_tokens=result.output_tokens,
         total_tokens=result.total_tokens,
         provider_request_id=result.provider_request_id,
+        price_config_id=result.price_config_id,
+        estimated_cost_amount=result.estimated_cost_amount,
+        estimated_cost_currency=result.estimated_cost_currency,
         decision=result.decision.value,
         risk_level=result.risk_level,
         reason_codes=reasons.get("reason_codes", []),
         reasons=reasons.get("reasons", []),
         suggested_changes=result.suggested_changes_json or {},
         created_at=result.created_at,
+    )
+
+
+def _review_cost_snapshot(
+    db: Session,
+    response: ReviewResponse,
+    model: str,
+    *,
+    price_config_id: int | None = None,
+    price_config_captured: bool = False,
+) -> ReviewCostSnapshot:
+    if (
+        response.provider == "claude+nvidia_behavioral_audit"
+        and response.estimated_cost_amount is not None
+    ):
+        return ReviewCostSnapshot(
+            amount=response.estimated_cost_amount,
+            currency=response.estimated_cost_currency,
+        )
+    return estimate_review_cost(
+        db,
+        provider=response.provider,
+        model=model,
+        input_tokens=response.input_tokens,
+        output_tokens=response.output_tokens,
+        price_config_id=price_config_id,
+        price_config_captured=price_config_captured,
     )

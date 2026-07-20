@@ -70,7 +70,7 @@ Implemented:
 - Provider errors preserve HTTP status, retryability, `Retry-After`, and request ID. Rate-limited reviews return HTTP 429 and wait for an explicit operator retry; the application does not automatically resend paid review requests.
 - Claude/NVIDIA review output is validated against the versioned `meli-safety-v4` contract. Missing or extra fields, unknown decisions/risk levels, and mistyped values are provider failures rather than implicit low-risk passes; system-level instructions require evidence-bounded review across restricted goods, claims, brand risk, contradictions, required listing evidence, personal data, and local-market uncertainty while treating marketplace fields as untrusted data. Saved-draft reviews require and include the reconciled pricing formula plus authorized-store, site, category, Classic/Premium, attribute, and non-FULL shipping configuration without exposing store tokens or API keys.
 - Successful paid provider calls remain as `completed_stale` historical evidence when a concurrent draft edit invalidates them; they are visible in history but cannot satisfy the current-version combined publish gate.
-- Monetary AI cost is deliberately not inferred from token counts until a versioned provider/model price configuration is supplied.
+- Operators maintain append-only input/output prices per million tokens for exact Claude and NVIDIA model IDs. Review history snapshots the price row, currency, and estimated amount; missing usage or pricing remains explicitly unavailable.
 - API flow for URL/HTML import, persisted source products, persisted drafts, persisted stores, review, metadata, publish preview, and guarded publish execution.
 - React MVP shell for import, saved draft list, Claude/NVIDIA review buttons, publishing metadata lookup, publish job list, publishing readiness, connected store list, and store authorization link startup.
 - Operator integration settings for encrypted Mercado Libre App, Claude, and NVIDIA credentials. Secret inputs are write-only, status responses never return values, and store authorization remains disabled until both Mercado Libre App fields are configured.
@@ -88,7 +88,7 @@ Verification for this change:
 
 - Backend suite: 286 passed, with 8 PostgreSQL-only tests skipped in the default run.
 - Isolated Docker PostgreSQL integration run: 8 passed, including serialized manual-snapshot recovery and refresh-token rotation, concurrent collection, publish-job, and source-variant draft deduplication, atomic draft-version invalidation, and a final publish-evidence row lock that blocks concurrent draft changes until publication completes.
-- PostgreSQL migrations through `20260720_0021` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, review execution metadata, structured source snapshots, source-variant draft bindings, structured source measurements, provider usage/request telemetry, and encrypted integration credentials.
+- PostgreSQL migrations through `20260721_0024` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, high-precision review execution costs, structured source snapshots, source-variant draft bindings, structured source measurements, provider usage/request telemetry, encrypted integration credentials, and a unique active price per provider/model.
 - The complete Alembic chain upgraded to head and downgraded to base successfully on a disposable D-drive SQLite database.
 - Frontend production build passed.
 - Docker Compose dry-run schedules one backend image build, and the running API, collection worker, and publish worker share the same image SHA. A container-level smoke imported `json5` and parsed a commented JSON5 gallery successfully.
@@ -101,4 +101,4 @@ Verification for this change:
 Next production phase:
 
 - Configure production Claude/NVIDIA credentials, execute a real combined review, and reconcile the recorded token/request telemetry with provider consoles.
-- Add a versioned, operator-maintained provider/model price table before calculating monetary AI cost.
+- Configure current Claude/NVIDIA model prices before the first paid review so cost snapshots are available from the first live run.

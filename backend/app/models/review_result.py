@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
 from enum import Enum
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String
+from decimal import Decimal
+
+from sqlalchemy import DateTime, ForeignKey, Integer, JSON, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -27,6 +29,13 @@ class ReviewResult(Base):
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     provider_request_id: Mapped[str] = mapped_column(String(160), default="")
+    price_config_id: Mapped[int | None] = mapped_column(
+        ForeignKey("provider_model_prices.id"), nullable=True
+    )
+    estimated_cost_amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(28, 8), nullable=True
+    )
+    estimated_cost_currency: Mapped[str] = mapped_column(String(3), default="")
     risk_level: Mapped[str] = mapped_column(String(40))
     decision: Mapped[ReviewDecision] = mapped_column()
     reasons_json: Mapped[dict] = mapped_column(JSON, default=dict)

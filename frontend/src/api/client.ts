@@ -45,6 +45,9 @@ export type ReviewResult = {
   output_tokens: number | null;
   total_tokens: number | null;
   provider_request_id: string;
+  price_config_id: number | null;
+  estimated_cost_amount: number | string | null;
+  estimated_cost_currency: string;
   decision: string;
   risk_level: string;
   reason_codes: string[];
@@ -133,6 +136,26 @@ export type IntegrationDiagnosticResult = {
 export type IntegrationDiagnostics = {
   checked_at: string;
   results: IntegrationDiagnosticResult[];
+};
+
+export type ProviderModelPrice = {
+  id: number;
+  provider: "claude" | "nvidia";
+  model: string;
+  version: number;
+  currency: string;
+  input_price_per_million: number | string;
+  output_price_per_million: number | string;
+  active: boolean;
+  created_at: string;
+};
+
+export type ProviderModelPriceCreate = {
+  provider: "claude" | "nvidia";
+  model: string;
+  currency: string;
+  input_price_per_million: string;
+  output_price_per_million: string;
 };
 
 export type PublishJobRecord = {
@@ -605,6 +628,31 @@ export async function runIntegrationDiagnostics() {
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<IntegrationDiagnostics>;
+}
+
+export async function getProviderModelPrices(includeHistory = false) {
+  const suffix = includeHistory ? "?include_history=true" : "";
+  const response = await fetch(`${API_BASE}/api/integrations/model-prices${suffix}`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<ProviderModelPrice[]>;
+}
+
+export async function saveProviderModelPrice(payload: ProviderModelPriceCreate) {
+  const response = await fetch(`${API_BASE}/api/integrations/model-prices`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<ProviderModelPrice>;
+}
+
+export async function deactivateProviderModelPrice(priceId: number) {
+  const response = await fetch(`${API_BASE}/api/integrations/model-prices/${priceId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<ProviderModelPrice>;
 }
 
 export async function listDrafts() {

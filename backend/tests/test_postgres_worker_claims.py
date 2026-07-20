@@ -1,6 +1,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 import os
 from threading import Barrier, Lock
 import time
@@ -8,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import sessionmaker
 
 from app.models.audit_event import AuditEvent
@@ -18,6 +19,7 @@ from app.models.draft_pricing_config import DraftPricingConfig
 from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.source_product import SourceProduct, SourceProductStatus
 from app.models.product_draft import ProductDraft
+from app.models.provider_model_price import ProviderModelPrice
 from app.models.publish_job import PublishJob
 from app.models.review_result import ReviewDecision, ReviewResult
 from app.models.store import Store
@@ -33,8 +35,10 @@ from app.services.amazon.collector import CollectionResult, CollectionStatus
 from app.schemas.drafts import ProductDraftCreate
 from app.schemas.publishing import ListingChoice
 from app.schemas.reviews import ReviewResponse
+from app.schemas.provider_pricing import ProviderModelPriceCreate
 from app.services.publish_jobs import create_publish_job
 from app.services.drafts import update_draft_content
+from app.services.provider_pricing import save_provider_model_price
 from app.services.draft_listing_configs import build_configured_draft
 from app.workers import collection_worker
 from app.services import source_products as source_products_service
@@ -47,6 +51,79 @@ from app.services.meli.token_vault import (
 
 
 POSTGRES_URL = os.getenv("TEST_POSTGRES_URL", "")
+
+
+@pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")
+def test_postgres_enforces_one_active_provider_model_price_during_concurrent_updates():
+    engine = create_engine(POSTGRES_URL, pool_pre_ping=True)
+    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    model = f"concurrency-test-{uuid4().hex}"
+    def payload(input_price: str) -> ProviderModelPriceCreate:
+        return ProviderModelPriceCreate(
+            provider="claude",
+            model=model,
+            currency="USD",
+            input_price_per_million=Decimal(input_price),
+            output_price_per_million=Decimal("15"),
+        )
+    with testing_session() as db:
+        save_provider_model_price(db, payload("3"))
+    ready = Barrier(2)
+
+    def save_concurrently(input_price: str) -> str:
+        with testing_session() as db:
+            ready.wait(timeout=10)
+            try:
+                save_provider_model_price(db, payload(input_price))
+                return "saved"
+            except HTTPException as exc:
+                assert exc.status_code == 409
+                return "conflict"
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(save_concurrently, ["4", "5"]))
+        assert "saved" in outcomes
+        with testing_session() as db:
+            rows = db.scalars(
+                select(ProviderModelPrice)
+                .where(
+                    ProviderModelPrice.provider == "claude",
+                    ProviderModelPrice.model == model,
+                )
+                .order_by(ProviderModelPrice.version)
+            ).all()
+            assert len({row.version for row in rows}) == len(rows)
+            assert sum(row.active for row in rows) == 1
+            assert max(row.version for row in rows if row.active) == max(
+                row.version for row in rows
+            )
+    finally:
+        with testing_session() as db:
+            ids = [
+                str(value)
+                for value in db.scalars(
+                    select(ProviderModelPrice.id).where(
+                        ProviderModelPrice.provider == "claude",
+                        ProviderModelPrice.model == model,
+                    )
+                )
+            ]
+            if ids:
+                db.execute(
+                    delete(AuditEvent).where(
+                        AuditEvent.entity_type == "provider_model_price",
+                        AuditEvent.entity_id.in_(ids),
+                    )
+                )
+            db.execute(
+                delete(ProviderModelPrice).where(
+                    ProviderModelPrice.provider == "claude",
+                    ProviderModelPrice.model == model,
+                )
+            )
+            db.commit()
+        engine.dispose()
 
 
 @pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")
