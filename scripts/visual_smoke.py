@@ -337,6 +337,10 @@ def fulfill_review_history(route) -> None:
             "prompt_version": "meli-safety-v1+meli-safety-v1",
             "duration_ms": 842,
             "provider_status": "completed",
+            "input_tokens": 200,
+            "output_tokens": 40,
+            "total_tokens": 240,
+            "provider_request_id": "",
             "decision": "pass",
             "risk_level": "low",
             "reason_codes": [],
@@ -352,6 +356,10 @@ def fulfill_review_history(route) -> None:
             "prompt_version": "meli-safety-v1",
             "duration_ms": 521,
             "provider_status": "completed",
+            "input_tokens": 120,
+            "output_tokens": 25,
+            "total_tokens": 145,
+            "provider_request_id": "req_claude_visual",
             "decision": "pass",
             "risk_level": "low",
             "reason_codes": [],
@@ -366,7 +374,11 @@ def fulfill_review_history(route) -> None:
             "model": "nvidia-test",
             "prompt_version": "meli-safety-v1",
             "duration_ms": 321,
-            "provider_status": "completed",
+            "provider_status": "completed_stale",
+            "input_tokens": 80,
+            "output_tokens": 15,
+            "total_tokens": 95,
+            "provider_request_id": "req_nvidia_visual",
             "decision": "pass",
             "risk_level": "low",
             "reason_codes": [],
@@ -397,7 +409,16 @@ def inspect_review_history(page: Page) -> dict[str, object]:
     assert rows.count() == 3, f"Expected 3 provider review history rows, got {rows.count()}"
     text = rows.all_inner_texts()
     assert any("claude-test" in row and "meli-safety-v1" in row for row in text)
-    assert any("nvidia-test" in row and "321 ms" in row for row in text)
+    assert any(
+        "nvidia-test" in row
+        and "321 ms" in row
+        and "95 tokens" in row
+        and "80 in / 15 out" in row
+        and "req_nvidia_visual" in row
+        for row in text
+    )
+    assert any("145 tokens" in row and "req_claude_visual" in row for row in text)
+    assert any("Historical evidence" in row for row in text)
     assert all("pass" in row for row in text)
     body = page.locator("body").inner_text()
     assert "api-key" not in body.lower()

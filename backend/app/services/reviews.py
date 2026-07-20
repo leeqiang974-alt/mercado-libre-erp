@@ -53,6 +53,68 @@ def persist_review_result(
     )[0]
 
 
+def persist_stale_review_result(
+    db: Session,
+    product_draft_id: int,
+    response: ReviewResponse,
+    *,
+    model: str = "",
+    prompt_version: str = "",
+    duration_ms: int = 0,
+    draft_version: int,
+) -> ReviewResult:
+    draft = db.get(ProductDraft, product_draft_id)
+    if draft is None:
+        raise HTTPException(status_code=404, detail=f"Product draft {product_draft_id} not found.")
+    result = ReviewResult(
+        product_draft_id=product_draft_id,
+        provider=response.provider,
+        model=model,
+        prompt_version=prompt_version,
+        duration_ms=max(0, duration_ms),
+        provider_status="completed_stale",
+        input_tokens=response.input_tokens,
+        output_tokens=response.output_tokens,
+        total_tokens=response.total_tokens,
+        provider_request_id=response.provider_request_id,
+        risk_level=response.risk_level,
+        decision=ReviewDecision(response.decision),
+        reasons_json={"reason_codes": response.reason_codes, "reasons": response.reasons},
+        suggested_changes_json=response.suggested_changes,
+        draft_version=draft_version,
+    )
+    db.add(result)
+    db.flush()
+    create_audit_event(
+        db=db,
+        actor_type="ai_provider",
+        actor_id=response.provider,
+        action="review.completed_stale",
+        entity_type="product_draft",
+        entity_id=str(product_draft_id),
+        after={
+            "review_result_id": result.id,
+            "decision": response.decision,
+            "risk_level": response.risk_level,
+            "reason_codes": response.reason_codes,
+            "model": model,
+            "prompt_version": prompt_version,
+            "duration_ms": duration_ms,
+            "provider_status": "completed_stale",
+            "reviewed_draft_version": draft_version,
+            "current_draft_version": draft.content_version,
+            "input_tokens": response.input_tokens,
+            "output_tokens": response.output_tokens,
+            "total_tokens": response.total_tokens,
+            "provider_request_id": response.provider_request_id,
+        },
+        commit=False,
+    )
+    db.commit()
+    db.refresh(result)
+    return result
+
+
 def persist_review_results(
     db: Session,
     product_draft_id: int,
@@ -91,6 +153,10 @@ def persist_review_results(
             prompt_version=execution.prompt_version,
             duration_ms=max(0, execution.duration_ms),
             provider_status=execution.provider_status,
+            input_tokens=execution.response.input_tokens,
+            output_tokens=execution.response.output_tokens,
+            total_tokens=execution.response.total_tokens,
+            provider_request_id=execution.response.provider_request_id,
             risk_level=execution.response.risk_level,
             decision=ReviewDecision(execution.response.decision),
             reasons_json={
@@ -122,6 +188,10 @@ def persist_review_results(
                 "prompt_version": execution.prompt_version,
                 "duration_ms": execution.duration_ms,
                 "provider_status": execution.provider_status,
+                "input_tokens": response.input_tokens,
+                "output_tokens": response.output_tokens,
+                "total_tokens": response.total_tokens,
+                "provider_request_id": response.provider_request_id,
             },
             commit=False,
         )
@@ -171,6 +241,10 @@ def get_publish_review(
         reasons=(result.reasons_json or {}).get("reasons", []),
         suggested_changes=result.suggested_changes_json or {},
         review_result_id=result.id,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        total_tokens=result.total_tokens,
+        provider_request_id=result.provider_request_id,
     )
 
 
@@ -206,6 +280,10 @@ def to_review_result_read(result: ReviewResult) -> ReviewResultRead:
         prompt_version=result.prompt_version,
         duration_ms=result.duration_ms,
         provider_status=result.provider_status,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        total_tokens=result.total_tokens,
+        provider_request_id=result.provider_request_id,
         decision=result.decision.value,
         risk_level=result.risk_level,
         reason_codes=reasons.get("reason_codes", []),

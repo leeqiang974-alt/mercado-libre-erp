@@ -11,6 +11,10 @@ class ReviewResponse(BaseModel):
     reasons: list[str]
     suggested_changes: dict = Field(default_factory=dict)
     review_result_id: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    provider_request_id: str = ""
 
 
 class ReviewResultRead(BaseModel):
@@ -21,6 +25,10 @@ class ReviewResultRead(BaseModel):
     prompt_version: str = ""
     duration_ms: int = 0
     provider_status: str = "completed"
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    provider_request_id: str = ""
     decision: str
     risk_level: str
     reason_codes: list[str]

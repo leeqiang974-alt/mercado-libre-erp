@@ -41,6 +41,10 @@ export type ReviewResult = {
   prompt_version: string;
   duration_ms: number;
   provider_status: string;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  provider_request_id: string;
   decision: string;
   risk_level: string;
   reason_codes: string[];
@@ -48,6 +52,42 @@ export type ReviewResult = {
   suggested_changes: Record<string, unknown>;
   created_at: string;
 };
+
+export class ProviderRequestError extends Error {
+  provider: string;
+  code: string;
+  retryable: boolean;
+  retryAfterSeconds: number | null;
+  requestId: string;
+  providerHttpStatus: number | null;
+
+  constructor(detail: Record<string, unknown>) {
+    const provider = String(detail.provider ?? "AI provider");
+    const code = String(detail.code ?? "request_failed");
+    const retryAfter = typeof detail.retry_after_seconds === "number"
+      ? detail.retry_after_seconds
+      : null;
+    const requestId = typeof detail.request_id === "string" ? detail.request_id : "";
+    const providerHttpStatus = typeof detail.provider_http_status === "number"
+      ? detail.provider_http_status
+      : null;
+    const retryMessage = retryAfter !== null
+      ? ` Wait ${retryAfter} seconds, then retry manually.`
+      : detail.retryable ? " Retry manually when the provider is available." : "";
+    const requestMessage = requestId ? ` Request ${requestId}.` : "";
+    const statusMessage = providerHttpStatus !== null
+      ? ` Provider HTTP ${providerHttpStatus}.`
+      : "";
+    super(`${provider}: ${readableProviderError(code)}.${statusMessage}${retryMessage}${requestMessage} No automatic retry was sent.`);
+    this.name = "ProviderRequestError";
+    this.provider = provider;
+    this.code = code;
+    this.retryable = detail.retryable === true;
+    this.retryAfterSeconds = retryAfter;
+    this.requestId = requestId;
+    this.providerHttpStatus = providerHttpStatus;
+  }
+}
 
 export type BehavioralAudit = {
   nvidia: Record<string, unknown>;
@@ -422,7 +462,7 @@ export async function reviewDraftWithProvider(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(draft),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) await throwProviderError(response);
   return response.json();
 }
 
@@ -438,7 +478,7 @@ export async function reviewDraftWithBehavioralAudit(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(draft),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) await throwProviderError(response);
   return response.json() as Promise<BehavioralAudit>;
 }
 
@@ -661,4 +701,38 @@ export async function listAuditEvents(limit = 100) {
 function reviewUrl(provider: "local" | "claude" | "nvidia", productDraftId?: number | null) {
   const query = productDraftId ? `?product_draft_id=${productDraftId}` : "";
   return `${API_BASE}/api/reviews/${provider}${query}`;
+}
+
+async function throwProviderError(response: Response): Promise<never> {
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error(`AI provider request failed with HTTP ${response.status}.`);
+  }
+  if (
+    payload
+    && typeof payload === "object"
+    && "detail" in payload
+    && payload.detail
+    && typeof payload.detail === "object"
+  ) {
+    throw new ProviderRequestError(payload.detail as Record<string, unknown>);
+  }
+  throw new Error(`AI provider request failed with HTTP ${response.status}.`);
+}
+
+function readableProviderError(code: string) {
+  const messages: Record<string, string> = {
+    api_key_required: "API key is not configured",
+    authentication_failed: "API key was rejected",
+    billing_required: "billing or credits require attention",
+    invalid_response: "provider returned an invalid review response",
+    permission_denied: "API key lacks permission",
+    provider_unavailable: "provider is temporarily unavailable",
+    provider_unreachable: "provider could not be reached",
+    rate_limited: "rate limit reached",
+    request_rejected: "request was rejected",
+  };
+  return messages[code] ?? "request failed";
 }

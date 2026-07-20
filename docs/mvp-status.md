@@ -53,9 +53,12 @@ Implemented:
 - Alembic baseline migration for the current backend schema.
 - Persisted local, Claude, and NVIDIA review results for saved drafts.
 - Combined Claude + NVIDIA behavioral audit endpoint with strictest-result aggregation and orchestration audit events.
-- Review results persist provider model, versioned safety prompt identifier, execution duration, provider status, and creation time; provider failures are audited without being presented as successful reviews.
+- Review results persist provider model, versioned safety prompt identifier, execution duration, provider status, provider-reported input/output/total token usage, request ID, and creation time; provider failures are audited without being presented as successful reviews.
 - Review history API and frontend refresh control for saved draft audit trails.
-- Desktop and mobile review history expose Claude, NVIDIA, and aggregate model/prompt/duration metadata without exposing API keys or raw prompts.
+- Desktop and mobile review history expose Claude, NVIDIA, and aggregate model/prompt/duration/token metadata and provider request IDs without exposing API keys or raw prompts.
+- Provider errors preserve HTTP status, retryability, `Retry-After`, and request ID. Rate-limited reviews return HTTP 429 and wait for an explicit operator retry; the application does not automatically resend paid review requests.
+- Successful paid provider calls remain as `completed_stale` historical evidence when a concurrent draft edit invalidates them; they are visible in history but cannot satisfy the current-version combined publish gate.
+- Monetary AI cost is deliberately not inferred from token counts until a versioned provider/model price configuration is supplied.
 - API flow for URL/HTML import, persisted source products, persisted drafts, persisted stores, review, metadata, publish preview, and guarded publish execution.
 - React MVP shell for import, saved draft list, Claude/NVIDIA review buttons, publishing metadata lookup, publish job list, publishing readiness, connected store list, and store authorization link startup.
 - Docker Compose services for PostgreSQL, Redis, backend API, collection worker, and publish worker.
@@ -68,14 +71,16 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 193 passed, with 5 PostgreSQL-only tests skipped in the default run.
+- Backend suite: 206 passed, with 5 PostgreSQL-only tests skipped in the default run.
 - Docker PostgreSQL integration run: 5 passed, including concurrent collection, publish-job, and source-variant draft deduplication plus atomic draft-version invalidation under simultaneous edits.
-- PostgreSQL migrations through `20260720_0019` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, review execution metadata, structured source snapshots, source-variant draft bindings, and structured source measurements.
+- PostgreSQL migrations through `20260720_0020` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, review execution metadata, structured source snapshots, source-variant draft bindings, structured source measurements, and provider usage/request telemetry.
 - The complete Alembic chain upgraded to head and downgraded to base successfully on a disposable D-drive SQLite database.
 - Frontend production build passed.
-- Desktop and mobile browser smoke passed for all 18 sites, Classic/Premium controls, two verified non-FULL shipping options, provider review metadata rows, batch result rows, three source images, three source variants, two source measurements, variant draft creation, three category attribute suggestions, required-attribute save gates, saved configuration readiness, overflow, console errors, and failed responses.
+- Desktop and mobile browser smoke passed for all 18 sites, Classic/Premium controls, two verified non-FULL shipping options, provider review metadata/token/request-ID rows, batch result rows, three source images, three source variants, two source measurements, variant draft creation, three category attribute suggestions, required-attribute save gates, saved configuration readiness, overflow, console errors, and failed responses.
 - A live local PostgreSQL/API/browser integration smoke inserted a temporary collected source, read its structured measurements through the running backend, rendered both cards in the real frontend, and removed the test records afterward.
+- A live local PostgreSQL/API/browser integration smoke persisted temporary provider token/request telemetry, read it through the running backend, rendered it in review history, and removed the draft, review, and audit records afterward.
 
 Next production phase:
 
-- Add provider usage/cost telemetry, rate-limit handling, and operator-controlled review retry policy.
+- Configure production Claude/NVIDIA credentials, execute a real combined review, and reconcile the recorded token/request telemetry with provider consoles.
+- Add a versioned, operator-maintained provider/model price table before calculating monetary AI cost.

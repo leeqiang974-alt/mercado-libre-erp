@@ -318,9 +318,20 @@ export function DraftsPage({
                       <span>
                         <strong>{result.provider}</strong>
                         <small>{result.model || "Unspecified model"} · {result.prompt_version || "legacy prompt"}</small>
+                        {result.provider_status !== "completed" && (
+                          <small className="warning-text">Historical evidence · draft changed</small>
+                        )}
+                        {result.provider_request_id && <small>Request {result.provider_request_id}</small>}
                       </span>
-                      <span>{result.duration_ms > 0 ? `${result.duration_ms} ms` : "Unavailable"}</span>
-                      <strong className={result.decision === "pass" ? "success-text" : ""}>{result.decision}</strong>
+                      <span className="review-telemetry">
+                        <small>{result.duration_ms > 0 ? `${result.duration_ms} ms` : "Time unavailable"}</small>
+                        <small>
+                          {result.total_tokens !== null
+                            ? `${result.total_tokens} tokens · ${result.input_tokens ?? "?"} in / ${result.output_tokens ?? "?"} out`
+                            : "Tokens unavailable"}
+                        </small>
+                      </span>
+                      <strong className={result.decision === "pass" && result.provider_status === "completed" ? "success-text" : ""}>{result.decision}</strong>
                     </div>
                   ))}
                 </div>

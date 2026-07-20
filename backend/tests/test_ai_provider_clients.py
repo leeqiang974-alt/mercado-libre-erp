@@ -29,7 +29,10 @@ async def test_claude_client_posts_messages_request_and_parses_review_json():
         requests.append(request)
         return httpx.Response(
             200,
+            headers={"request-id": "req_claude_123"},
             json={
+                "id": "msg_claude_123",
+                "usage": {"input_tokens": 120, "output_tokens": 30},
                 "content": [
                     {
                         "type": "text",
@@ -53,6 +56,10 @@ async def test_claude_client_posts_messages_request_and_parses_review_json():
 
     assert result.provider == "claude"
     assert result.decision == "pass"
+    assert result.input_tokens == 120
+    assert result.output_tokens == 30
+    assert result.total_tokens == 150
+    assert result.provider_request_id == "req_claude_123"
     assert requests[0].url == "https://api.anthropic.com/v1/messages"
     assert requests[0].headers["x-api-key"] == "claude-secret"
     assert requests[0].headers["anthropic-version"]
@@ -66,7 +73,14 @@ async def test_nvidia_client_posts_chat_completion_and_parses_review_json():
         requests.append(request)
         return httpx.Response(
             200,
+            headers={"nvcf-reqid": "req_nvidia_123"},
             json={
+                "id": "chatcmpl_nvidia_123",
+                "usage": {
+                    "prompt_tokens": 90,
+                    "completion_tokens": 20,
+                    "total_tokens": 110,
+                },
                 "choices": [
                     {
                         "message": {
@@ -92,6 +106,10 @@ async def test_nvidia_client_posts_chat_completion_and_parses_review_json():
     assert result.provider == "nvidia"
     assert result.decision == "needs_human_review"
     assert result.reason_codes == ["brand_risk"]
+    assert result.input_tokens == 90
+    assert result.output_tokens == 20
+    assert result.total_tokens == 110
+    assert result.provider_request_id == "req_nvidia_123"
     assert requests[0].url == "https://integrate.api.nvidia.com/v1/chat/completions"
     assert requests[0].headers["authorization"] == "Bearer nvidia-secret"
 
@@ -105,3 +123,81 @@ async def test_provider_clients_report_missing_api_key_without_fallback():
         await claude.review_draft(draft())
     with pytest.raises(AIProviderError, match="nvidia:api_key_required"):
         await nvidia.pre_screen_draft(draft())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "client_factory", "method_name"),
+    [
+        ("claude", ClaudeReviewClient, "review_draft"),
+        ("nvidia", NvidiaReviewClient, "pre_screen_draft"),
+    ],
+)
+async def test_provider_clients_preserve_rate_limit_retry_metadata(
+    provider, client_factory, method_name
+):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            headers={"retry-after": "17", "request-id": f"req_{provider}_429"},
+            json={"error": {"type": "rate_limit_error"}},
+        )
+
+    client = client_factory(api_key="secret", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(AIProviderError) as caught:
+        await getattr(client, method_name)(draft())
+
+    assert caught.value.code == "rate_limited"
+    assert caught.value.http_status == 429
+    assert caught.value.retryable is True
+    assert caught.value.retry_after_seconds == 17
+    assert caught.value.request_id == f"req_{provider}_429"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "client_factory", "method_name"),
+    [
+        ("claude", ClaudeReviewClient, "review_draft"),
+        ("nvidia", NvidiaReviewClient, "pre_screen_draft"),
+    ],
+)
+@pytest.mark.parametrize("response_body", [b"not-json", b"[]", b'"not-an-object"'])
+async def test_provider_clients_classify_malformed_success_as_invalid_response(
+    provider, client_factory, method_name, response_body
+):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"request-id": f"req_{provider}_malformed"},
+            content=response_body,
+        )
+
+    client = client_factory(api_key="secret", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(AIProviderError) as caught:
+        await getattr(client, method_name)(draft())
+
+    assert caught.value.code == "invalid_response"
+    assert caught.value.http_status == 200
+    assert caught.value.retryable is False
+    assert caught.value.request_id == f"req_{provider}_malformed"
+
+
+@pytest.mark.asyncio
+async def test_extreme_retry_after_stays_a_structured_rate_limit_error():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            headers={"retry-after": "1e309", "request-id": "req_extreme_retry"},
+        )
+
+    client = ClaudeReviewClient(api_key="secret", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(AIProviderError) as caught:
+        await client.review_draft(draft())
+
+    assert caught.value.code == "rate_limited"
+    assert caught.value.retry_after_seconds is None
+    assert caught.value.request_id == "req_extreme_retry"

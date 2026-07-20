@@ -6,7 +6,10 @@ from app.services.ai.provider_utils import (
     AIProviderError,
     REVIEW_PROMPT_VERSION,
     parse_review_json,
+    provider_request_error,
+    provider_request_id,
     review_prompt,
+    token_usage,
 )
 
 
@@ -49,11 +52,29 @@ class NvidiaReviewClient:
                     headers=headers,
                 )
                 response.raise_for_status()
-                data = response.json()
         except Exception as exc:
-            raise AIProviderError("nvidia", "request_failed") from exc
-        text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            raise provider_request_error("nvidia", exc) from exc
+        data: dict = {}
         try:
-            return parse_review_json("nvidia", text)
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("NVIDIA response must be a JSON object")
+            data = payload
+            text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            parsed = parse_review_json("nvidia", text)
+            input_tokens, output_tokens, total_tokens = token_usage(data)
+            return parsed.model_copy(
+                update={
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "total_tokens": total_tokens,
+                    "provider_request_id": provider_request_id(response, data),
+                }
+            )
         except Exception as exc:
-            raise AIProviderError("nvidia", "invalid_response") from exc
+            raise AIProviderError(
+                "nvidia",
+                "invalid_response",
+                http_status=200,
+                request_id=provider_request_id(response, data),
+            ) from exc

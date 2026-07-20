@@ -21,6 +21,7 @@ from app.services.reviews import (
     list_review_results,
     persist_review_result,
     persist_review_results,
+    persist_stale_review_result,
 )
 
 router = APIRouter(prefix="/api/reviews", tags=["reviews"])
@@ -63,7 +64,7 @@ async def review_claude(
             db, product_draft_id, exc, client, _elapsed_ms(started)
         )
         raise _provider_http_error(exc) from exc
-    return _persist_if_requested(
+    return _persist_provider_if_requested(
         db,
         response,
         product_draft_id,
@@ -90,7 +91,7 @@ async def review_nvidia(
             db, product_draft_id, exc, client, _elapsed_ms(started)
         )
         raise _provider_http_error(exc) from exc
-    return _persist_if_requested(
+    return _persist_provider_if_requested(
         db,
         response,
         product_draft_id,
@@ -124,6 +125,15 @@ async def behavioral_audit(
         )
         raise _provider_http_error(exc) from exc
     nvidia_duration_ms = _elapsed_ms(nvidia_started)
+    nvidia = _persist_provider_if_requested(
+        db,
+        nvidia,
+        product_draft_id,
+        model=getattr(nvidia_client, "model", ""),
+        prompt_version=getattr(nvidia_client, "prompt_version", ""),
+        duration_ms=nvidia_duration_ms,
+        expected_draft_version=draft_version,
+    )
 
     claude_started = perf_counter()
     try:
@@ -134,24 +144,21 @@ async def behavioral_audit(
         )
         raise _provider_http_error(exc) from exc
     claude_duration_ms = _elapsed_ms(claude_started)
+    claude = _persist_provider_if_requested(
+        db,
+        claude,
+        product_draft_id,
+        model=getattr(claude_client, "model", ""),
+        prompt_version=getattr(claude_client, "prompt_version", ""),
+        duration_ms=claude_duration_ms,
+        expected_draft_version=draft_version,
+    )
     aggregate = _aggregate_reviews(nvidia, claude)
     if product_draft_id is not None:
         results = persist_review_results(
             db,
             product_draft_id,
             [
-                ReviewExecution(
-                    nvidia,
-                    model=getattr(nvidia_client, "model", ""),
-                    prompt_version=getattr(nvidia_client, "prompt_version", ""),
-                    duration_ms=nvidia_duration_ms,
-                ),
-                ReviewExecution(
-                    claude,
-                    model=getattr(claude_client, "model", ""),
-                    prompt_version=getattr(claude_client, "prompt_version", ""),
-                    duration_ms=claude_duration_ms,
-                ),
                 ReviewExecution(
                     aggregate,
                     model=(
@@ -183,12 +190,14 @@ async def behavioral_audit(
                         getattr(claude_client, "prompt_version", ""),
                     ],
                     "duration_ms": nvidia_duration_ms + claude_duration_ms,
+                    "provider_review_result_ids": [
+                        nvidia.review_result_id,
+                        claude.review_result_id,
+                    ],
                 },
             ),
         )
-        nvidia = nvidia.model_copy(update={"review_result_id": results[0].id})
-        claude = claude.model_copy(update={"review_result_id": results[1].id})
-        aggregate = aggregate.model_copy(update={"review_result_id": results[2].id})
+        aggregate = aggregate.model_copy(update={"review_result_id": results[0].id})
     return BehavioralAuditResponse(nvidia=nvidia, claude=claude, aggregate=aggregate)
 
 
@@ -260,6 +269,45 @@ def _persist_if_requested(
     return response.model_copy(update={"review_result_id": result.id})
 
 
+def _persist_provider_if_requested(
+    db: Session,
+    response: ReviewResponse,
+    product_draft_id: int | None,
+    model: str = "",
+    prompt_version: str = "",
+    duration_ms: int = 0,
+    expected_draft_version: int | None = None,
+) -> ReviewResponse:
+    try:
+        return _persist_if_requested(
+            db,
+            response,
+            product_draft_id,
+            model=model,
+            prompt_version=prompt_version,
+            duration_ms=duration_ms,
+            expected_draft_version=expected_draft_version,
+        )
+    except HTTPException as exc:
+        if (
+            product_draft_id is None
+            or expected_draft_version is None
+            or exc.status_code != 409
+            or exc.detail != "draft_content_version_changed_during_review"
+        ):
+            raise
+        persist_stale_review_result(
+            db,
+            product_draft_id,
+            response,
+            model=model,
+            prompt_version=prompt_version,
+            duration_ms=duration_ms,
+            draft_version=expected_draft_version,
+        )
+        raise
+
+
 def _aggregate_reviews(*responses: ReviewResponse) -> ReviewResponse:
     decisions = [response.decision for response in responses]
     if "block" in decisions:
@@ -287,6 +335,9 @@ def _aggregate_reviews(*responses: ReviewResponse) -> ReviewResponse:
             provider: response.suggested_changes
             for provider, response in (("nvidia", responses[0]), ("claude", responses[1]))
         },
+        input_tokens=_sum_optional(response.input_tokens for response in responses),
+        output_tokens=_sum_optional(response.output_tokens for response in responses),
+        total_tokens=_sum_optional(response.total_tokens for response in responses),
     )
 
 
@@ -300,10 +351,35 @@ def _unique_in_order(values):
     return result
 
 
+def _sum_optional(values) -> int | None:
+    items = list(values)
+    if not items or any(value is None for value in items):
+        return None
+    return sum(items)
+
+
 def _provider_http_error(error: AIProviderError) -> HTTPException:
+    if error.code == "rate_limited":
+        status_code = 429
+    elif error.code in {
+        "api_key_required",
+        "provider_unreachable",
+        "provider_unavailable",
+        "request_failed",
+    }:
+        status_code = 503
+    else:
+        status_code = 502
     return HTTPException(
-        status_code=503,
-        detail={"provider": error.provider, "code": error.code},
+        status_code=status_code,
+        detail={
+            "provider": error.provider,
+            "code": error.code,
+            "retryable": error.retryable,
+            "retry_after_seconds": error.retry_after_seconds,
+            "request_id": error.request_id,
+            "provider_http_status": error.http_status,
+        },
     )
 
 
@@ -333,5 +409,9 @@ def _audit_provider_failure(
             "model": getattr(client, "model", ""),
             "prompt_version": getattr(client, "prompt_version", ""),
             "duration_ms": duration_ms,
+            "http_status": error.http_status,
+            "retryable": error.retryable,
+            "retry_after_seconds": error.retry_after_seconds,
+            "provider_request_id": error.request_id,
         },
     )

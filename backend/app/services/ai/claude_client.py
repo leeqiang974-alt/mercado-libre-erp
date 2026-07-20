@@ -6,7 +6,10 @@ from app.services.ai.provider_utils import (
     AIProviderError,
     REVIEW_PROMPT_VERSION,
     parse_review_json,
+    provider_request_error,
+    provider_request_id,
     review_prompt,
+    token_usage,
 )
 
 
@@ -49,13 +52,33 @@ class ClaudeReviewClient:
                     headers=headers,
                 )
                 response.raise_for_status()
-                data = response.json()
         except Exception as exc:
-            raise AIProviderError("claude", "request_failed") from exc
-        text = "\n".join(
-            item.get("text", "") for item in data.get("content", []) if item.get("type") == "text"
-        )
+            raise provider_request_error("claude", exc) from exc
+        data: dict = {}
         try:
-            return parse_review_json("claude", text)
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("Claude response must be a JSON object")
+            data = payload
+            text = "\n".join(
+                item.get("text", "")
+                for item in data.get("content", [])
+                if item.get("type") == "text"
+            )
+            parsed = parse_review_json("claude", text)
+            input_tokens, output_tokens, total_tokens = token_usage(data, anthropic=True)
+            return parsed.model_copy(
+                update={
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "total_tokens": total_tokens,
+                    "provider_request_id": provider_request_id(response, data),
+                }
+            )
         except Exception as exc:
-            raise AIProviderError("claude", "invalid_response") from exc
+            raise AIProviderError(
+                "claude",
+                "invalid_response",
+                http_status=200,
+                request_id=provider_request_id(response, data),
+            ) from exc
