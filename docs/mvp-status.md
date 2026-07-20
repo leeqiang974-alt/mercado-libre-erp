@@ -8,7 +8,8 @@ Implemented:
 - Amazon HTML parser and normalizer.
 - Playwright-backed Amazon URL collection adapter with manual-action handling for CAPTCHA/challenge pages.
 - Amazon URL collection job model, single/batch create, list/run APIs, and frontend queue controls with per-row validation and duplicate reporting.
-- Batch intake canonicalizes Amazon domain/ASIN identities, limits each request to 100 URLs, and serializes deduplication on both PostgreSQL and SQLite so concurrent operator requests reuse the same job by default.
+- Batch intake persists and indexes canonical Amazon domain/ASIN identities, limits each request to 100 URLs, and serializes deduplication on both PostgreSQL and SQLite so concurrent operator requests reuse the same job by default.
+- Collection queue polling is bounded to the latest 100 jobs by default and supports limit/offset pagination; URL collection and manual HTML snapshot inputs keep independent state.
 - Backend collection worker CLI for processing pending Amazon URL collection jobs in batches.
 - Persisted Amazon URL collection results as source products, including manual-action and failed collection states.
 - Local AI review policy.
@@ -54,8 +55,10 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 148 passed, with 2 PostgreSQL-only tests skipped in the default run.
+- Backend suite: 150 passed, with 2 PostgreSQL-only tests skipped in the default run.
 - Docker PostgreSQL integration run: 2 passed, including concurrent request deduplication.
+- PostgreSQL migration `20260720_0010` backfilled all local collection identities, normalized historical site IDs, and created the site/identity index.
+- The complete Alembic chain upgraded to head and downgraded to base successfully on a disposable D-drive SQLite database.
 - Frontend production build passed.
 - Desktop and mobile browser smoke passed for all 18 sites, Classic/Premium controls, batch result rows, overflow, console errors, and failed responses.
 
@@ -63,4 +66,3 @@ Next production phase:
 
 - Add Mercado Libre shipping options metadata refresh.
 - Add provider prompt versioning and review-model version analytics.
-- Persist and index normalized Amazon product identities, then paginate collection history to keep lookup and polling costs bounded as the queue grows.

@@ -266,8 +266,9 @@ export async function createCollectionJobsBatch(
   return response.json() as Promise<CollectionBatchResult>;
 }
 
-export async function listCollectionJobs() {
-  const response = await fetch(`${API_BASE}/api/imports/amazon-url/jobs`);
+export async function listCollectionJobs(limit = 100, offset = 0) {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  const response = await fetch(`${API_BASE}/api/imports/amazon-url/jobs?${params}`);
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<CollectionJobRecord[]>;
 }

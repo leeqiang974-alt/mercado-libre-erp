@@ -84,7 +84,8 @@ def test_single_amazon_url_job_creation_reuses_existing_normalized_job():
     assert second.status_code == 200
     assert second.json()["id"] == first.json()["id"]
     with testing_session() as db:
-        assert db.query(CollectionJob).count() == 1
+        job = db.query(CollectionJob).one()
+        assert job.source_identity == "https://amazon.com/dp/B000TEST01"
 
 
 def test_amazon_url_batch_normalizes_deduplicates_and_reports_invalid_rows():
@@ -240,6 +241,52 @@ def test_amazon_url_identity_keeps_domains_and_asins_distinct():
             "https://amazon.ca/dp/B000TEST01",
             "https://amazon.com/dp/B000TEST02",
         }
+
+
+def test_legacy_lowercase_site_job_is_reused():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        db.add(
+            CollectionJob(
+                source_url="https://www.amazon.com/dp/B000TEST01?tag=legacy",
+                source_identity=None,
+                target_site_id="mlm",
+            )
+        )
+        db.commit()
+
+    response = client.post(
+        "/api/imports/amazon-url/jobs",
+        json={"source_url": "https://amazon.com/dp/B000TEST01", "target_site_id": "MLM"},
+    )
+
+    assert response.status_code == 200
+    with testing_session() as db:
+        assert db.query(CollectionJob).count() == 1
+
+
+def test_collection_job_list_is_bounded_and_supports_offset():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        db.add_all(
+            [
+                CollectionJob(
+                    source_url=f"https://amazon.com/dp/B{i:09d}",
+                    source_identity=f"https://amazon.com/dp/B{i:09d}",
+                    target_site_id="MLM",
+                )
+                for i in range(105)
+            ]
+        )
+        db.commit()
+
+    first_page = client.get("/api/imports/amazon-url/jobs")
+    last_page = client.get("/api/imports/amazon-url/jobs?limit=5&offset=100")
+
+    assert first_page.status_code == 200
+    assert len(first_page.json()) == 100
+    assert len(last_page.json()) == 5
+    assert first_page.json()[0]["id"] > last_page.json()[0]["id"]
 
 
 def test_running_collection_job_persists_source_and_draft(monkeypatch):

@@ -1,8 +1,8 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -120,7 +120,9 @@ def create_amazon_url_collection_job(
     normalized_url = _normalized_amazon_url_or_422(payload.source_url)
     target_site_id = _target_site_or_422(payload.target_site_id)
     _lock_collection_site(db, target_site_id)
-    if existing := _existing_collection_jobs(db, target_site_id).get(normalized_url):
+    if existing := _existing_collection_jobs(
+        db, target_site_id, {normalized_url}
+    ).get(normalized_url):
         return to_collection_job_read(existing)
     job = create_collection_job(
         db=db,
@@ -138,7 +140,14 @@ def create_amazon_url_collection_jobs_batch(
     existing_by_url: dict[str, CollectionJob] = {}
     if not payload.allow_existing:
         _lock_collection_site(db, target_site_id)
-        existing_by_url = _existing_collection_jobs(db, target_site_id)
+        normalized_candidates = {
+            normalized
+            for input_url in payload.source_urls
+            if (normalized := _try_normalize_amazon_url(input_url)) is not None
+        }
+        existing_by_url = _existing_collection_jobs(
+            db, target_site_id, normalized_candidates
+        )
 
     seen: set[str] = set()
     items: list[CollectionBatchItemRead | None] = []
@@ -204,8 +213,12 @@ def create_amazon_url_collection_jobs_batch(
 
 
 @router.get("/amazon-url/jobs", response_model=list[CollectionJobRead])
-def get_amazon_url_collection_jobs(db: Session = Depends(get_db)) -> list[CollectionJobRead]:
-    return list_collection_jobs(db)
+def get_amazon_url_collection_jobs(
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> list[CollectionJobRead]:
+    return list_collection_jobs(db, limit=limit, offset=offset)
 
 
 @router.post("/amazon-url/jobs/{job_id}/run", response_model=CollectionJobRead)
@@ -247,18 +260,46 @@ def _lock_collection_site(db: Session, site_id: str) -> None:
         db.execute(text("BEGIN IMMEDIATE"))
 
 
-def _existing_collection_jobs(db: Session, site_id: str) -> dict[str, CollectionJob]:
+def _try_normalize_amazon_url(source_url: str) -> str | None:
+    try:
+        return normalize_amazon_product_url(source_url)
+    except ValueError:
+        return None
+
+
+def _existing_collection_jobs(
+    db: Session, site_id: str, source_identities: set[str]
+) -> dict[str, CollectionJob]:
+    if not source_identities:
+        return {}
     rows = (
         db.query(CollectionJob)
-        .filter(CollectionJob.target_site_id == site_id)
+        .filter(
+            CollectionJob.target_site_id == site_id,
+            CollectionJob.source_identity.in_(source_identities),
+        )
         .order_by(CollectionJob.id.desc())
         .all()
     )
     existing_by_url: dict[str, CollectionJob] = {}
     for row in rows:
-        try:
-            normalized = normalize_amazon_product_url(row.source_url)
-        except ValueError:
-            continue
-        existing_by_url.setdefault(normalized, row)
+        if row.source_identity:
+            existing_by_url.setdefault(row.source_identity, row)
+
+    # Legacy rows created before source_identity was introduced are a bounded fallback.
+    missing = source_identities - existing_by_url.keys()
+    if missing:
+        legacy_rows = (
+            db.query(CollectionJob)
+            .filter(
+                func.upper(CollectionJob.target_site_id) == site_id,
+                CollectionJob.source_identity.is_(None),
+            )
+            .order_by(CollectionJob.id.desc())
+            .all()
+        )
+        for row in legacy_rows:
+            normalized = _try_normalize_amazon_url(row.source_url)
+            if normalized in missing:
+                existing_by_url.setdefault(normalized, row)
     return existing_by_url

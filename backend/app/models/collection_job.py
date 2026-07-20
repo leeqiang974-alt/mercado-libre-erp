@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from enum import Enum
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -17,9 +17,13 @@ class CollectionJobStatus(str, Enum):
 
 class CollectionJob(Base):
     __tablename__ = "collection_jobs"
+    __table_args__ = (
+        Index("ix_collection_jobs_site_identity", "target_site_id", "source_identity"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source_url: Mapped[str] = mapped_column(Text)
+    source_identity: Mapped[str | None] = mapped_column(String(256), nullable=True)
     target_site_id: Mapped[str] = mapped_column(String(8), default="MLM")
     status: Mapped[CollectionJobStatus] = mapped_column(default=CollectionJobStatus.PENDING)
     message: Mapped[str] = mapped_column(Text, default="")

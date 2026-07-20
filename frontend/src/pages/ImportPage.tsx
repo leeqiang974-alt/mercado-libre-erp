@@ -75,7 +75,8 @@ export function ImportPage({
   status: string;
 }) {
   const [mode, setMode] = useState<ImportMode>("url");
-  const [sourceUrl, setSourceUrl] = useState("");
+  const [sourceUrls, setSourceUrls] = useState("");
+  const [snapshotUrl, setSnapshotUrl] = useState("");
   const [targetSiteId, setTargetSiteId] = useState("MLM");
   const [html, setHtml] = useState("");
   const [persist, setPersist] = useState(true);
@@ -118,7 +119,7 @@ export function ImportPage({
     setError("");
     setBusyAction("html");
     try {
-      await onImportHtml(sourceUrl, html, targetSiteId, persist);
+      await onImportHtml(snapshotUrl, html, targetSiteId, persist);
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : "Import failed");
     } finally {
@@ -154,14 +155,14 @@ export function ImportPage({
   }
 
   function useSnapshotFallback(job: CollectionJobRecord) {
-    setSourceUrl(job.source_url);
+    setSnapshotUrl(job.source_url);
     setTargetSiteId(job.target_site_id);
     setMode("html");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   const isBusy = Boolean(busyAction);
-  const urlEntries = sourceUrl
+  const urlEntries = sourceUrls
     .split(/\r?\n/)
     .map((entry) => entry.trim())
     .filter(Boolean);
@@ -213,9 +214,9 @@ export function ImportPage({
               <textarea
                 className="batch-url-input"
                 placeholder={"https://www.amazon.com/dp/...\nhttps://www.amazon.ca/dp/..."}
-                value={sourceUrl}
+                value={sourceUrls}
                 onChange={(event) => {
-                  setSourceUrl(event.target.value);
+                  setSourceUrls(event.target.value);
                   setBatchResult(null);
                 }}
               />
@@ -223,8 +224,8 @@ export function ImportPage({
               <input
                 type="url"
                 placeholder="https://www.amazon.com/dp/..."
-                value={sourceUrl}
-                onChange={(event) => setSourceUrl(event.target.value)}
+                value={snapshotUrl}
+                onChange={(event) => setSnapshotUrl(event.target.value)}
               />
             )}
           </label>
@@ -328,7 +329,7 @@ export function ImportPage({
                 />
                 Save as product draft
               </label>
-              <button disabled={!sourceUrl.trim() || !html.trim() || isBusy} onClick={runHtmlImport}>
+              <button disabled={!snapshotUrl.trim() || !html.trim() || isBusy} onClick={runHtmlImport}>
                 {busyAction === "html" ? <LoaderCircle className="spin" size={17} /> : <Upload size={17} />}
                 Import snapshot
               </button>

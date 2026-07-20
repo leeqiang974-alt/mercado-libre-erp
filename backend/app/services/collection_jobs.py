@@ -23,7 +23,11 @@ def create_collection_jobs(
     db: Session, entries: list[tuple[str, str]]
 ) -> list[CollectionJob]:
     jobs = [
-        CollectionJob(source_url=source_url, target_site_id=target_site_id)
+        CollectionJob(
+            source_url=source_url,
+            source_identity=source_url,
+            target_site_id=target_site_id,
+        )
         for source_url, target_site_id in entries
     ]
     db.add_all(jobs)
@@ -33,8 +37,16 @@ def create_collection_jobs(
     return jobs
 
 
-def list_collection_jobs(db: Session) -> list[CollectionJobRead]:
-    rows = db.query(CollectionJob).order_by(CollectionJob.id.desc()).all()
+def list_collection_jobs(
+    db: Session, *, limit: int = 100, offset: int = 0
+) -> list[CollectionJobRead]:
+    rows = (
+        db.query(CollectionJob)
+        .order_by(CollectionJob.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
     return [to_collection_job_read(row) for row in rows]
 
 
