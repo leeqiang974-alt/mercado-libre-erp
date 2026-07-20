@@ -1,7 +1,8 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 import os
-from threading import Barrier
+from threading import Barrier, Lock
 import time
 from uuid import uuid4
 
@@ -18,6 +19,7 @@ from app.models.product_draft import ProductDraft
 from app.models.publish_job import PublishJob
 from app.models.review_result import ReviewDecision, ReviewResult
 from app.models.store import Store
+from app.models.token_credential import TokenCredential
 from app.api.routes.imports import AmazonUrlImport, create_amazon_url_collection_job
 from app.services.amazon.collector import CollectionResult, CollectionStatus
 from app.schemas.drafts import ProductDraftCreate
@@ -28,9 +30,94 @@ from app.services.drafts import update_draft_content
 from app.services.draft_listing_configs import build_configured_draft
 from app.workers import collection_worker
 from app.services import source_products as source_products_service
+from app.services.meli.oauth import MercadoLibreToken
+from app.services.meli.token_vault import (
+    decrypt_token_value,
+    encrypt_token_value,
+    resolve_fresh_store_access_token,
+)
 
 
 POSTGRES_URL = os.getenv("TEST_POSTGRES_URL", "")
+
+
+@pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")
+def test_postgres_serializes_mercado_libre_token_refresh():
+    engine = create_engine(POSTGRES_URL, pool_pre_ping=True)
+    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    marker = uuid4().hex
+    seller_id = f"refresh-{marker}"
+    token_reference = f"meli:{seller_id}"
+    with testing_session() as db:
+        store = Store(
+            site_id="MLM",
+            seller_id=seller_id,
+            display_name="Concurrent refresh test",
+            oauth_status="connected",
+            token_reference=token_reference,
+        )
+        db.add(store)
+        db.flush()
+        store_id = store.id
+        db.add(
+            TokenCredential(
+                store_id=store_id,
+                token_reference=token_reference,
+                encrypted_access_token=encrypt_token_value("old-access", "test-secret"),
+                encrypted_refresh_token=encrypt_token_value("old-refresh", "test-secret"),
+                expires_at=datetime.now(UTC) + timedelta(seconds=10),
+            )
+        )
+        db.commit()
+
+    calls = 0
+    calls_lock = Lock()
+
+    class OAuthClient:
+        async def refresh_token(self, refresh_token: str) -> MercadoLibreToken:
+            nonlocal calls
+            assert refresh_token == "old-refresh"
+            with calls_lock:
+                calls += 1
+            await asyncio.sleep(0.2)
+            return MercadoLibreToken(
+                access_token="new-access",
+                refresh_token="new-refresh",
+                expires_in=21600,
+                user_id=seller_id,
+            )
+
+    def resolve_token():
+        with testing_session() as db:
+            store = db.get(Store, store_id)
+            token = asyncio.run(
+                resolve_fresh_store_access_token(
+                    db=db,
+                    store=store,
+                    encryption_key="test-secret",
+                    oauth_client=OAuthClient(),
+                )
+            )
+            return token, db.in_transaction()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: resolve_token(), range(2)))
+        assert [result[0] for result in results] == ["new-access", "new-access"]
+        assert not any(result[1] for result in results)
+        assert calls == 1
+        with testing_session() as db:
+            credential = db.query(TokenCredential).filter_by(store_id=store_id).one()
+            assert (
+                decrypt_token_value(credential.encrypted_refresh_token, "test-secret")
+                == "new-refresh"
+            )
+    finally:
+        with testing_session() as db:
+            db.query(TokenCredential).filter_by(store_id=store_id).delete()
+            db.query(Store).filter_by(id=store_id).delete()
+            db.commit()
+        engine.dispose()
 
 
 @pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")

@@ -1,10 +1,13 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { CheckCircle2, KeyRound, Link2, RefreshCw, Save, Store as StoreIcon, Trash2 } from "lucide-react";
+import { Activity, CheckCircle2, CircleAlert, KeyRound, Link2, RefreshCw, Save, Store as StoreIcon, Trash2 } from "lucide-react";
 import {
   getIntegrationCredentialStatus,
   getMeliAuthorizationUrl,
   listStores,
+  runIntegrationDiagnostics,
   saveIntegrationCredentials,
+  type IntegrationDiagnosticResult,
+  type IntegrationDiagnostics,
   type IntegrationCredentialStatus,
   type IntegrationCredentialsUpdate,
   type StoreRecord,
@@ -22,10 +25,13 @@ export function StoresPage() {
     nvidia_api_key: "",
   });
   const [savingCredentials, setSavingCredentials] = useState(false);
+  const [diagnosing, setDiagnosing] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<IntegrationDiagnostics | null>(null);
   const hasCredentialChanges = Object.values(credentials).some((value) => value.trim());
 
   async function refreshStores() {
     setLoading(true);
+    setDiagnostics(null);
     try {
       setStores(await listStores());
     } catch (error) {
@@ -56,6 +62,7 @@ export function StoresPage() {
     setStatus("");
     try {
       setCredentialStatus(await saveIntegrationCredentials(payload));
+      setDiagnostics(null);
       setCredentials({
         meli_client_id: "",
         meli_client_secret: "",
@@ -75,6 +82,7 @@ export function StoresPage() {
     setStatus("");
     try {
       setCredentialStatus(await saveIntegrationCredentials(payload));
+      setDiagnostics(null);
       setStatus("Integration credentials cleared.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to clear credentials");
@@ -90,6 +98,21 @@ export function StoresPage() {
       window.location.assign(result.authorization_url);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Authorization failed");
+    }
+  }
+
+  async function diagnoseConnections() {
+    setDiagnosing(true);
+    setStatus("");
+    setDiagnostics(null);
+    try {
+      const result = await runIntegrationDiagnostics();
+      setDiagnostics(result);
+      setStatus("Connection diagnostics completed.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Connection diagnostics failed");
+    } finally {
+      setDiagnosing(false);
     }
   }
 
@@ -119,9 +142,14 @@ export function StoresPage() {
             <h3>Integration credentials</h3>
             <p>{credentialStatus?.meli_redirect_uri ?? ""}</p>
           </div>
-          <button className="icon-text" onClick={saveCredentials} disabled={savingCredentials || !hasCredentialChanges}>
-            <Save size={16} /> Save credentials
-          </button>
+          <div className="section-heading-actions">
+            <button className="secondary-button icon-text" onClick={diagnoseConnections} disabled={diagnosing || savingCredentials}>
+              <Activity size={16} /> Run diagnostics
+            </button>
+            <button className="icon-text" onClick={saveCredentials} disabled={savingCredentials || !hasCredentialChanges}>
+              <Save size={16} /> Save credentials
+            </button>
+          </div>
         </div>
         <div className="credential-provider-list">
           <CredentialRow
@@ -158,6 +186,16 @@ export function StoresPage() {
             clearDisabled={savingCredentials || !credentialStatus?.nvidia_api_key_configured}
           />
         </div>
+        {diagnostics && (
+          <>
+            <div className="diagnostic-result-list">
+              {diagnostics.results.map((result) => (
+                <DiagnosticRow key={`${result.provider}:${result.subject}`} result={result} stores={stores} />
+              ))}
+            </div>
+            <small className="diagnostic-checked-at">Checked {new Date(diagnostics.checked_at).toLocaleString()}</small>
+          </>
+        )}
       </section>
 
       <div className="section-heading">
@@ -195,6 +233,50 @@ export function StoresPage() {
       )}
     </section>
   );
+}
+
+function DiagnosticRow({ result, stores }: { result: IntegrationDiagnosticResult; stores: StoreRecord[] }) {
+  const ready = result.status === "verified" || result.status === "configured";
+  const store = result.store_id ? stores.find((item) => Number(item.id) === result.store_id) : null;
+  const label = result.provider === "mercado_libre"
+    ? store?.display_name ?? "Mercado Libre app"
+    : result.provider === "claude" ? "Claude" : "NVIDIA";
+  return (
+    <div className={`diagnostic-result-row ${ready ? "ready" : "blocked"}`}>
+      {ready ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
+      <strong>{label}</strong>
+      <span>{diagnosticMessage(result)}</span>
+      <small>{result.duration_ms} ms</small>
+    </div>
+  );
+}
+
+function diagnosticMessage(result: IntegrationDiagnosticResult) {
+  const messages: Record<string, string> = {
+    app_credentials_required: "Application credentials required",
+    app_credentials_incomplete: "Application credentials incomplete",
+    oauth_authorization_required: "Seller authorization required",
+    authorized_store_available: "Application configured",
+    connected_store_verification_failed: "No connected store could be verified",
+    api_key_required: "API key required",
+    credentials_valid_model_available: `${result.model} available`,
+    configured_model_not_available: `${result.model} unavailable`,
+    provider_authentication_failed: "Authentication failed",
+    provider_permission_denied: "Permission denied",
+    provider_payment_required: "Payment required",
+    provider_request_rejected: "Request rejected",
+    provider_rate_limited: "Rate limited",
+    provider_unavailable: "Provider unavailable",
+    models_response_invalid: "Invalid provider response",
+    store_not_connected: "Store authorization required",
+    store_token_unavailable: "Store token unavailable",
+    store_reauthorization_required: "Store authorization expired",
+    token_refresh_response_invalid: "Invalid token refresh response",
+    store_identity_mismatch: "Seller identity mismatch",
+    seller_profile_invalid: "Invalid seller profile",
+    store_identity_verified: "Seller identity verified",
+  };
+  return messages[result.code] ?? result.code;
 }
 
 type CredentialKey = "meli_client_id" | "meli_client_secret" | "claude_api_key" | "nvidia_api_key";

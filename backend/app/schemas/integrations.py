@@ -1,4 +1,7 @@
-from pydantic import BaseModel, SecretStr
+from datetime import datetime
+from typing import Literal
+
+from pydantic import BaseModel, Field, SecretStr
 
 
 class IntegrationCredentialsUpdate(BaseModel):
@@ -16,3 +19,31 @@ class IntegrationCredentialStatus(BaseModel):
     claude_model: str
     nvidia_model: str
     meli_redirect_uri: str
+
+
+class IntegrationDiagnosticResult(BaseModel):
+    provider: Literal["mercado_libre", "claude", "nvidia"]
+    subject: str
+    status: Literal[
+        "not_configured",
+        "configured",
+        "authorization_required",
+        "verified",
+        "authentication_failed",
+        "permission_denied",
+        "payment_required",
+        "request_rejected",
+        "rate_limited",
+        "model_unavailable",
+        "unreachable",
+        "invalid_response",
+    ]
+    code: str
+    model: str = ""
+    store_id: int | None = None
+    duration_ms: int = 0
+
+
+class IntegrationDiagnosticsResponse(BaseModel):
+    checked_at: datetime
+    results: list[IntegrationDiagnosticResult] = Field(default_factory=list)

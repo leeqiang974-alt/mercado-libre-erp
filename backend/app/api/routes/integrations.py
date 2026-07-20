@@ -6,7 +6,12 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.session import get_db
-from app.schemas.integrations import IntegrationCredentialStatus, IntegrationCredentialsUpdate
+from app.schemas.integrations import (
+    IntegrationCredentialStatus,
+    IntegrationCredentialsUpdate,
+    IntegrationDiagnosticsResponse,
+)
+from app.services.integration_diagnostics import run_integration_diagnostics
 from app.services.integration_credentials import (
     integration_credential_status,
     update_integration_credentials,
@@ -35,3 +40,10 @@ def save_credentials(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid integration operation ID.") from exc
     return update_integration_credentials(db, payload, settings, operation_id)
+
+
+@router.post("/diagnostics", response_model=IntegrationDiagnosticsResponse)
+async def diagnose_integrations(
+    db: Session = Depends(get_db),
+) -> IntegrationDiagnosticsResponse:
+    return await run_integration_diagnostics(db, settings)

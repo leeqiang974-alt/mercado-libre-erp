@@ -105,3 +105,4 @@ python -m app.worker --queue publish --loop --interval 30 --limit 10
 - Persist and list audit events for AI review and publish execution actions.
 - List review history for a saved product draft from the frontend.
 - Use Claude/NVIDIA provider adapters only when their API keys are configured. Missing keys or provider failures are surfaced explicitly and cannot satisfy the combined publish-review gate.
+- Run explicit, non-publishing connection diagnostics for Mercado Libre seller identity and Claude/NVIDIA credential plus configured-model visibility without exposing secrets or raw provider responses.

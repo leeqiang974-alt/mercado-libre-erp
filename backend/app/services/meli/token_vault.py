@@ -72,26 +72,46 @@ async def resolve_fresh_store_access_token(
     if not _needs_refresh(credential, refresh_window_seconds):
         return decrypt_token_value(credential.encrypted_access_token, encryption_key)
 
+    credential = get_store_credential(db, store, for_update=True)
+    if credential is None:
+        return ""
+    if not _needs_refresh(credential, refresh_window_seconds):
+        access_token = decrypt_token_value(credential.encrypted_access_token, encryption_key)
+        db.commit()
+        return access_token
+
     refresh_token = decrypt_token_value(credential.encrypted_refresh_token, encryption_key)
     if not refresh_token:
+        db.rollback()
         return ""
-    token = await oauth_client.refresh_token(refresh_token)
+    try:
+        token = await oauth_client.refresh_token(refresh_token)
+    except Exception:
+        db.rollback()
+        raise
     upsert_store_token(db, store, token, encryption_key)
     db.commit()
     return token.access_token
 
 
-def get_store_credential(db: Session, store: Store) -> TokenCredential | None:
+def get_store_credential(
+    db: Session,
+    store: Store,
+    *,
+    for_update: bool = False,
+) -> TokenCredential | None:
     if not store.token_reference:
         return None
-    return (
+    query = (
         db.query(TokenCredential)
         .filter(
             TokenCredential.store_id == store.id,
             TokenCredential.token_reference == store.token_reference,
         )
-        .one_or_none()
     )
+    if for_update:
+        query = query.populate_existing().with_for_update()
+    return query.one_or_none()
 
 
 def _needs_refresh(credential: TokenCredential, refresh_window_seconds: int) -> bool:

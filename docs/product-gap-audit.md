@@ -16,13 +16,15 @@ The repository contains an operational local workflow for Amazon URL collection 
 - Claude and NVIDIA failures are explicit. Only the latest persisted combined behavioral audit can satisfy approval and publishing gates.
 - Claude and NVIDIA output follows a versioned strict schema. Unknown decisions or risk levels, missing/extra fields, and wrong types fail closed instead of being aggregated as a pass.
 - Saved provider reviews carry reconciled pricing and complete listing context. Safety policy is isolated in a system message, marketplace content is delimited as untrusted user data, and connected-store/site/non-FULL logistics are revalidated under lock before review persistence and whenever an aggregate review is used.
+- Explicit non-publishing diagnostics normalize Claude/NVIDIA credential and configured-model visibility plus Mercado Libre seller/site identity without returning secrets or provider bodies. An expiring Mercado Libre token may be refreshed as credential maintenance; model-list success is intentionally not treated as proof of paid inference quota.
+- Refresh-token rotation is serialized on the credential row and rechecks expiry after locking, preventing diagnostics and publishing paths from consuming the same Mercado Libre refresh token concurrently.
 - PostgreSQL and clean SQLite migrations, backend tests, frontend production build, and desktop/mobile browser smoke checks pass.
 
 ## Missing or Misleading Behavior
 
 - Amazon collection now reads high-resolution `colorImages` galleries and binds `colorToAsin` groups without cross-variant image leakage, including JSON5-style script objects. Discovered variants can be independently queued to obtain their own page evidence, composite technical rows retain inline weights, and major regional labels/units are normalized conservatively. Complete evidence still cannot be guaranteed for undocumented embedded formats or unrecognized locale-specific labels; selected-page measurements are never copied to sibling variants.
 - Amazon page structure and anti-automation challenges can still require an operator-provided HTML snapshot.
-- Store authorization, live metadata, AI providers, and live publishing are unconfigured in the running environment; encrypted credentials can now be entered from the Stores workspace without restarting API or workers.
+- Store authorization, live metadata, AI providers, and live publishing are unconfigured in the running environment; encrypted credentials can now be entered and checked from the Stores workspace without restarting API or workers.
 - Automated end-to-end tests mock external Amazon, AI, and Mercado Libre behavior; they prove internal orchestration, not live integration.
 - No real Mercado Libre item has been published from this environment, so production credentials, seller shipping preferences, category metadata, and post-publication reconciliation still need a controlled account test.
 

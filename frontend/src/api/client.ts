@@ -120,6 +120,21 @@ export type IntegrationCredentialsUpdate = Partial<{
   nvidia_api_key: string;
 }>;
 
+export type IntegrationDiagnosticResult = {
+  provider: "mercado_libre" | "claude" | "nvidia";
+  subject: string;
+  status: "not_configured" | "configured" | "authorization_required" | "verified" | "authentication_failed" | "permission_denied" | "payment_required" | "request_rejected" | "rate_limited" | "model_unavailable" | "unreachable" | "invalid_response";
+  code: string;
+  model: string;
+  store_id: number | null;
+  duration_ms: number;
+};
+
+export type IntegrationDiagnostics = {
+  checked_at: string;
+  results: IntegrationDiagnosticResult[];
+};
+
 export type PublishJobRecord = {
   id: number;
   product_draft_id: number;
@@ -575,6 +590,14 @@ export async function saveIntegrationCredentials(payload: IntegrationCredentials
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<IntegrationCredentialStatus>;
+}
+
+export async function runIntegrationDiagnostics() {
+  const response = await fetch(`${API_BASE}/api/integrations/diagnostics`, {
+    method: "POST",
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<IntegrationDiagnostics>;
 }
 
 export async function listDrafts() {

@@ -138,3 +138,49 @@ async def test_resolve_fresh_store_access_token_keeps_valid_credentials():
         )
 
     assert access_token == "valid-access-token"
+
+
+@pytest.mark.asyncio
+async def test_resolve_fresh_store_access_token_rolls_back_failed_refresh():
+    testing_session = make_session()
+    with testing_session() as db:
+        store = Store(
+            site_id="MLM",
+            seller_id="seller-1",
+            display_name="Demo Store",
+            oauth_status="connected",
+            token_reference="meli:seller-1",
+        )
+        db.add(store)
+        db.flush()
+        db.add(
+            TokenCredential(
+                store_id=store.id,
+                token_reference="meli:seller-1",
+                encrypted_access_token=encrypt_token_value("old-access-token", "test-secret"),
+                encrypted_refresh_token=encrypt_token_value("old-refresh-token", "test-secret"),
+                expires_at=datetime.now(UTC) + timedelta(seconds=30),
+            )
+        )
+        db.commit()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"message": "invalid_grant"})
+
+    client = MercadoLibreOAuthClient(
+        client_id="client-123",
+        client_secret="secret-456",
+        redirect_uri="http://localhost:8000/api/stores/meli/callback",
+        transport=httpx.MockTransport(handler),
+    )
+    with testing_session() as db:
+        store = db.get(Store, 1)
+        with pytest.raises(httpx.HTTPStatusError):
+            await resolve_fresh_store_access_token(
+                db=db,
+                store=store,
+                encryption_key="test-secret",
+                oauth_client=client,
+                refresh_window_seconds=300,
+            )
+        assert not db.in_transaction()
