@@ -47,6 +47,20 @@ def test_parse_amazon_html_extracts_core_fields():
     }
 
 
+def test_parse_amazon_html_ignores_recommendation_price_outside_product_area():
+    html = """
+    <span id="productTitle">Unavailable product</span>
+    <div id="recommendations">
+      <span class="a-price"><span class="a-offscreen">$17.77</span></span>
+    </div>
+    """
+
+    parsed = parse_amazon_html(html, "https://www.amazon.com/dp/B000TEST01")
+
+    assert parsed["title"] == "Unavailable product"
+    assert parsed["price"] == {"amount": None, "currency": ""}
+
+
 def test_parse_amazon_detail_bullets_extracts_package_measurements():
     html = """
     <span id="productTitle">Package evidence</span>

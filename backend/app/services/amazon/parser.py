@@ -7,6 +7,18 @@ from bs4 import BeautifulSoup
 import json5
 
 
+PRODUCT_TITLE_SELECTOR = "#productTitle"
+PRODUCT_PRICE_SELECTOR = (
+    "#corePrice_feature_div .a-offscreen, "
+    "#apex_desktop .a-price .a-offscreen, "
+    "#desktop_buybox .a-price .a-offscreen, "
+    "#buybox .a-price .a-offscreen, "
+    "#price_inside_buybox, #priceblock_ourprice, #priceblock_dealprice, "
+    "#productTitle + .a-price .a-offscreen"
+)
+PRODUCT_IMAGE_SELECTOR = "#landingImage, #altImages img, #imageBlock img"
+
+
 def _text(node) -> str:
     return " ".join(node.get_text(" ", strip=True).split()) if node else ""
 
@@ -773,11 +785,8 @@ def _extract_measurements(
 
 def parse_amazon_html(html: str, source_url: str) -> dict:
     soup = BeautifulSoup(html, "html.parser")
-    title = _text(soup.select_one("#productTitle"))
-    price_node = soup.select_one(
-        "#corePrice_feature_div .a-offscreen, .a-price .a-offscreen, "
-        "#priceblock_ourprice, #priceblock_dealprice"
-    )
+    title = _text(soup.select_one(PRODUCT_TITLE_SELECTOR))
+    price_node = soup.select_one(PRODUCT_PRICE_SELECTOR)
     price = _parse_price(_text(price_node), source_url)
     byline = _text(soup.select_one("#bylineInfo"))
     brand = byline.replace("Brand:", "").replace("Visit the", "").replace("Store", "").strip()

@@ -9,6 +9,9 @@ from app.schemas.drafts import ProductDraftCreate
 from app.schemas.source_products import AmazonSourceSnapshot
 from app.services.amazon.normalizer import normalize_amazon_product
 from app.services.amazon.parser import (
+    PRODUCT_IMAGE_SELECTOR,
+    PRODUCT_PRICE_SELECTOR,
+    PRODUCT_TITLE_SELECTOR,
     extract_displayed_asin,
     extract_amazon_asin,
     extract_snapshot_asins,
@@ -62,6 +65,33 @@ AMAZON_DOMAINS = {
     "amazon.sa",
 }
 
+AMAZON_BROWSER_LOCALES = {
+    "amazon.com": "en-US",
+    "amazon.ca": "en-CA",
+    "amazon.com.mx": "es-MX",
+    "amazon.com.br": "pt-BR",
+    "amazon.co.uk": "en-GB",
+    "amazon.de": "de-DE",
+    "amazon.fr": "fr-FR",
+    "amazon.it": "it-IT",
+    "amazon.es": "es-ES",
+    "amazon.nl": "nl-NL",
+    "amazon.co.jp": "ja-JP",
+    "amazon.in": "en-IN",
+    "amazon.com.au": "en-AU",
+    "amazon.sg": "en-SG",
+    "amazon.ae": "en-AE",
+    "amazon.sa": "en-SA",
+}
+
+PRODUCT_CONTENT_READY = f"""
+() => Boolean(
+    document.querySelector('{PRODUCT_TITLE_SELECTOR}') &&
+    document.querySelector('{PRODUCT_PRICE_SELECTOR}') &&
+    document.querySelector('{PRODUCT_IMAGE_SELECTOR}')
+)
+"""
+
 
 def is_allowed_amazon_url(url: str) -> bool:
     parsed = urlparse(url)
@@ -88,6 +118,27 @@ def normalize_amazon_product_url(url: str) -> str:
     asin = extract_amazon_asin(source_url)
     assert asin is not None
     return f"https://{domain}/dp/{asin}"
+
+
+def amazon_browser_language(url: str) -> tuple[str, str]:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    domain = next(
+        (
+            domain
+            for domain in sorted(AMAZON_BROWSER_LOCALES, key=len, reverse=True)
+            if host == domain or host.endswith(f".{domain}")
+        ),
+        "amazon.com",
+    )
+    locale = AMAZON_BROWSER_LOCALES[domain]
+    language = locale.split("-", 1)[0]
+    fallbacks = [locale]
+    if language != locale:
+        fallbacks.append(f"{language};q=0.9")
+    if language != "en":
+        fallbacks.append("en;q=0.8")
+    return locale, ",".join(fallbacks)
 
 
 def requires_manual_action(html: str) -> bool:
@@ -127,6 +178,7 @@ async def fetch_amazon_html_with_playwright(url: str) -> str:
 
     async with async_playwright() as playwright:
         profile_dir = os.getenv("AMAZON_BROWSER_PROFILE_DIR", "").strip()
+        locale, accept_language = amazon_browser_language(url)
         context = await playwright.chromium.launch_persistent_context(
             profile_dir or None,
             headless=True,
@@ -135,20 +187,27 @@ async def fetch_amazon_html_with_playwright(url: str) -> str:
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/131.0.0.0 Safari/537.36"
             ),
-            locale="en-US",
+            locale=locale,
             viewport={"width": 1440, "height": 1000},
-            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+            extra_http_headers={"Accept-Language": accept_language},
         )
         page = context.pages[0] if context.pages else await context.new_page()
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
             if not is_allowed_amazon_url(page.url):
                 raise ValueError("Amazon navigation redirected to a disallowed host.")
+            initial_html = await page.content()
+            if requires_manual_action(initial_html):
+                return initial_html
             try:
-                await page.wait_for_selector("#productTitle", timeout=8_000)
+                await page.wait_for_load_state("load", timeout=8_000)
             except PlaywrightTimeoutError:
                 pass
-            await page.wait_for_timeout(2_000)
+            try:
+                await page.wait_for_function(PRODUCT_CONTENT_READY, timeout=12_000)
+            except PlaywrightTimeoutError:
+                pass
+            await page.wait_for_timeout(1_000)
             return await page.content()
         finally:
             await context.close()

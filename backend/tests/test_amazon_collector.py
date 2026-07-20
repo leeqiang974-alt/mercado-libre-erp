@@ -1,6 +1,10 @@
 import pytest
 
-from app.services.amazon.collector import CollectionStatus, collect_amazon_page
+from app.services.amazon.collector import (
+    CollectionStatus,
+    amazon_browser_language,
+    collect_amazon_page,
+)
 
 
 NORMAL_HTML = """
@@ -9,6 +13,21 @@ NORMAL_HTML = """
 <span class="a-price"><span class="a-offscreen">$12.50</span></span>
 <img id="landingImage" src="https://example.com/bottle.jpg" />
 """
+
+
+@pytest.mark.parametrize(
+    ("url", "locale", "accept_language"),
+    [
+        ("https://www.amazon.com/dp/B000TEST01", "en-US", "en-US,en;q=0.9"),
+        ("https://amazon.com.mx/dp/B000TEST01", "es-MX", "es-MX,es;q=0.9,en;q=0.8"),
+        ("https://www.amazon.com.br/dp/B000TEST01", "pt-BR", "pt-BR,pt;q=0.9,en;q=0.8"),
+        ("https://www.amazon.co.jp/dp/B000TEST01", "ja-JP", "ja-JP,ja;q=0.9,en;q=0.8"),
+    ],
+)
+def test_amazon_browser_language_matches_storefront(
+    url: str, locale: str, accept_language: str
+):
+    assert amazon_browser_language(url) == (locale, accept_language)
 
 
 @pytest.mark.asyncio
