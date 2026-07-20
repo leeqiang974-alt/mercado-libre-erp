@@ -5,7 +5,16 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.api.routes import audit_events, drafts, imports, metadata, publishing, reviews, stores
+from app.api.routes import (
+    audit_events,
+    drafts,
+    imports,
+    integrations,
+    metadata,
+    publishing,
+    reviews,
+    stores,
+)
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.collection_job import CollectionJob
@@ -13,6 +22,7 @@ from app.models.product_draft import ProductDraft
 from app.models.publish_job import PublishJob
 from app.models.store import Store
 from app.models.registry import import_all_models
+from app.services.integration_credentials import integration_credential_status
 
 
 settings = get_settings()
@@ -34,6 +44,7 @@ app.include_router(reviews.router)
 app.include_router(publishing.router)
 app.include_router(stores.router)
 app.include_router(audit_events.router)
+app.include_router(integrations.router)
 
 
 @app.get("/health")
@@ -48,6 +59,7 @@ def system_readiness(db: Session = Depends(get_db)) -> dict[str, object]:
 
     database_ready = True
     counts = {"stores": 0, "drafts": 0, "collection_jobs": 0, "publish_jobs": 0}
+    credential_status = None
     try:
         counts = {
             "stores": count(Store),
@@ -55,6 +67,7 @@ def system_readiness(db: Session = Depends(get_db)) -> dict[str, object]:
             "collection_jobs": count(CollectionJob),
             "publish_jobs": count(PublishJob),
         }
+        credential_status = integration_credential_status(db, settings)
     except SQLAlchemyError:
         db.rollback()
         database_ready = False
@@ -64,14 +77,20 @@ def system_readiness(db: Session = Depends(get_db)) -> dict[str, object]:
         "amazon_collector": True,
         "mercado_libre": {
             "credentials_configured": bool(
-                settings.meli_client_id and settings.meli_client_secret
+                credential_status
+                and credential_status.meli_client_id_configured
+                and credential_status.meli_client_secret_configured
             ),
             "connected_stores": counts["stores"],
             "live_publish_enabled": settings.allow_live_publish,
         },
         "ai": {
-            "claude_configured": bool(settings.claude_api_key),
-            "nvidia_configured": bool(settings.nvidia_api_key),
+            "claude_configured": bool(
+                credential_status and credential_status.claude_api_key_configured
+            ),
+            "nvidia_configured": bool(
+                credential_status and credential_status.nvidia_api_key_configured
+            ),
         },
         "counts": {
             "drafts": counts["drafts"],

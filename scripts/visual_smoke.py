@@ -13,7 +13,35 @@ APP_URL = os.getenv("VISUAL_APP_URL", "http://127.0.0.1:5173")
 
 
 def mock_store_capabilities(page: Page) -> None:
+    credential_state = {
+        "meli_client_id_configured": False,
+        "meli_client_secret_configured": False,
+        "claude_api_key_configured": False,
+        "nvidia_api_key_configured": False,
+        "claude_model": "claude-sonnet-4-6",
+        "nvidia_model": "meta/llama-3.1-70b-instruct",
+        "meli_redirect_uri": "http://localhost:8000/api/stores/meli/callback",
+    }
+
+    def fulfill_credentials(route) -> None:
+        if route.request.method == "PUT":
+            payload = json.loads(route.request.post_data or "{}")
+            for key, status_key in (
+                ("meli_client_id", "meli_client_id_configured"),
+                ("meli_client_secret", "meli_client_secret_configured"),
+                ("claude_api_key", "claude_api_key_configured"),
+                ("nvidia_api_key", "nvidia_api_key_configured"),
+            ):
+                if key in payload:
+                    credential_state[status_key] = bool(str(payload[key]).strip())
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(credential_state),
+        )
+
     page.route("**/api/drafts", fulfill_drafts)
+    page.route("**/api/integrations/credentials", fulfill_credentials)
     page.route(
         "**/api/drafts/2/listing-config?optional=true",
         fulfill_listing_config,
@@ -533,9 +561,20 @@ def inspect_stores_workspace(page: Page) -> dict[str, object]:
     page.get_by_role("button", name="Stores", exact=True).click()
     page.get_by_role("heading", name="Authorized stores", exact=True).wait_for()
     page.get_by_role("button", name="Connect store", exact=True).wait_for()
+    assert page.get_by_role("button", name="Connect store", exact=True).is_disabled()
+    page.get_by_role("heading", name="Integration credentials", exact=True).wait_for()
+    assert page.locator('.credential-provider-row input[type="password"]').count() == 4
+    claude = page.locator(".credential-provider-row").filter(has_text="Claude")
+    claude.get_by_label("API key", exact=True).fill("visual-secret-not-rendered")
+    page.get_by_role("button", name="Save credentials", exact=True).click()
+    claude.get_by_text("claude-sonnet-4-6", exact=True).wait_for()
+    assert claude.get_by_label("API key", exact=True).input_value() == ""
     assert "token_reference" not in page.locator("body").inner_text()
+    assert "visual-secret-not-rendered" not in page.locator("body").inner_text()
     return {
         "connect_available": page.get_by_role("button", name="Connect store").is_enabled(),
+        "connect_requires_credentials": True,
+        "credential_controls": 4,
         "horizontal_overflow": page.evaluate("document.documentElement.scrollWidth > innerWidth"),
     }
 

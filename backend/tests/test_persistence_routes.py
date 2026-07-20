@@ -143,6 +143,8 @@ def test_import_amazon_html_rejects_asin_identity_mismatch():
 
 
 def test_oauth_callback_persists_store_without_returning_tokens(monkeypatch):
+    monkeypatch.setattr(stores.settings, "meli_client_id", "client-123")
+    monkeypatch.setattr(stores.settings, "meli_client_secret", "secret-456")
     client, testing_session = make_client()
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -158,7 +160,7 @@ def test_oauth_callback_persists_store_without_returning_tokens(monkeypatch):
             },
         )
 
-    def fake_client() -> MercadoLibreOAuthClient:
+    def fake_client(db=None) -> MercadoLibreOAuthClient:
         return MercadoLibreOAuthClient(
             client_id="client-123",
             client_secret="secret-456",

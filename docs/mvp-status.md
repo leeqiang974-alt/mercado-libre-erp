@@ -61,7 +61,9 @@ Implemented:
 - Monetary AI cost is deliberately not inferred from token counts until a versioned provider/model price configuration is supplied.
 - API flow for URL/HTML import, persisted source products, persisted drafts, persisted stores, review, metadata, publish preview, and guarded publish execution.
 - React MVP shell for import, saved draft list, Claude/NVIDIA review buttons, publishing metadata lookup, publish job list, publishing readiness, connected store list, and store authorization link startup.
-- Docker Compose services for PostgreSQL, Redis, backend API, collection worker, and publish worker.
+- Operator integration settings for encrypted Mercado Libre App, Claude, and NVIDIA credentials. Secret inputs are write-only, status responses never return values, and store authorization remains disabled until both Mercado Libre App fields are configured.
+- API routes and the publish worker resolve database-backed credentials on each execution, with environment variables used only when no database override exists; updates do not require a service restart.
+- Docker Compose services for PostgreSQL, Redis, backend API, collection worker, and publish worker, with PostgreSQL and Redis data bind-mounted under the D-drive project tree.
 - Compose migration gate (`alembic upgrade head`) plus database/Redis/API health checks and restart policies.
 
 Not connected yet:
@@ -71,14 +73,15 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 206 passed, with 5 PostgreSQL-only tests skipped in the default run.
+- Backend suite: 213 passed, with 5 PostgreSQL-only tests skipped in the default run.
 - Docker PostgreSQL integration run: 5 passed, including concurrent collection, publish-job, and source-variant draft deduplication plus atomic draft-version invalidation under simultaneous edits.
-- PostgreSQL migrations through `20260720_0020` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, review execution metadata, structured source snapshots, source-variant draft bindings, structured source measurements, and provider usage/request telemetry.
+- PostgreSQL migrations through `20260720_0021` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, review execution metadata, structured source snapshots, source-variant draft bindings, structured source measurements, provider usage/request telemetry, and encrypted integration credentials.
 - The complete Alembic chain upgraded to head and downgraded to base successfully on a disposable D-drive SQLite database.
 - Frontend production build passed.
-- Desktop and mobile browser smoke passed for all 18 sites, Classic/Premium controls, two verified non-FULL shipping options, provider review metadata/token/request-ID rows, batch result rows, three source images, three source variants, two source measurements, variant draft creation, three category attribute suggestions, required-attribute save gates, saved configuration readiness, overflow, console errors, and failed responses.
+- Desktop and mobile browser smoke passed for all 18 sites, Classic/Premium controls, two verified non-FULL shipping options, provider review metadata/token/request-ID rows, four write-only integration credential controls, credential-gated store authorization, batch result rows, three source images, three source variants, two source measurements, variant draft creation, three category attribute suggestions, required-attribute save gates, saved configuration readiness, overflow, console errors, and failed responses.
 - A live local PostgreSQL/API/browser integration smoke inserted a temporary collected source, read its structured measurements through the running backend, rendered both cards in the real frontend, and removed the test records afterward.
 - A live local PostgreSQL/API/browser integration smoke persisted temporary provider token/request telemetry, read it through the running backend, rendered it in review history, and removed the draft, review, and audit records afterward.
+- A live local PostgreSQL/API/browser integration smoke creates a temporary database, applies all migrations, starts an isolated API, verifies four ciphertext-only credential rows and status-only UI rendering, then terminates the API and drops the database without touching production credential rows.
 
 Next production phase:
 

@@ -15,6 +15,7 @@ from app.services.ai.provider_utils import AIProviderError
 from app.services.ai.review_policy import review_draft_locally
 from app.services.audit_events import create_audit_event
 from app.services.draft_listing_configs import build_configured_draft
+from app.services.integration_credentials import resolve_integration_credentials
 from app.services.reviews import (
     ReviewBatchAudit,
     ReviewExecution,
@@ -55,7 +56,8 @@ async def review_claude(
     db: Session = Depends(get_db),
 ) -> ReviewResponse:
     draft, draft_version = _canonical_review_draft(db, product_draft_id, draft)
-    client = ClaudeReviewClient(api_key=settings.claude_api_key, model=settings.claude_model)
+    credentials = resolve_integration_credentials(db, settings)
+    client = ClaudeReviewClient(api_key=credentials.claude_api_key, model=settings.claude_model)
     started = perf_counter()
     try:
         response = await client.review_draft(draft)
@@ -82,7 +84,8 @@ async def review_nvidia(
     db: Session = Depends(get_db),
 ) -> ReviewResponse:
     draft, draft_version = _canonical_review_draft(db, product_draft_id, draft)
-    client = NvidiaReviewClient(api_key=settings.nvidia_api_key, model=settings.nvidia_model)
+    credentials = resolve_integration_credentials(db, settings)
+    client = NvidiaReviewClient(api_key=credentials.nvidia_api_key, model=settings.nvidia_model)
     started = perf_counter()
     try:
         response = await client.pre_screen_draft(draft)
@@ -110,11 +113,12 @@ async def behavioral_audit(
 ) -> BehavioralAuditResponse:
     """Run NVIDIA pre-screening and Claude deep review before publish approval."""
     draft, draft_version = _canonical_review_draft(db, product_draft_id, draft)
+    credentials = resolve_integration_credentials(db, settings)
     nvidia_client = NvidiaReviewClient(
-        api_key=settings.nvidia_api_key, model=settings.nvidia_model
+        api_key=credentials.nvidia_api_key, model=settings.nvidia_model
     )
     claude_client = ClaudeReviewClient(
-        api_key=settings.claude_api_key, model=settings.claude_model
+        api_key=credentials.claude_api_key, model=settings.claude_model
     )
     nvidia_started = perf_counter()
     try:

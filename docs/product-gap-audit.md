@@ -9,7 +9,7 @@ The repository contains an operational local workflow for Amazon URL collection 
 ## Verified Real Behavior
 
 - Docker API, frontend, PostgreSQL, Redis, collection worker, and publish worker run with localhost-only ports.
-- PostgreSQL data is bind-mounted under the project on D drive; Docker Desktop's WSL disk is configured under `D:\\DockerDesktop\\wsl`.
+- PostgreSQL and Redis data are bind-mounted under the project on D drive; Docker Desktop's WSL disk is configured under `D:\\DockerDesktop\\wsl`.
 - Amazon URL jobs persist success, manual-action, timeout, and failure outcomes. Operator HTML snapshots require a matching Amazon ASIN and complete core product fields.
 - Mercado Libre publishing supports all configured sites and Classic/Premium offers while excluding FULL logistics before and after item creation.
 - Publish outcomes that may have created an item but cannot be confirmed are quarantined for manual reconciliation and cannot be retried automatically.
@@ -20,7 +20,7 @@ The repository contains an operational local workflow for Amazon URL collection 
 
 - Amazon collection still cannot guarantee a complete image set or per-variant dimensions/weight; when the selected page exposes item/package measurements, they are now retained as structured evidence without being copied to sibling variants.
 - Amazon page structure and anti-automation challenges can still require an operator-provided HTML snapshot.
-- Store authorization, live metadata, AI providers, and live publishing are unconfigured in the running environment.
+- Store authorization, live metadata, AI providers, and live publishing are unconfigured in the running environment; encrypted credentials can now be entered from the Stores workspace without restarting API or workers.
 - Automated end-to-end tests mock external Amazon, AI, and Mercado Libre behavior; they prove internal orchestration, not live integration.
 - No real Mercado Libre item has been published from this environment, so production credentials, seller shipping preferences, category metadata, and post-publication reconciliation still need a controlled account test.
 

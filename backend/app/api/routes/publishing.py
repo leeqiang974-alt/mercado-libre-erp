@@ -21,6 +21,7 @@ from app.schemas.publishing import (
 from app.schemas.reviews import ReviewResponse
 from app.services.draft_approvals import is_product_draft_approved
 from app.services.draft_listing_configs import build_configured_draft
+from app.services.integration_credentials import resolve_integration_credentials
 from app.services.audit_events import create_audit_event
 from app.services.meli.client import MercadoLibreClient
 from app.services.meli.category_validation import validate_category_attributes
@@ -48,10 +49,11 @@ settings = get_settings()
 SERVER_LISTING_TYPE_IDS = sorted(SUPPORTED_LISTING_TYPE_IDS)
 
 
-def create_oauth_client() -> MercadoLibreOAuthClient:
+def create_oauth_client(db: Session) -> MercadoLibreOAuthClient:
+    credentials = resolve_integration_credentials(db, settings)
     return MercadoLibreOAuthClient(
-        client_id=settings.meli_client_id,
-        client_secret=settings.meli_client_secret,
+        client_id=credentials.meli_client_id,
+        client_secret=credentials.meli_client_secret,
         redirect_uri=settings.meli_redirect_uri,
     )
 
@@ -257,7 +259,7 @@ def _validate_current_store_shipping(
                 db=db,
                 store=store,
                 encryption_key=settings.token_encryption_key,
-                oauth_client=create_oauth_client(),
+                oauth_client=create_oauth_client(db),
             )
         )
     except httpx.HTTPError:
@@ -433,7 +435,7 @@ async def _execute_with_payload(
         db=db,
         store=store,
         encryption_key=settings.token_encryption_key,
-        oauth_client=create_oauth_client(),
+        oauth_client=create_oauth_client(db),
     )
     if not access_token:
         result = PublishExecutionResult(status="blocked", errors=["store_access_token_required"])

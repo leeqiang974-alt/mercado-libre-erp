@@ -7,6 +7,7 @@ from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.store import Store
 from app.services.meli.client import MercadoLibreClient
+from app.services.integration_credentials import resolve_integration_credentials
 from app.services.meli.oauth import (
     MercadoLibreOAuthClient,
     build_authorization_url,
@@ -21,10 +22,11 @@ router = APIRouter(prefix="/api/stores", tags=["stores"])
 settings = get_settings()
 
 
-def create_oauth_client() -> MercadoLibreOAuthClient:
+def create_oauth_client(db: Session) -> MercadoLibreOAuthClient:
+    credentials = resolve_integration_credentials(db, settings)
     return MercadoLibreOAuthClient(
-        client_id=settings.meli_client_id,
-        client_secret=settings.meli_client_secret,
+        client_id=credentials.meli_client_id,
+        client_secret=credentials.meli_client_secret,
         redirect_uri=settings.meli_redirect_uri,
     )
 
@@ -34,13 +36,17 @@ def create_meli_client(access_token: str) -> MercadoLibreClient:
 
 
 @router.get("/meli/authorization-url")
-def get_meli_authorization_url() -> dict[str, str]:
-    if not settings.meli_client_id:
-        raise HTTPException(status_code=400, detail="MELI_CLIENT_ID is not configured.")
+def get_meli_authorization_url(db: Session = Depends(get_db)) -> dict[str, str]:
+    credentials = resolve_integration_credentials(db, settings)
+    if not credentials.meli_client_id or not credentials.meli_client_secret:
+        raise HTTPException(
+            status_code=400,
+            detail="Mercado Libre application credentials are not configured.",
+        )
     state = create_state_token(settings.token_encryption_key)
     return {
         "authorization_url": build_authorization_url(
-            client_id=settings.meli_client_id,
+            client_id=credentials.meli_client_id,
             redirect_uri=settings.meli_redirect_uri,
             state=state,
         ),
@@ -53,7 +59,13 @@ async def meli_callback(
 ) -> RedirectResponse:
     if not verify_state_token(state, settings.token_encryption_key):
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state.")
-    token = await create_oauth_client().exchange_code(code)
+    credentials = resolve_integration_credentials(db, settings)
+    if not credentials.meli_client_id or not credentials.meli_client_secret:
+        raise HTTPException(
+            status_code=409,
+            detail="Mercado Libre application credentials changed during authorization.",
+        )
+    token = await create_oauth_client(db).exchange_code(code)
     seller_id = str(token.user_id)
     try:
         profile = await create_meli_client(token.access_token).get("/users/me")
@@ -124,7 +136,7 @@ async def get_store_shipping_options(
             db=db,
             store=store,
             encryption_key=settings.token_encryption_key,
-            oauth_client=create_oauth_client(),
+            oauth_client=create_oauth_client(db),
         )
         if not access_token:
             raise HTTPException(status_code=409, detail="Store access token is unavailable.")

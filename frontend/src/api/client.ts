@@ -103,6 +103,23 @@ export type StoreRecord = {
   oauth_status: string;
 };
 
+export type IntegrationCredentialStatus = {
+  meli_client_id_configured: boolean;
+  meli_client_secret_configured: boolean;
+  claude_api_key_configured: boolean;
+  nvidia_api_key_configured: boolean;
+  claude_model: string;
+  nvidia_model: string;
+  meli_redirect_uri: string;
+};
+
+export type IntegrationCredentialsUpdate = Partial<{
+  meli_client_id: string;
+  meli_client_secret: string;
+  claude_api_key: string;
+  nvidia_api_key: string;
+}>;
+
 export type PublishJobRecord = {
   id: number;
   product_draft_id: number;
@@ -486,6 +503,22 @@ export async function getMeliAuthorizationUrl() {
   const response = await fetch(`${API_BASE}/api/stores/meli/authorization-url`);
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<{ authorization_url: string }>;
+}
+
+export async function getIntegrationCredentialStatus() {
+  const response = await fetch(`${API_BASE}/api/integrations/credentials`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<IntegrationCredentialStatus>;
+}
+
+export async function saveIntegrationCredentials(payload: IntegrationCredentialsUpdate) {
+  const response = await fetch(`${API_BASE}/api/integrations/credentials`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<IntegrationCredentialStatus>;
 }
 
 export async function listDrafts() {

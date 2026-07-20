@@ -1,8 +1,24 @@
 from fastapi.testclient import TestClient
+import pytest
 
 from app.api.routes import reviews
 from app.main import app
 from app.schemas.reviews import ReviewResponse
+from app.services.integration_credentials import ResolvedIntegrationCredentials
+
+
+@pytest.fixture(autouse=True)
+def resolve_credentials_from_test_settings(monkeypatch):
+    monkeypatch.setattr(
+        reviews,
+        "resolve_integration_credentials",
+        lambda db, settings: ResolvedIntegrationCredentials(
+            meli_client_id=settings.meli_client_id,
+            meli_client_secret=settings.meli_client_secret,
+            claude_api_key=settings.claude_api_key,
+            nvidia_api_key=settings.nvidia_api_key,
+        ),
+    )
 
 
 def draft_payload():

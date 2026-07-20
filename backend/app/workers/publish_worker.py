@@ -12,6 +12,7 @@ from app.schemas.publishing import PublishExecutionResult
 from app.services.audit_events import create_audit_event
 from app.services.draft_approvals import is_product_draft_approved
 from app.services.draft_listing_configs import build_configured_draft
+from app.services.integration_credentials import resolve_integration_credentials
 from app.services.meli.client import MercadoLibreClient
 from app.services.meli.category_validation import validate_category_attributes
 from app.services.meli.oauth import MercadoLibreOAuthClient
@@ -184,7 +185,7 @@ async def _publish_job(
         db=db,
         store=store,
         encryption_key=token_encryption_key or settings.token_encryption_key,
-        oauth_client=_create_oauth_client(),
+        oauth_client=_create_oauth_client(db),
     )
     if not access_token:
         return PublishExecutionResult(status="blocked", errors=["store_access_token_required"])
@@ -209,11 +210,12 @@ async def _publish_job(
         )
 
 
-def _create_oauth_client() -> MercadoLibreOAuthClient:
+def _create_oauth_client(db: Session) -> MercadoLibreOAuthClient:
     settings = get_settings()
+    credentials = resolve_integration_credentials(db, settings)
     return MercadoLibreOAuthClient(
-        client_id=settings.meli_client_id,
-        client_secret=settings.meli_client_secret,
+        client_id=credentials.meli_client_id,
+        client_secret=credentials.meli_client_secret,
         redirect_uri=settings.meli_redirect_uri,
     )
 

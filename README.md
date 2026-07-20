@@ -32,7 +32,7 @@ docker compose up -d
 docker compose up -d backend collection_worker publish_worker
 ```
 
-Compose automatically waits for PostgreSQL, runs `alembic upgrade head` through the one-shot `migrate` service, and only then starts the API and workers. PostgreSQL, Redis, the API, and both workers have health/restart safeguards for long-running local deployments.
+Compose automatically waits for PostgreSQL, runs `alembic upgrade head` through the one-shot `migrate` service, and only then starts the API and workers. PostgreSQL and Redis persist through project-local bind mounts under `data/` on D drive; the API and both workers have health/restart safeguards for long-running local deployments.
 
 ## Database Migrations
 

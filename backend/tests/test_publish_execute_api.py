@@ -208,7 +208,7 @@ def test_publish_execute_route_refreshes_expiring_store_token(monkeypatch):
             },
         )
 
-    def fake_oauth_client() -> MercadoLibreOAuthClient:
+    def fake_oauth_client(db=None) -> MercadoLibreOAuthClient:
         return MercadoLibreOAuthClient(
             client_id="client-123",
             client_secret="secret-456",

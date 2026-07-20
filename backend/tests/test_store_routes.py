@@ -40,6 +40,7 @@ def teardown_function():
 
 def test_authorization_url_route_returns_url(monkeypatch):
     monkeypatch.setattr(stores.settings, "meli_client_id", "client-123")
+    monkeypatch.setattr(stores.settings, "meli_client_secret", "secret-456")
     monkeypatch.setattr(
         stores.settings,
         "meli_redirect_uri",
@@ -71,6 +72,8 @@ def test_callback_rejects_invalid_oauth_state(monkeypatch):
 
 
 def test_callback_exchanges_code_without_returning_tokens(monkeypatch):
+    monkeypatch.setattr(stores.settings, "meli_client_id", "client-123")
+    monkeypatch.setattr(stores.settings, "meli_client_secret", "secret-456")
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and request.url.path == "/users/me":
             return httpx.Response(200, json={"id": 123, "site_id": "MLM", "nickname": "seller"})
@@ -84,7 +87,7 @@ def test_callback_exchanges_code_without_returning_tokens(monkeypatch):
             },
         )
 
-    def fake_client() -> MercadoLibreOAuthClient:
+    def fake_client(db=None) -> MercadoLibreOAuthClient:
         return MercadoLibreOAuthClient(
             client_id="client-123",
             client_secret="secret-456",
@@ -120,6 +123,8 @@ def test_callback_exchanges_code_without_returning_tokens(monkeypatch):
 
 
 def test_store_shipping_options_exclude_full(monkeypatch):
+    monkeypatch.setattr(stores.settings, "meli_client_id", "client-123")
+    monkeypatch.setattr(stores.settings, "meli_client_secret", "secret-456")
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/users/me":
             return httpx.Response(200, json={"id": 123, "site_id": "MLM"})
@@ -146,7 +151,7 @@ def test_store_shipping_options_exclude_full(monkeypatch):
     monkeypatch.setattr(
         stores,
         "create_oauth_client",
-        lambda: MercadoLibreOAuthClient(
+        lambda db=None: MercadoLibreOAuthClient(
             client_id="client-123",
             client_secret="secret-456",
             redirect_uri="http://localhost:8000/api/stores/meli/callback",
