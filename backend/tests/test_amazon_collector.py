@@ -98,7 +98,7 @@ async def test_collect_amazon_page_marks_incomplete_page_for_manual_action():
 
 
 @pytest.mark.asyncio
-async def test_collect_amazon_page_retries_transient_incomplete_page():
+async def test_collect_amazon_page_does_not_immediately_retry_incomplete_page():
     attempts = 0
 
     async def fake_fetcher(url: str) -> str:
@@ -114,6 +114,6 @@ async def test_collect_amazon_page_retries_transient_incomplete_page():
         html_fetcher=fake_fetcher,
     )
 
-    assert attempts == 2
-    assert result.status == CollectionStatus.COLLECTED
-    assert result.draft is not None
+    assert attempts == 1
+    assert result.status == CollectionStatus.NEEDS_MANUAL_ACTION
+    assert "incomplete" in result.message.lower()

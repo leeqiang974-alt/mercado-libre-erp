@@ -1,4 +1,5 @@
 def import_all_models() -> None:
+    import app.models.amazon_domain_throttle  # noqa: F401
     import app.models.audit_event  # noqa: F401
     import app.models.collection_job  # noqa: F401
     import app.models.draft_listing_config  # noqa: F401

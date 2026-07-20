@@ -18,6 +18,7 @@ from app.services.amazon.collector import (
     validate_amazon_snapshot,
 )
 from app.services.amazon.normalizer import normalize_amazon_product
+from app.services.amazon.throttle import record_domain_outcome, reserve_domain_request
 from app.services.drafts import create_product_draft, to_draft_read
 from app.services.audit_events import create_audit_event
 from app.services.source_products import (
@@ -174,7 +175,44 @@ async def import_amazon_url(
 ) -> CollectionResult:
     source_url = _normalized_amazon_url_or_422(payload.source_url)
     target_site_id = _target_site_or_422(payload.target_site_id)
+    request_time = datetime.now(UTC)
+    reservation = reserve_domain_request(
+        db,
+        source_url,
+        now=request_time,
+        min_interval_seconds=settings.amazon_domain_min_interval_seconds,
+        lease_seconds=settings.job_stale_after_seconds,
+    )
+    if not reservation.reserved:
+        db.commit()
+        wait_seconds = max(
+            1,
+            int((reservation.available_at - request_time).total_seconds()) + 1,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail="amazon_domain_throttled",
+            headers={"Retry-After": str(wait_seconds)},
+        )
+    assert reservation.reservation_id is not None
+    db.commit()
     result = await collect_amazon_page(source_url, target_site_id)
+    record_domain_outcome(
+        db,
+        source_url,
+        outcome=(
+            "challenge"
+            if result.status.value == "needs_manual_action"
+            and result.message.startswith("Amazon challenge detected")
+            else result.status.value
+        ),
+        now=datetime.now(UTC),
+        challenge_backoff_base_seconds=settings.amazon_challenge_backoff_base_seconds,
+        challenge_backoff_max_seconds=settings.amazon_challenge_backoff_max_seconds,
+        min_interval_seconds=settings.amazon_domain_min_interval_seconds,
+        reservation_id=reservation.reservation_id,
+    )
+    db.commit()
     if not payload.persist:
         return result
     status_map = {
@@ -471,6 +509,10 @@ async def run_amazon_url_collection_job(
         job_id=job_id,
         collector=collect_amazon_page,
         timeout_seconds=settings.job_execution_timeout_seconds,
+        domain_min_interval_seconds=settings.amazon_domain_min_interval_seconds,
+        domain_request_lease_seconds=settings.job_stale_after_seconds,
+        challenge_backoff_base_seconds=settings.amazon_challenge_backoff_base_seconds,
+        challenge_backoff_max_seconds=settings.amazon_challenge_backoff_max_seconds,
     )
     source = db.get(SourceProduct, job.source_product_id) if job.source_product_id else None
     return to_collection_job_read(job, source)

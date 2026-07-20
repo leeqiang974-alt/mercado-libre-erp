@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     job_stale_after_seconds: int = 900
     job_execution_timeout_seconds: int = 840
     listing_type_cache_ttl_seconds: int = 900
+    amazon_domain_min_interval_seconds: int = 8
+    amazon_challenge_backoff_base_seconds: int = 300
+    amazon_challenge_backoff_max_seconds: int = 21600
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
@@ -32,6 +35,15 @@ class Settings(BaseSettings):
             raise ValueError("Live publishing requires PostgreSQL task locking.")
         if self.job_execution_timeout_seconds >= self.job_stale_after_seconds:
             raise ValueError("Job execution timeout must be shorter than the stale-job threshold.")
+        if self.amazon_domain_min_interval_seconds < 1:
+            raise ValueError("Amazon domain interval must be at least one second.")
+        if self.amazon_challenge_backoff_base_seconds < 1:
+            raise ValueError("Amazon challenge backoff must be at least one second.")
+        if (
+            self.amazon_challenge_backoff_max_seconds
+            < self.amazon_challenge_backoff_base_seconds
+        ):
+            raise ValueError("Amazon challenge maximum backoff must not be shorter than its base.")
         return self
 
 

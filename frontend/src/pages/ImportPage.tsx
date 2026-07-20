@@ -586,7 +586,12 @@ export function ImportPage({
         ) : (
           <div className="collection-job-list">
             {displayedCollectionJobs.map((job) => {
-              const canRun = job.status !== "running" && job.status !== "completed";
+              const isDeferred = job.status === "pending"
+                && Boolean(job.next_attempt_at)
+                && new Date(job.next_attempt_at!).getTime() > Date.now();
+              const canRun = job.status !== "running"
+                && job.status !== "completed"
+                && !isDeferred;
               const needsSnapshot = job.status === "needs_manual_action";
               const sourceDetail = job.source_product
                 ? sourceDetails[job.source_product.id]
@@ -613,6 +618,11 @@ export function ImportPage({
                   <div className="collection-job-copy">
                     <strong title={job.source_url}>{shortSource(job.source_url)}</strong>
                     <span>#{job.id} · {job.target_site_id} · {new Date(job.created_at).toLocaleString()}</span>
+                    {isDeferred && (
+                      <span className="collection-job-schedule">
+                        Next attempt {new Date(job.next_attempt_at!).toLocaleString()}
+                      </span>
+                    )}
                     {job.message && <p>{job.message}</p>}
                     {job.source_product && (
                       <div className="source-snapshot-review">

@@ -17,6 +17,7 @@ class CollectionJobRead(BaseModel):
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    next_attempt_at: datetime | None = None
     source_product: SourceProductSummaryRead | None = None
 
 

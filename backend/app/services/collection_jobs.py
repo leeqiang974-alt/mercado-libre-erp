@@ -9,6 +9,7 @@ from app.models.collection_job import CollectionJob, CollectionJobStatus
 from app.models.source_product import SourceProduct, SourceProductStatus
 from app.schemas.collection_jobs import CollectionJobRead
 from app.services.amazon.collector import CollectionResult
+from app.services.amazon.throttle import record_domain_outcome, reserve_domain_request
 from app.services.drafts import create_product_draft
 from app.services.source_products import (
     create_source_product,
@@ -117,6 +118,11 @@ async def run_collection_job(
     job_id: int,
     collector: Collector,
     timeout_seconds: float | None = None,
+    domain_min_interval_seconds: int | None = None,
+    domain_request_lease_seconds: int = 900,
+    challenge_backoff_base_seconds: int = 300,
+    challenge_backoff_max_seconds: int = 21600,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> CollectionJob:
     job = (
         db.query(CollectionJob)
@@ -132,10 +138,39 @@ async def run_collection_job(
     if job.status == CollectionJobStatus.RUNNING:
         raise HTTPException(status_code=409, detail="Collection job is already running.")
 
+    current_time = now()
+    if job.next_attempt_at is not None and _utc(job.next_attempt_at) > _utc(current_time):
+        db.commit()
+        db.refresh(job)
+        return job
+    reservation_id: str | None = None
+    if domain_min_interval_seconds is not None:
+        reservation = reserve_domain_request(
+            db,
+            job.source_url,
+            now=current_time,
+            min_interval_seconds=domain_min_interval_seconds,
+            lease_seconds=domain_request_lease_seconds,
+        )
+        if not reservation.reserved:
+            job.status = CollectionJobStatus.PENDING
+            job.started_at = None
+            job.completed_at = None
+            job.next_attempt_at = reservation.available_at
+            job.message = (
+                f"Deferred by Amazon domain throttle until "
+                f"{reservation.available_at.isoformat()}."
+            )
+            db.commit()
+            db.refresh(job)
+            return job
+        reservation_id = reservation.reservation_id
+
     job.status = CollectionJobStatus.RUNNING
     job.message = ""
-    job.started_at = datetime.now(UTC)
+    job.started_at = current_time
     job.completed_at = None
+    job.next_attempt_at = None
     db.commit()
 
     try:
@@ -158,6 +193,16 @@ async def run_collection_job(
         job.message = message
         job.completed_at = datetime.now(UTC)
         job.status = CollectionJobStatus.FAILED
+        _finish_domain_reservation(
+            db,
+            job.source_url,
+            reservation_id,
+            "failed",
+            now(),
+            domain_min_interval_seconds,
+            challenge_backoff_base_seconds,
+            challenge_backoff_max_seconds,
+        )
         db.commit()
         db.refresh(job)
         return job
@@ -174,6 +219,16 @@ async def run_collection_job(
         job.message = message
         job.completed_at = datetime.now(UTC)
         job.status = CollectionJobStatus.FAILED
+        _finish_domain_reservation(
+            db,
+            job.source_url,
+            reservation_id,
+            "failed",
+            now(),
+            domain_min_interval_seconds,
+            challenge_backoff_base_seconds,
+            challenge_backoff_max_seconds,
+        )
         db.commit()
         db.refresh(job)
         return job
@@ -211,6 +266,21 @@ async def run_collection_job(
         job.message = result.message
         job.completed_at = datetime.now(UTC)
         job.status = _job_status_from_result(result)
+        _finish_domain_reservation(
+            db,
+            job.source_url,
+            reservation_id,
+            (
+                "challenge"
+                if result.status.value == "needs_manual_action"
+                and result.message.startswith("Amazon challenge detected")
+                else result.status.value
+            ),
+            now(),
+            domain_min_interval_seconds,
+            challenge_backoff_base_seconds,
+            challenge_backoff_max_seconds,
+        )
         db.commit()
     except Exception as exc:
         db.rollback()
@@ -242,6 +312,9 @@ def to_collection_job_read(
         created_at=job.created_at,
         started_at=job.started_at,
         completed_at=job.completed_at,
+        next_attempt_at=(
+            _utc(job.next_attempt_at) if job.next_attempt_at is not None else None
+        ),
         source_product=(
             to_source_product_summary(source_product) if source_product is not None else None
         ),
@@ -254,3 +327,31 @@ def _job_status_from_result(result: CollectionResult) -> CollectionJobStatus:
     if result.status.value == "needs_manual_action":
         return CollectionJobStatus.NEEDS_MANUAL_ACTION
     return CollectionJobStatus.FAILED
+
+
+def _utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _finish_domain_reservation(
+    db: Session,
+    source_url: str,
+    reservation_id: str | None,
+    outcome: str,
+    finished_at: datetime,
+    min_interval_seconds: int | None,
+    challenge_backoff_base_seconds: int,
+    challenge_backoff_max_seconds: int,
+) -> None:
+    if reservation_id is None or min_interval_seconds is None:
+        return
+    record_domain_outcome(
+        db,
+        source_url,
+        outcome=outcome,
+        now=finished_at,
+        challenge_backoff_base_seconds=challenge_backoff_base_seconds,
+        challenge_backoff_max_seconds=challenge_backoff_max_seconds,
+        min_interval_seconds=min_interval_seconds,
+        reservation_id=reservation_id,
+    )

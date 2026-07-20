@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from threading import Barrier
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -12,6 +13,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.collection_job import CollectionJob, CollectionJobStatus
+from app.models.amazon_domain_throttle import AmazonDomainThrottle
 from app.models.product_draft import ProductDraft
 from app.models.registry import import_all_models
 from app.models.source_product import SourceProduct, SourceProductStatus
@@ -62,6 +64,25 @@ def test_amazon_url_collection_job_can_be_created_and_listed():
     with testing_session() as db:
         job = db.query(CollectionJob).one()
         assert job.status == CollectionJobStatus.PENDING
+
+
+def test_collection_job_schedule_is_serialized_with_utc_offset():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        db.add(
+            CollectionJob(
+                source_url="https://amazon.com/dp/B000TEST01",
+                target_site_id="MLM",
+                next_attempt_at=datetime.now(UTC) + timedelta(minutes=5),
+            )
+        )
+        db.commit()
+
+    response = client.get("/api/imports/amazon-url/jobs")
+
+    assert response.status_code == 200
+    next_attempt_at = response.json()[0]["next_attempt_at"]
+    assert next_attempt_at.endswith("Z") or next_attempt_at.endswith("+00:00")
 
 
 def test_source_variant_collection_job_preserves_domain_and_reuses_existing_job():
@@ -692,6 +713,10 @@ def test_running_collection_job_records_manual_action(monkeypatch):
         assert source.raw_status == SourceProductStatus.NEEDS_MANUAL_ACTION
         assert "manual action" in source.collection_error
         assert db.query(ProductDraft).count() == 0
+        throttle = db.get(AmazonDomainThrottle, "amazon.com")
+        assert throttle.consecutive_challenges == 1
+        assert throttle.backoff_until is not None
+        assert throttle.last_outcome == "challenge"
 
 
 def test_collection_persistence_failure_rolls_back_source_and_draft(monkeypatch):
@@ -826,3 +851,7 @@ def test_collection_job_timeout_is_persisted_as_safe_failure(monkeypatch):
     assert response.json()["message"] == "Collection timed out; retry is safe."
     with testing_session() as db:
         assert db.query(CollectionJob).one().status == CollectionJobStatus.FAILED
+        throttle = db.get(AmazonDomainThrottle, "amazon.com")
+        assert throttle.last_outcome == "failed"
+        assert throttle.in_flight_until is None
+        assert throttle.reservation_id is None

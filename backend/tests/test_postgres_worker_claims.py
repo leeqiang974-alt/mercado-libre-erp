@@ -13,6 +13,7 @@ from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import sessionmaker
 
 from app.models.audit_event import AuditEvent
+from app.models.amazon_domain_throttle import AmazonDomainThrottle
 from app.models.collection_job import CollectionJob, CollectionJobStatus
 from app.models.draft_listing_config import DraftListingConfig
 from app.models.draft_pricing_config import DraftPricingConfig
@@ -32,6 +33,7 @@ from app.api.routes.imports import (
     import_amazon_html,
 )
 from app.services.amazon.collector import CollectionResult, CollectionStatus
+from app.services.amazon.throttle import reserve_domain_request
 from app.schemas.drafts import ProductDraftCreate
 from app.schemas.publishing import ListingChoice
 from app.schemas.reviews import ReviewResponse
@@ -51,6 +53,50 @@ from app.services.meli.token_vault import (
 
 
 POSTGRES_URL = os.getenv("TEST_POSTGRES_URL", "")
+
+
+@pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")
+def test_postgres_serializes_amazon_domain_request_reservations():
+    engine = create_engine(POSTGRES_URL, pool_pre_ping=True)
+    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    domain = "amazon.sg"
+    url = f"https://{domain}/dp/B000TEST01"
+    now = datetime.now(UTC)
+    ready = Barrier(2)
+
+    with testing_session() as db:
+        db.execute(
+            delete(AmazonDomainThrottle).where(AmazonDomainThrottle.domain == domain)
+        )
+        db.commit()
+
+    def reserve_concurrently():
+        with testing_session() as db:
+            ready.wait(timeout=10)
+            reservation = reserve_domain_request(
+                db,
+                url,
+                now=now,
+                min_interval_seconds=30,
+                lease_seconds=30,
+            )
+            db.commit()
+            return reservation
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            reservations = list(pool.map(lambda _: reserve_concurrently(), range(2)))
+        assert sum(reservation.reserved for reservation in reservations) == 1
+        deferred = next(
+            reservation for reservation in reservations if not reservation.reserved
+        )
+        assert deferred.available_at == now + timedelta(seconds=30)
+    finally:
+        with testing_session() as db:
+            db.execute(
+                delete(AmazonDomainThrottle).where(AmazonDomainThrottle.domain == domain)
+            )
+            db.commit()
 
 
 @pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")

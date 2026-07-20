@@ -120,6 +120,19 @@ def normalize_amazon_product_url(url: str) -> str:
     return f"https://{domain}/dp/{asin}"
 
 
+def amazon_marketplace_domain(url: str) -> str | None:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    return next(
+        (
+            domain
+            for domain in sorted(AMAZON_DOMAINS, key=len, reverse=True)
+            if host == domain or host.endswith(f".{domain}")
+        ),
+        None,
+    )
+
+
 def amazon_browser_language(url: str) -> tuple[str, str]:
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower().rstrip(".")
@@ -225,45 +238,34 @@ async def collect_amazon_page(
             message="Only public Amazon product URLs are allowed.",
         )
     fetcher = html_fetcher or fetch_amazon_html_with_playwright
-    parsed = None
-    last_error: Exception | None = None
-    for _ in range(2):
-        try:
-            html = await fetcher(source_url)
-        except Exception as exc:
-            last_error = exc
-            continue
-        if requires_manual_action(html):
-            return CollectionResult(
-                status=CollectionStatus.NEEDS_MANUAL_ACTION,
-                source_url=source_url,
-                message="Amazon challenge detected; manual action required.",
-            )
-        try:
-            parsed = validate_amazon_snapshot(source_url, html)
-            break
-        except ValueError as exc:
-            if str(exc).startswith("amazon_snapshot_incomplete:"):
-                parsed = parse_amazon_html(html, source_url)
-                continue
-            return CollectionResult(
-                status=CollectionStatus.FAILED,
-                source_url=source_url,
-                message=f"Amazon page identity validation failed: {exc}",
-            )
-    else:
-        if last_error and parsed is None:
-            return CollectionResult(
-                status=CollectionStatus.FAILED,
-                source_url=source_url,
-                message=f"Amazon page collection failed after retry: {last_error}",
-            )
+    try:
+        html = await fetcher(source_url)
+    except Exception as exc:
+        return CollectionResult(
+            status=CollectionStatus.FAILED,
+            source_url=source_url,
+            message=f"Amazon page collection failed; explicit retry is safe: {exc}",
+        )
+    if requires_manual_action(html):
         return CollectionResult(
             status=CollectionStatus.NEEDS_MANUAL_ACTION,
             source_url=source_url,
-            message="Amazon product page is incomplete after retry; manual action required.",
+            message="Amazon challenge detected; manual action required.",
         )
-    assert parsed is not None
+    try:
+        parsed = validate_amazon_snapshot(source_url, html)
+    except ValueError as exc:
+        if str(exc).startswith("amazon_snapshot_incomplete:"):
+            return CollectionResult(
+                status=CollectionStatus.NEEDS_MANUAL_ACTION,
+                source_url=source_url,
+                message="Amazon product page is incomplete; manual action required.",
+            )
+        return CollectionResult(
+            status=CollectionStatus.FAILED,
+            source_url=source_url,
+            message=f"Amazon page identity validation failed: {exc}",
+        )
     draft = normalize_amazon_product(parsed, target_site_id=target_site_id)
     source_snapshot = AmazonSourceSnapshot.model_validate(parsed)
     return CollectionResult(

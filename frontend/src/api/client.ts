@@ -331,6 +331,7 @@ export type CollectionJobRecord = {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+  next_attempt_at: string | null;
   source_product: SourceProductSummary | null;
 };
 
@@ -411,7 +412,13 @@ export async function importAmazonUrl(sourceUrl: string, targetSiteId: string) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source_url: sourceUrl, target_site_id: targetSiteId, persist: true }),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) {
+    const retryAfter = response.headers.get("Retry-After");
+    if (response.status === 429 && retryAfter) {
+      throw new Error(`Amazon collection paused. Retry in ${retryAfter} seconds.`);
+    }
+    throw new Error(await response.text());
+  }
   return response.json() as Promise<CollectionResult>;
 }
 
