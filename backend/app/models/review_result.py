@@ -20,6 +20,15 @@ class ReviewResult(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     product_draft_id: Mapped[int] = mapped_column(ForeignKey("product_drafts.id"))
+    review_job_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "review_jobs.id",
+            name="fk_review_results_review_job_id",
+            use_alter=True,
+        ),
+        nullable=True,
+        index=True,
+    )
     provider: Mapped[str] = mapped_column(String(40))
     model: Mapped[str] = mapped_column(String(120), default="")
     prompt_version: Mapped[str] = mapped_column(String(80), default="")

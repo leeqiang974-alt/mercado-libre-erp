@@ -49,6 +49,8 @@ python -m app.worker --limit 10
 python -m app.worker --loop --interval 30 --limit 10
 python -m app.worker --queue publish --limit 10
 python -m app.worker --queue publish --loop --interval 30 --limit 10
+python -m app.worker --queue review --limit 5
+python -m app.worker --queue review --loop --interval 30 --limit 5
 ```
 
 ## Safety Rules
@@ -100,6 +102,7 @@ python -m app.worker --queue publish --loop --interval 30 --limit 10
 - Retry blocked or failed publish jobs from saved draft configuration while preserving the original job history.
 - Run local, Claude, or NVIDIA review from the backend review API.
 - Run a combined behavioral audit that executes NVIDIA pre-screening and Claude deep review, aggregates the strictest decision, and feeds that result into the publish gate.
+- Queue explicit-cost-confirmed combined audits for up to 50 independently configured drafts; the review worker isolates each result, stops on provider throttling, and never grants human approval or publishes.
 - Validate Claude/NVIDIA output against the versioned strict review contract; incomplete, extra, mistyped, or unknown values fail closed and cannot satisfy publishing gates.
 - Send saved-draft reviews the reconciled pricing formula and final store/site/category/Classic-or-Premium/non-FULL configuration while keeping integration secrets out of provider prompts.
 - Persist local, Claude, and NVIDIA review results against saved product drafts.

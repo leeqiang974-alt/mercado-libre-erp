@@ -94,6 +94,25 @@ services:
     command: python -m app.worker --queue publish --loop --interval 30 --limit 10
     restart: unless-stopped
 
+  review_worker:
+    image: mvp-skeleton-backend:latest
+    environment:
+      DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-4-6}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      NVIDIA_MODEL: ${NVIDIA_MODEL:-meta/llama-3.1-70b-instruct}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app:ro
+    command: python -m app.worker --queue review --loop --interval 30 --limit 5
+    restart: unless-stopped
+
   frontend:
     image: python:3.12-slim
     depends_on:

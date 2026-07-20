@@ -29,6 +29,7 @@ class ReviewExecution:
     provider_status: str = "completed"
     price_config_id: int | None = None
     price_config_captured: bool = False
+    review_job_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ def persist_review_result(
     expected_draft_version: int | None = None,
     price_config_id: int | None = None,
     price_config_captured: bool = False,
+    review_job_id: int | None = None,
 ) -> ReviewResult:
     return persist_review_results(
         db,
@@ -63,6 +65,7 @@ def persist_review_result(
                 provider_status=provider_status,
                 price_config_id=price_config_id,
                 price_config_captured=price_config_captured,
+                review_job_id=review_job_id,
             )
         ],
         expected_draft_version=expected_draft_version,
@@ -80,6 +83,7 @@ def persist_stale_review_result(
     draft_version: int,
     price_config_id: int | None = None,
     price_config_captured: bool = False,
+    review_job_id: int | None = None,
 ) -> ReviewResult:
     draft = db.get(ProductDraft, product_draft_id)
     if draft is None:
@@ -93,6 +97,7 @@ def persist_stale_review_result(
     )
     result = ReviewResult(
         product_draft_id=product_draft_id,
+        review_job_id=review_job_id,
         provider=response.provider,
         model=model,
         prompt_version=prompt_version,
@@ -195,6 +200,7 @@ def persist_review_results(
     results = [
         ReviewResult(
             product_draft_id=product_draft_id,
+            review_job_id=execution.review_job_id,
             provider=execution.response.provider,
             model=execution.model,
             prompt_version=execution.prompt_version,
@@ -231,6 +237,7 @@ def persist_review_results(
             entity_id=str(product_draft_id),
             after={
                 "review_result_id": result.id,
+                "review_job_id": result.review_job_id,
                 "decision": response.decision,
                 "risk_level": response.risk_level,
                 "reason_codes": response.reason_codes,

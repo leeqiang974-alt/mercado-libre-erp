@@ -23,6 +23,7 @@ from app.models.product_draft import ProductDraft
 from app.models.provider_model_price import ProviderModelPrice
 from app.models.publish_job import PublishJob
 from app.models.review_result import ReviewDecision, ReviewResult
+from app.models.review_job import ReviewJob, ReviewJobStatus
 from app.models.store import Store
 from app.models.token_credential import TokenCredential
 from app.api.routes import imports as imports_route
@@ -39,6 +40,7 @@ from app.schemas.publishing import ListingChoice
 from app.schemas.reviews import ReviewResponse
 from app.schemas.provider_pricing import ProviderModelPriceCreate
 from app.services.publish_jobs import create_publish_job
+from app.services.review_jobs import recover_stale_review_jobs
 from app.services.drafts import update_draft_content
 from app.services.provider_pricing import save_provider_model_price
 from app.services.draft_listing_configs import build_configured_draft
@@ -53,6 +55,56 @@ from app.services.meli.token_vault import (
 
 
 POSTGRES_URL = os.getenv("TEST_POSTGRES_URL", "")
+
+
+@pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")
+def test_postgres_stale_review_recovery_is_claimed_once():
+    engine = create_engine(POSTGRES_URL, pool_pre_ping=True)
+    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    marker = f"stale-review-{uuid4()}"
+    ready = Barrier(2)
+
+    with testing_session() as db:
+        draft = ProductDraft(title=marker, content_version=1)
+        db.add(draft)
+        db.flush()
+        job = ReviewJob(
+            batch_id=str(uuid4()),
+            product_draft_id=draft.id,
+            requested_by="concurrency-test",
+            draft_version=1,
+            active_key=f"combined:{draft.id}",
+            status=ReviewJobStatus.RUNNING,
+            started_at=datetime.now(UTC) - timedelta(minutes=10),
+        )
+        db.add(job)
+        db.commit()
+        draft_id = draft.id
+        job_id = job.id
+
+    def recover_concurrently():
+        with testing_session() as db:
+            ready.wait(timeout=10)
+            return recover_stale_review_jobs(db, stale_after_seconds=60)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            recovered = list(pool.map(lambda _: recover_concurrently(), range(2)))
+        assert sum(recovered) == 1
+        with testing_session() as db:
+            job = db.get(ReviewJob, job_id)
+            assert job.status == ReviewJobStatus.FAILED
+            assert db.query(AuditEvent).filter(
+                AuditEvent.action == "review.job.finished",
+                AuditEvent.entity_type == "review_job",
+                AuditEvent.entity_id == str(job_id),
+            ).count() == 1
+    finally:
+        with testing_session() as db:
+            db.execute(delete(AuditEvent).where(AuditEvent.entity_id == str(job_id)))
+            db.execute(delete(ReviewJob).where(ReviewJob.id == job_id))
+            db.execute(delete(ProductDraft).where(ProductDraft.id == draft_id))
+            db.commit()
 
 
 @pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")

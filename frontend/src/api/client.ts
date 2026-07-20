@@ -98,6 +98,35 @@ export type BehavioralAudit = {
   aggregate: Record<string, unknown>;
 };
 
+export type ReviewJob = {
+  id: number;
+  batch_id: string;
+  product_draft_id: number;
+  draft_version: number;
+  status: "pending" | "running" | "completed" | "blocked" | "failed";
+  aggregate_review_result_id: number | null;
+  error_code: string;
+  error_detail: Record<string, unknown>;
+  created_at: string;
+  next_attempt_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
+export type ReviewJobBatchResult = {
+  batch_id: string;
+  queued_count: number;
+  existing_count: number;
+  not_ready_count: number;
+  not_found_count: number;
+  items: {
+    draft_id: number;
+    outcome: "queued" | "existing" | "not_ready" | "not_found";
+    errors: string[];
+    job: ReviewJob | null;
+  }[];
+};
+
 export type StoreRecord = {
   id: string;
   site_id: string;
@@ -625,6 +654,25 @@ export async function reviewDraftWithBehavioralAudit(
   return response.json() as Promise<BehavioralAudit>;
 }
 
+export async function enqueueBehavioralAuditBatch(draftIds: number[]) {
+  const response = await fetch(`${API_BASE}/api/reviews/jobs/batch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      draft_ids: draftIds,
+      acknowledge_provider_costs: true,
+    }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<ReviewJobBatchResult>;
+}
+
+export async function listReviewJobs(limit = 100) {
+  const response = await fetch(`${API_BASE}/api/reviews/jobs?limit=${limit}`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<ReviewJob[]>;
+}
+
 export async function getMeliAuthorizationUrl(siteId: string) {
   const response = await fetch(
     `${API_BASE}/api/stores/meli/authorization-url?site_id=${encodeURIComponent(siteId)}`,
@@ -692,6 +740,14 @@ export async function listReviewHistory(productDraftId: number) {
   const response = await fetch(`${API_BASE}/api/reviews/drafts/${productDraftId}`);
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<ReviewResult[]>;
+}
+
+export async function getLatestBehavioralReview(productDraftId: number) {
+  const response = await fetch(
+    `${API_BASE}/api/reviews/drafts/${productDraftId}/latest-behavioral`,
+  );
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<ReviewResult | null>;
 }
 
 export async function listStores() {

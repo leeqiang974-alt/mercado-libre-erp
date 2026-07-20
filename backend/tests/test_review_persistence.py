@@ -14,7 +14,7 @@ from app.models.product_draft import ProductDraft
 from app.models.draft_listing_config import DraftListingConfig
 from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.registry import import_all_models
-from app.models.review_result import ReviewResult
+from app.models.review_result import ReviewDecision, ReviewResult
 from app.models.store import Store
 from app.models.audit_event import AuditEvent
 from app.schemas.reviews import ReviewResponse
@@ -148,6 +148,38 @@ def test_review_history_can_be_listed_for_draft():
     assert body[0]["duration_ms"] >= 0
     assert body[0]["created_at"]
     assert body[0]["decision"] == "pass"
+
+
+def test_latest_behavioral_review_excludes_stale_draft_versions():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        result = ReviewResult(
+            product_draft_id=1,
+            provider="claude+nvidia_behavioral_audit",
+            model="test-combined",
+            prompt_version="meli-behavioral-audit-v4",
+            risk_level="low",
+            decision=ReviewDecision.PASS,
+            reasons_json={"reason_codes": [], "reasons": []},
+            draft_version=1,
+        )
+        db.add(result)
+        db.commit()
+        db.refresh(result)
+        result_id = result.id
+
+    current = client.get("/api/reviews/drafts/1/latest-behavioral")
+    assert current.status_code == 200
+    assert current.json()["id"] == result_id
+
+    with testing_session() as db:
+        draft = db.get(ProductDraft, 1)
+        draft.content_version += 1
+        db.commit()
+
+    stale = client.get("/api/reviews/drafts/1/latest-behavioral")
+    assert stale.status_code == 200
+    assert stale.json() is None
 
 
 def test_claude_review_can_persist_result_for_draft(monkeypatch):
@@ -537,7 +569,7 @@ def test_behavioral_audit_keeps_nvidia_evidence_when_claude_fails(monkeypatch):
         assert result.total_tokens == 80
         assert result.provider_request_id == "req_nvidia_paid"
         actions = [event.action for event in db.query(AuditEvent).order_by(AuditEvent.id)]
-        assert actions == ["review.completed", "review.failed"]
+        assert actions == ["review.completed", "review.failed", "review.job.finished"]
 
 
 def test_behavioral_results_roll_back_when_batch_audit_fails(monkeypatch):
@@ -599,6 +631,7 @@ def test_behavioral_results_roll_back_when_batch_audit_fails(monkeypatch):
         assert [event.action for event in db.query(AuditEvent).order_by(AuditEvent.id)] == [
             "review.completed",
             "review.completed",
+            "review.job.finished",
         ]
 
 
@@ -640,7 +673,7 @@ def test_claude_review_rejects_result_when_draft_changes_while_provider_waits(mo
         assert result.draft_version == 1
         assert result.total_tokens == 60
         assert result.provider_request_id == "req_stale_claude"
-        event = db.query(AuditEvent).one()
+        event = db.query(AuditEvent).filter(AuditEvent.action == "review.completed_stale").one()
         assert event.action == "review.completed_stale"
         assert event.after_json["reviewed_draft_version"] == 1
         assert event.after_json["current_draft_version"] == 2
@@ -705,4 +738,5 @@ def test_behavioral_audit_rejects_all_results_when_draft_changes_while_provider_
         assert [event.action for event in db.query(AuditEvent).order_by(AuditEvent.id)] == [
             "review.completed",
             "review.completed_stale",
+            "review.job.finished",
         ]

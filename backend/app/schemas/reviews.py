@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -93,3 +93,47 @@ class BehavioralAuditResponse(BaseModel):
     nvidia: ReviewResponse
     claude: ReviewResponse
     aggregate: ReviewResponse
+
+
+class ReviewJobBatchCreate(BaseModel):
+    draft_ids: list[Annotated[int, Field(gt=0)]] = Field(min_length=1, max_length=50)
+    acknowledge_provider_costs: bool
+
+    @model_validator(mode="after")
+    def validate_batch(self):
+        if len(set(self.draft_ids)) != len(self.draft_ids):
+            raise ValueError("draft_ids must be unique")
+        if not self.acknowledge_provider_costs:
+            raise ValueError("provider_cost_acknowledgement_required")
+        return self
+
+
+class ReviewJobRead(BaseModel):
+    id: int
+    batch_id: str
+    product_draft_id: int
+    draft_version: int
+    status: str
+    aggregate_review_result_id: int | None = None
+    error_code: str = ""
+    error_detail: dict = Field(default_factory=dict)
+    created_at: datetime
+    next_attempt_at: datetime | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class ReviewJobBatchItem(BaseModel):
+    draft_id: int
+    outcome: Literal["queued", "existing", "not_ready", "not_found"]
+    errors: list[str] = Field(default_factory=list)
+    job: ReviewJobRead | None = None
+
+
+class ReviewJobBatchResponse(BaseModel):
+    batch_id: str
+    queued_count: int
+    existing_count: int
+    not_ready_count: int
+    not_found_count: int
+    items: list[ReviewJobBatchItem]

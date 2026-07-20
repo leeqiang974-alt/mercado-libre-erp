@@ -68,6 +68,7 @@ Implemented:
 - Alembic baseline migration for the current backend schema.
 - Persisted local, Claude, and NVIDIA review results for saved drafts.
 - Combined Claude + NVIDIA behavioral audit endpoint with strictest-result aggregation and orchestration audit events.
+- Batch combined-review intake requires explicit provider-cost acknowledgement, queues only independently ready drafts, deduplicates active work, and leaves every result subject to its own human approval. The review worker stops a pass on provider throttling and defers untouched jobs without automatically retrying a charged attempt.
 - Review results persist provider model, versioned safety prompt identifier, execution duration, provider status, provider-reported input/output/total token usage, request ID, and creation time; provider failures are audited without being presented as successful reviews.
 - Review history API and frontend refresh control for saved draft audit trails.
 - Desktop and mobile review history expose Claude, NVIDIA, and aggregate model/prompt/duration/token metadata and provider request IDs without exposing API keys or raw prompts.

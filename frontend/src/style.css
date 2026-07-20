@@ -123,6 +123,8 @@ main {
 .command-list { display: grid; gap: 10px; margin-top: 18px; }
 
 .draft-list { display: grid; gap: 8px; }
+.draft-selection-row { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; align-items: center; }
+.draft-selector { display: flex; margin: 0; justify-content: center; }
 .draft-row {
   width: 100%;
   display: grid;
@@ -135,11 +137,19 @@ main {
   text-align: left;
 }
 .draft-row.selected { border-color: #2563eb; box-shadow: inset 3px 0 #2563eb; }
-.draft-row img { width: 64px; height: 64px; object-fit: contain; background: #f6f7f9; }
+.draft-row .product-image { width: 64px; height: 64px; object-fit: contain; background: #f6f7f9; }
+.image-placeholder { display: grid; place-items: center; color: #8b96a5; border: 1px solid #d7dee8; }
+.image-placeholder svg { width: 22px; height: 22px; }
 .draft-copy { display: grid; gap: 5px; min-width: 0; }
 .draft-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .draft-copy small { color: #697586; }
 .draft-state { color: #52606d; font-size: 12px; }
+.batch-review-controls { border-bottom: 1px solid #dde3ea; margin-bottom: 14px; padding-bottom: 14px; }
+.batch-review-controls .action-line { margin-top: 0; }
+.batch-review-errors { display: grid; gap: 4px; color: #8a1c13; font-size: 12px; margin-top: 10px; }
+.review-job-list { border-top: 1px solid #dde3ea; display: grid; margin-top: 16px; }
+.review-job-list div { align-items: center; border-bottom: 1px solid #eef1f4; display: grid; gap: 10px; grid-template-columns: 1fr auto auto; padding: 10px 0; }
+.review-job-list small { color: #8a1c13; }
 .advanced-section { margin-top: 20px; border-top: 1px solid #dde3ea; padding-top: 16px; }
 .advanced-section summary { cursor: pointer; font-weight: 600; }
 
@@ -226,7 +236,7 @@ button:disabled {
   .metric-strip div:nth-child(2) { border-right: 0; }
   .section-grid { grid-template-columns: 1fr; }
   .draft-row { grid-template-columns: 52px 1fr; }
-  .draft-row img { width: 52px; height: 52px; }
+  .draft-row .product-image { width: 52px; height: 52px; }
   .draft-state { grid-column: 2; }
 }
 
@@ -314,7 +324,7 @@ pre {
   margin-bottom: 20px;
 }
 
-.product-summary img {
+.product-summary .product-image {
   width: 112px;
   height: 112px;
   object-fit: contain;
@@ -659,7 +669,7 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 
 @media (max-width: 760px) {
   .product-summary { grid-template-columns: 76px minmax(0, 1fr); gap: 12px; }
-  .product-summary img { width: 76px; height: 76px; }
+  .product-summary .product-image { width: 76px; height: 76px; }
   .form-grid.two-col,
   .form-grid.three-col,
   .listing-choice,

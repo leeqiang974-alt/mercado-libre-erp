@@ -1,19 +1,22 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, Calculator, RefreshCw, ShieldCheck } from "lucide-react";
+import { Bot, Calculator, ImageOff, ListPlus, RefreshCw, ShieldCheck } from "lucide-react";
 import {
+  enqueueBehavioralAuditBatch,
   getDraftPricing,
   getDraftListingConfig,
+  getLatestBehavioralReview,
   getSystemReadiness,
   listDrafts,
+  listReviewJobs,
   listReviewHistory,
-  reviewDraftWithBehavioralAudit,
-  reviewDraftWithProvider,
   saveDraftPricing,
   type DraftPricing,
   type DraftPricingInput,
   type ProductDraft,
   type ProductDraftRead,
   type ReviewResult,
+  type ReviewJob,
+  type ReviewJobBatchResult,
   type SystemReadiness,
 } from "../api/client";
 import { currencyForSite } from "../domain/sites";
@@ -30,6 +33,24 @@ const EMPTY_PRICING: DraftPricingInput = {
   profit_margin_rate: 0.2,
   rounding_increment: 1,
 };
+
+const MAX_REVIEW_BATCH_SIZE = 50;
+
+function ProductImage({ src, alt }: { src?: string; alt: string }) {
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => setFailed(false), [src]);
+
+  if (!src || failed) {
+    return (
+      <span className="product-image image-placeholder" aria-label="No product image">
+        <ImageOff aria-hidden="true" />
+      </span>
+    );
+  }
+
+  return <img className="product-image" src={src} alt={alt} onError={() => setFailed(true)} />;
+}
 
 export function DraftsPage({
   draft,
@@ -53,6 +74,10 @@ export function DraftsPage({
   const [pricing, setPricing] = useState<DraftPricingInput>(EMPTY_PRICING);
   const [pricingResult, setPricingResult] = useState<DraftPricing | null>(null);
   const [listingConfigured, setListingConfigured] = useState(false);
+  const [selectedDraftIds, setSelectedDraftIds] = useState<Set<number>>(new Set());
+  const [providerCostAcknowledged, setProviderCostAcknowledged] = useState(false);
+  const [reviewJobs, setReviewJobs] = useState<ReviewJob[]>([]);
+  const [batchReviewResult, setBatchReviewResult] = useState<ReviewJobBatchResult | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const draftEpochRef = useRef(0);
@@ -61,15 +86,42 @@ export function DraftsPage({
   currentDraftIdRef.current = draftId;
 
   useEffect(() => {
-    Promise.all([listDrafts(), getSystemReadiness()])
-      .then(([drafts, system]) => {
+    Promise.all([listDrafts(), getSystemReadiness(), listReviewJobs()])
+      .then(([drafts, system, jobs]) => {
         setSavedDrafts(drafts);
         setReadiness(system);
+        setReviewJobs(jobs);
       })
       .catch((loadError) =>
         setError(loadError instanceof Error ? loadError.message : "Failed to load drafts"),
       );
   }, []);
+
+  useEffect(() => {
+    if (!reviewJobs.some((job) => job.status === "pending" || job.status === "running")) return;
+    const timer = window.setTimeout(() => {
+      const activeDraftId = currentDraftIdRef.current;
+      Promise.all([
+        listReviewJobs(),
+        listDrafts(),
+        activeDraftId ? listReviewHistory(activeDraftId) : Promise.resolve([]),
+        activeDraftId ? getLatestBehavioralReview(activeDraftId) : Promise.resolve(null),
+      ])
+        .then(([jobs, drafts, history, currentAggregate]) => {
+          setReviewJobs(jobs);
+          setSavedDrafts(drafts);
+          if (activeDraftId && currentDraftIdRef.current === activeDraftId) {
+            setReviewHistory(history);
+            setProviderReview(currentAggregate);
+            onReviewChange(currentAggregate);
+          }
+        })
+        .catch((loadError) => setError(
+          loadError instanceof Error ? loadError.message : "Failed to refresh review jobs",
+        ));
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [reviewJobs, onReviewChange]);
 
   useEffect(() => {
     draftEpochRef.current += 1;
@@ -95,6 +147,16 @@ export function DraftsPage({
         if (!saved) return;
         setPricing(saved);
         setPricingResult(saved);
+      })
+      .catch(() => undefined);
+    Promise.all([listReviewHistory(draftId), getLatestBehavioralReview(draftId)])
+      .then(([history, aggregate]) => {
+        if (currentDraftIdRef.current !== draftId) return;
+        setReviewHistory(history);
+        if (aggregate) {
+          setProviderReview(aggregate);
+          onReviewChange(aggregate);
+        }
       })
       .catch(() => undefined);
   }, [
@@ -141,67 +203,19 @@ export function DraftsPage({
     }
   }
 
-  async function runProviderReview(provider: "claude" | "nvidia") {
-    if (!draft) return;
-    const requestedDraftId = draftId;
-    const requestEpoch = draftEpochRef.current;
-    setBusy(provider);
-    setError("");
-    try {
-      const nextReview = await reviewDraftWithProvider(draft, provider, draftId);
-      if (
-        draftEpochRef.current !== requestEpoch
-        || currentDraftIdRef.current !== requestedDraftId
-      ) return;
-      setProviderReview(nextReview);
-      onReviewChange(nextReview);
-      if (requestedDraftId) {
-        const history = await listReviewHistory(requestedDraftId);
-        if (
-          draftEpochRef.current === requestEpoch
-          && currentDraftIdRef.current === requestedDraftId
-          && history.every((item) => item.product_draft_id === requestedDraftId)
-        ) setReviewHistory(history);
-      }
-    } catch (reviewError) {
-      if (
-        draftEpochRef.current === requestEpoch
-        && currentDraftIdRef.current === requestedDraftId
-      ) setError(reviewError instanceof Error ? reviewError.message : "Provider review failed");
-    } finally {
-      if (draftEpochRef.current === requestEpoch) setBusy("");
-    }
-  }
-
-  async function runBehavioralAudit() {
-    if (!draft) return;
-    const requestedDraftId = draftId;
-    const requestEpoch = draftEpochRef.current;
+  async function queueCurrentReview() {
+    if (!draftId || !providerCostAcknowledged) return;
     setBusy("combined");
     setError("");
     try {
-      const result = await reviewDraftWithBehavioralAudit(draft, draftId);
-      if (
-        draftEpochRef.current !== requestEpoch
-        || currentDraftIdRef.current !== requestedDraftId
-      ) return;
-      setProviderReview(result);
-      onReviewChange(result.aggregate);
-      if (requestedDraftId) {
-        const history = await listReviewHistory(requestedDraftId);
-        if (
-          draftEpochRef.current === requestEpoch
-          && currentDraftIdRef.current === requestedDraftId
-          && history.every((item) => item.product_draft_id === requestedDraftId)
-        ) setReviewHistory(history);
-      }
+      const result = await enqueueBehavioralAuditBatch([draftId]);
+      setBatchReviewResult(result);
+      setReviewJobs(await listReviewJobs());
+      setProviderCostAcknowledged(false);
     } catch (auditError) {
-      if (
-        draftEpochRef.current === requestEpoch
-        && currentDraftIdRef.current === requestedDraftId
-      ) setError(auditError instanceof Error ? auditError.message : "Behavioral audit failed");
+      setError(auditError instanceof Error ? auditError.message : "Behavioral audit failed");
     } finally {
-      if (draftEpochRef.current === requestEpoch) setBusy("");
+      setBusy("");
     }
   }
 
@@ -226,6 +240,35 @@ export function DraftsPage({
     }
   }
 
+  function toggleBatchDraft(draftIdToToggle: number) {
+    setSelectedDraftIds((current) => {
+      const next = new Set(current);
+      if (next.has(draftIdToToggle)) next.delete(draftIdToToggle);
+      else if (next.size < MAX_REVIEW_BATCH_SIZE) next.add(draftIdToToggle);
+      else setError(`A review batch can contain at most ${MAX_REVIEW_BATCH_SIZE} drafts.`);
+      return next;
+    });
+    setBatchReviewResult(null);
+  }
+
+  async function queueBatchReview() {
+    const draftIds = [...selectedDraftIds];
+    if (!providerCostAcknowledged || draftIds.length === 0) return;
+    setBusy("batch-review");
+    setError("");
+    try {
+      const result = await enqueueBehavioralAuditBatch(draftIds);
+      setBatchReviewResult(result);
+      setReviewJobs(await listReviewJobs());
+      setSelectedDraftIds(new Set());
+      setProviderCostAcknowledged(false);
+    } catch (batchError) {
+      setError(batchError instanceof Error ? batchError.message : "Failed to queue batch review");
+    } finally {
+      setBusy("");
+    }
+  }
+
   const pricingReady = Boolean(draft?.price && draft.currency && pricingResult);
   const claudeReady = Boolean(readiness?.ai.claude_configured);
   const nvidiaReady = Boolean(readiness?.ai.nvidia_configured);
@@ -246,7 +289,7 @@ export function DraftsPage({
       {draft && (
         <>
           <div className="product-summary">
-            <img src={draft.image_urls[0]} alt="" />
+            <ProductImage src={draft.image_urls[0]} alt={draft.title || "Product"} />
             <div>
               <h3>{draft.title || "Untitled product"}</h3>
               <p>{draft.brand || "Brand not captured"}</p>
@@ -313,9 +356,15 @@ export function DraftsPage({
                 <div><ShieldCheck size={18} /><span>NVIDIA</span><strong>{nvidiaReady ? "Configured" : "API key required"}</strong></div>
               </div>
               <div className="button-row">
-                <button disabled={!pricingReady || !listingConfigured || !claudeReady || Boolean(busy)} onClick={() => runProviderReview("claude")}><Bot size={16} /> Claude review</button>
-                <button disabled={!pricingReady || !listingConfigured || !nvidiaReady || Boolean(busy)} onClick={() => runProviderReview("nvidia")}><ShieldCheck size={16} /> NVIDIA review</button>
-                <button disabled={!pricingReady || !listingConfigured || !claudeReady || !nvidiaReady || Boolean(busy)} onClick={runBehavioralAudit}><ShieldCheck size={16} /> Combined audit</button>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={providerCostAcknowledged}
+                    onChange={(event) => setProviderCostAcknowledged(event.target.checked)}
+                  />
+                  Confirm Claude and NVIDIA usage costs
+                </label>
+                <button disabled={!draftId || !pricingReady || !listingConfigured || !claudeReady || !nvidiaReady || !providerCostAcknowledged || Boolean(busy)} onClick={queueCurrentReview}><ShieldCheck size={16} /> Queue combined audit</button>
                 <button className="secondary-button" disabled={!draftId} onClick={refreshReviewHistory}><RefreshCw size={16} /> History</button>
               </div>
               {!pricingReady && <p className="inline-warning">Save pricing before running provider review.</p>}
@@ -360,26 +409,96 @@ export function DraftsPage({
       <section className="saved-section">
         <div className="section-heading"><div><h3>Saved drafts</h3></div><span>{savedDrafts.length}</span></div>
         {savedDrafts.length === 0 && <p>No saved drafts yet.</p>}
+        {savedDrafts.length > 0 && (
+          <div className="batch-review-controls">
+            <div className="action-line">
+              <span>{selectedDraftIds.size} / {MAX_REVIEW_BATCH_SIZE} selected</span>
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={providerCostAcknowledged}
+                  onChange={(event) => setProviderCostAcknowledged(event.target.checked)}
+                />
+                Confirm Claude and NVIDIA usage costs
+              </label>
+              <button
+                disabled={
+                  selectedDraftIds.size === 0
+                  || !providerCostAcknowledged
+                  || !claudeReady
+                  || !nvidiaReady
+                  || Boolean(busy)
+                }
+                onClick={queueBatchReview}
+              >
+                <ListPlus size={16} /> Queue combined audits
+              </button>
+            </div>
+            {batchReviewResult && (
+              <div className="batch-result-summary" aria-live="polite">
+                <strong>{batchReviewResult.queued_count} queued</strong>
+                <span>{batchReviewResult.existing_count} active</span>
+                <span>{batchReviewResult.not_ready_count} not ready</span>
+                <span>{batchReviewResult.not_found_count} missing</span>
+              </div>
+            )}
+            {batchReviewResult?.items.some((item) => item.errors.length > 0) && (
+              <div className="batch-review-errors">
+                {batchReviewResult.items.filter((item) => item.errors.length > 0).map((item) => (
+                  <span key={item.draft_id}>Draft #{item.draft_id}: {item.errors.join(", ")}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <div className="draft-list">
           {savedDrafts.map((savedDraft) => (
-            <button className={`draft-row ${draftId === savedDraft.id ? "selected" : ""}`} key={savedDraft.id} onClick={() => onSelectDraft(savedDraft)}>
-              <img src={savedDraft.image_urls[0]} alt="" />
-              <span className="draft-copy">
-                <strong>{savedDraft.title}</strong>
-                <small>#{savedDraft.id} · {savedDraft.target_site_id} · source {savedDraft.source_currency} {savedDraft.source_price ?? "-"} · target {savedDraft.currency} {savedDraft.price ?? "not priced"}</small>
-                {savedDraft.source_variant_asin && (
-                  <small>
-                    {savedDraft.source_variant_asin}
-                    {Object.entries(savedDraft.source_variant_attributes).slice(0, 2).map(
-                      ([name, value]) => ` · ${name}: ${value}`,
-                    )}
-                  </small>
-                )}
-              </span>
-              <span className="draft-state">{savedDraft.risk_status}</span>
-            </button>
+            <div className="draft-selection-row" key={savedDraft.id}>
+              <label className="draft-selector">
+                <input
+                  type="checkbox"
+                  aria-label={`Select draft ${savedDraft.id} for combined audit`}
+                  checked={selectedDraftIds.has(savedDraft.id)}
+                  disabled={
+                    !selectedDraftIds.has(savedDraft.id)
+                    && selectedDraftIds.size >= MAX_REVIEW_BATCH_SIZE
+                  }
+                  onChange={() => toggleBatchDraft(savedDraft.id)}
+                />
+              </label>
+              <button className={`draft-row ${draftId === savedDraft.id ? "selected" : ""}`} onClick={() => onSelectDraft(savedDraft)}>
+                <ProductImage src={savedDraft.image_urls[0]} alt={savedDraft.title || "Product"} />
+                <span className="draft-copy">
+                  <strong>{savedDraft.title}</strong>
+                  <small>#{savedDraft.id} · {savedDraft.target_site_id} · source {savedDraft.source_currency} {savedDraft.source_price ?? "-"} · target {savedDraft.currency} {savedDraft.price ?? "not priced"}</small>
+                  {savedDraft.source_variant_asin && (
+                    <small>
+                      {savedDraft.source_variant_asin}
+                      {Object.entries(savedDraft.source_variant_attributes).slice(0, 2).map(
+                        ([name, value]) => ` · ${name}: ${value}`,
+                      )}
+                    </small>
+                  )}
+                </span>
+                <span className="draft-state">{savedDraft.risk_status}</span>
+              </button>
+            </div>
           ))}
         </div>
+        {reviewJobs.length > 0 && (
+          <div className="review-job-list">
+            {reviewJobs.slice(0, 20).map((job) => (
+              <div key={job.id}>
+                <span>Review #{job.id} · draft #{job.product_draft_id}</span>
+                <strong>{job.status}</strong>
+                {job.error_code && <small>{job.error_code}</small>}
+                {job.next_attempt_at && (
+                  <small>Available after {new Date(job.next_attempt_at).toLocaleString()}</small>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </section>
   );
