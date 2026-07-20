@@ -8,9 +8,10 @@ from sqlalchemy.orm import Session
 
 from app.models.draft_pricing_config import DraftPricingConfig
 from app.models.product_draft import ProductDraft
+from app.schemas.drafts import ProductDraftRead
 from app.schemas.pricing import DraftPricingRead, DraftPricingUpsert
 from app.services.audit_events import create_audit_event
-from app.services.drafts import update_draft_content
+from app.services.drafts import to_draft_read, update_draft_content
 from app.services.meli.sites import expected_currency
 
 
@@ -33,7 +34,7 @@ def calculate_target_price(payload: DraftPricingUpsert) -> tuple[float, float]:
 
 def upsert_draft_pricing(
     db: Session, product_draft_id: int, payload: DraftPricingUpsert
-) -> DraftPricingConfig:
+) -> tuple[DraftPricingConfig, ProductDraftRead]:
     draft = db.scalar(
         select(ProductDraft).where(ProductDraft.id == product_draft_id).with_for_update()
     )
@@ -76,8 +77,9 @@ def upsert_draft_pricing(
         price=target_price,
         currency=effective_formula["target_currency"],
     )
-    db.commit()
-    db.refresh(config)
+    db.expire(draft)
+    db.refresh(draft)
+    draft_snapshot = to_draft_read(draft)
     create_audit_event(
         db,
         actor_type="human",
@@ -92,8 +94,11 @@ def upsert_draft_pricing(
             "currency": effective_formula["target_currency"],
             "formula": effective_formula,
         },
+        commit=False,
     )
-    return config
+    db.commit()
+    db.refresh(config)
+    return config, draft_snapshot
 
 
 def draft_pricing_errors(db: Session, draft: ProductDraft) -> list[str]:
@@ -185,7 +190,7 @@ def get_draft_pricing(db: Session, product_draft_id: int) -> DraftPricingConfig:
     return config
 
 
-def to_pricing_read(config: DraftPricingConfig) -> DraftPricingRead:
+def to_pricing_read(config: DraftPricingConfig, draft: ProductDraftRead) -> DraftPricingRead:
     return DraftPricingRead(
         id=config.id,
         product_draft_id=config.product_draft_id,
@@ -201,6 +206,8 @@ def to_pricing_read(config: DraftPricingConfig) -> DraftPricingRead:
         rounding_increment=config.rounding_increment,
         landed_cost=config.landed_cost,
         target_price=config.target_price,
+        draft_content_version=draft.content_version,
+        draft=draft,
         created_at=config.created_at,
         updated_at=config.updated_at,
     )

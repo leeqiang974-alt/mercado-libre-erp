@@ -89,10 +89,15 @@ def test_pricing_is_calculated_saved_and_audited():
     assert body["target_currency"] == "MXN"
     assert body["landed_cost"] == 250
     assert body["target_price"] == 420
+    assert body["draft_content_version"] == 2
+    assert body["draft"]["content_version"] == 2
+    assert body["draft"]["price"] == 420
 
     saved = client.get("/api/drafts/1/pricing")
     assert saved.status_code == 200
     assert saved.json()["target_price"] == 420
+    assert saved.json()["draft_content_version"] == 2
+    assert saved.json()["draft"]["content_version"] == 2
 
     with testing_session() as db:
         draft = db.get(ProductDraft, 1)

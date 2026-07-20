@@ -35,13 +35,13 @@ from app.api.routes.imports import (
 )
 from app.services.amazon.collector import CollectionResult, CollectionStatus
 from app.services.amazon.throttle import reserve_domain_request
-from app.schemas.drafts import ProductDraftCreate
+from app.schemas.drafts import ProductDraftContentUpdate, ProductDraftCreate
 from app.schemas.publishing import ListingChoice
 from app.schemas.reviews import ReviewResponse
 from app.schemas.provider_pricing import ProviderModelPriceCreate
 from app.services.publish_jobs import create_publish_job
 from app.services.review_jobs import recover_stale_review_jobs
-from app.services.drafts import update_draft_content
+from app.services.drafts import save_product_draft_content, update_draft_content
 from app.services.provider_pricing import save_provider_model_price
 from app.services.draft_listing_configs import build_configured_draft
 from app.workers import collection_worker
@@ -539,6 +539,67 @@ def test_postgres_concurrent_draft_changes_increment_every_version():
     finally:
         with testing_session() as db:
             db.query(ReviewResult).filter(ReviewResult.id == review_id).delete()
+            db.query(ProductDraft).filter(ProductDraft.id == draft_id).delete()
+            db.commit()
+        engine.dispose()
+
+
+@pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")
+def test_postgres_draft_content_optimistic_lock_allows_one_writer():
+    engine = create_engine(POSTGRES_URL, pool_pre_ping=True)
+    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    marker = uuid4().hex
+    with testing_session() as db:
+        draft = ProductDraft(title=f"Content edit {marker}", content_version=1)
+        db.add(draft)
+        db.commit()
+        draft_id = draft.id
+
+    both_updates_ready = Barrier(2)
+
+    def change_draft(sequence: int) -> str:
+        with testing_session() as db:
+            both_updates_ready.wait(timeout=10)
+            try:
+                save_product_draft_content(
+                    db,
+                    draft_id,
+                    ProductDraftContentUpdate(
+                        expected_content_version=1,
+                        title=f"Content edit {marker}-{sequence}",
+                        description="",
+                        brand="",
+                        image_urls=[],
+                    ),
+                )
+                return "saved"
+            except HTTPException as exc:
+                db.rollback()
+                assert exc.status_code == 409
+                assert exc.detail == "draft_content_version_conflict"
+                return "conflict"
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(change_draft, range(2)))
+        assert sorted(results) == ["conflict", "saved"]
+        with testing_session() as db:
+            current = db.get(ProductDraft, draft_id)
+            assert current.content_version == 2
+            assert current.title in {
+                f"Content edit {marker}-0",
+                f"Content edit {marker}-1",
+            }
+            assert db.query(AuditEvent).filter(
+                AuditEvent.action == "draft.content_updated",
+                AuditEvent.entity_id == str(draft_id),
+            ).count() == 1
+    finally:
+        with testing_session() as db:
+            db.query(AuditEvent).filter(
+                AuditEvent.action == "draft.content_updated",
+                AuditEvent.entity_id == str(draft_id),
+            ).delete()
             db.query(ProductDraft).filter(ProductDraft.id == draft_id).delete()
             db.commit()
         engine.dispose()

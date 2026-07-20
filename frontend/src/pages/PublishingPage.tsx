@@ -564,16 +564,7 @@ export function PublishingPage({
         attributes: currentAttributes,
       });
       setSavedConfig(config);
-      if (draft) {
-        onDraftChange({
-          ...draft,
-          target_site_id: config.site_id,
-          target_category_id: config.category_id,
-          listing_type_id: config.listing_type_id,
-          condition: currentAttributes.find((item) => item.id === "ITEM_CONDITION")?.value_name ?? "",
-          stock: config.available_quantity ?? 0,
-        });
-      }
+      onDraftChange(config.draft);
       setStatus("Listing configuration saved");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to save listing config");

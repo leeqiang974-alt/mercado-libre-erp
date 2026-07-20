@@ -183,10 +183,15 @@ def test_listing_config_can_be_saved_and_read_for_draft():
     assert body["shipping_logistic_type"] == "drop_off"
     assert body["available_quantity"] == 2
     assert body["attributes"][0]["id"] == "BRAND"
+    assert body["draft_content_version"] == 2
+    assert body["draft"]["content_version"] == 2
+    assert body["draft"]["listing_type_id"] == "gold_special"
 
     get_response = client.get("/api/drafts/1/listing-config")
     assert get_response.status_code == 200
     assert get_response.json()["attributes"][1]["value_name"] == "B-100"
+    assert get_response.json()["draft_content_version"] == 2
+    assert get_response.json()["draft"]["content_version"] == 2
 
     with testing_session() as db:
         draft = db.get(ProductDraft, 1)

@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.schemas.drafts import ProductDraftRead
+
 
 SUPPORTED_SHIPPING_MODES = {"me2", "me1", "not_specified"}
 SUPPORTED_LISTING_TYPE_IDS = {"gold_special", "gold_pro"}
@@ -109,5 +111,7 @@ class DraftListingConfigRead(BaseModel):
     shipping_logistic_type: str
     available_quantity: int | None = None
     attributes: list[ListingAttributeValue] = Field(default_factory=list)
+    draft_content_version: int
+    draft: ProductDraftRead
     created_at: datetime
     updated_at: datetime

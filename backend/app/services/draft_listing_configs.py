@@ -9,10 +9,10 @@ from app.models.draft_listing_config import DraftListingConfig
 from app.models.product_draft import ProductDraft
 from app.models.store import Store
 from app.schemas.draft_listing_config import DraftListingConfigRead, DraftListingConfigUpsert
-from app.schemas.drafts import ProductDraftCreate
+from app.schemas.drafts import ProductDraftCreate, ProductDraftRead
 from app.schemas.publishing import ListingChoice
 from app.services.audit_events import create_audit_event
-from app.services.drafts import update_draft_content
+from app.services.drafts import to_draft_read, update_draft_content
 from app.services.draft_pricing import require_current_draft_pricing
 from app.services.meli.category_validation import (
     canonical_item_condition,
@@ -25,8 +25,10 @@ def upsert_draft_listing_config(
     db: Session,
     product_draft_id: int,
     payload: DraftListingConfigUpsert,
-) -> DraftListingConfig:
-    draft = db.get(ProductDraft, product_draft_id)
+) -> tuple[DraftListingConfig, ProductDraftRead]:
+    draft = db.scalar(
+        select(ProductDraft).where(ProductDraft.id == product_draft_id).with_for_update()
+    )
     if draft is None:
         raise HTTPException(status_code=404, detail="Product draft not found.")
     if payload.store_id is not None:
@@ -132,9 +134,12 @@ def upsert_draft_listing_config(
         },
         commit=False,
     )
+    db.expire(draft)
+    db.refresh(draft)
+    draft_snapshot = to_draft_read(draft)
     db.commit()
     db.refresh(config)
-    return config
+    return config, draft_snapshot
 
 
 def get_draft_listing_config(db: Session, product_draft_id: int) -> DraftListingConfig:
@@ -209,7 +214,10 @@ def build_configured_draft(
     )
 
 
-def to_listing_config_read(config: DraftListingConfig) -> DraftListingConfigRead:
+def to_listing_config_read(
+    config: DraftListingConfig,
+    draft: ProductDraftRead,
+) -> DraftListingConfigRead:
     return DraftListingConfigRead(
         id=config.id,
         product_draft_id=config.product_draft_id,
@@ -222,6 +230,8 @@ def to_listing_config_read(config: DraftListingConfig) -> DraftListingConfigRead
         shipping_logistic_type=config.shipping_logistic_type,
         available_quantity=config.available_quantity,
         attributes=config.attributes_json or [],
+        draft_content_version=draft.content_version,
+        draft=draft,
         created_at=config.created_at,
         updated_at=config.updated_at,
     )

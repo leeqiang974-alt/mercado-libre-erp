@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.schemas.drafts import ProductDraftRead
+
 
 class DraftPricingUpsert(BaseModel):
     source_price: float = Field(gt=0)
@@ -33,5 +35,7 @@ class DraftPricingRead(DraftPricingUpsert):
     product_draft_id: int
     landed_cost: float
     target_price: float
+    draft_content_version: int
+    draft: ProductDraftRead
     created_at: datetime
     updated_at: datetime

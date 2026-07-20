@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, Calculator, ImageOff, ListPlus, RefreshCw, ShieldCheck } from "lucide-react";
+import {
+  Bot,
+  Calculator,
+  ImageOff,
+  ListPlus,
+  Plus,
+  RefreshCw,
+  Save,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
 import {
   enqueueBehavioralAuditBatch,
   getDraftPricing,
@@ -9,7 +19,9 @@ import {
   listDrafts,
   listReviewJobs,
   listReviewHistory,
+  saveDraftContent,
   saveDraftPricing,
+  type DraftContentUpdate,
   type DraftPricing,
   type DraftPricingInput,
   type ProductDraft,
@@ -59,6 +71,7 @@ export function DraftsPage({
   onReviewChange,
   onSelectDraft,
   onDraftChange,
+  onContentDirtyChange,
 }: {
   draft: ProductDraft | null;
   draftId: number | null;
@@ -66,6 +79,7 @@ export function DraftsPage({
   onReviewChange: (review: Record<string, unknown> | null) => void;
   onSelectDraft: (draft: ProductDraftRead) => void;
   onDraftChange: (draft: ProductDraft) => void;
+  onContentDirtyChange: (dirty: boolean) => void;
 }) {
   const [savedDrafts, setSavedDrafts] = useState<ProductDraftRead[]>([]);
   const [providerReview, setProviderReview] = useState<Record<string, unknown> | null>(null);
@@ -78,6 +92,7 @@ export function DraftsPage({
   const [providerCostAcknowledged, setProviderCostAcknowledged] = useState(false);
   const [reviewJobs, setReviewJobs] = useState<ReviewJob[]>([]);
   const [batchReviewResult, setBatchReviewResult] = useState<ReviewJobBatchResult | null>(null);
+  const [contentForm, setContentForm] = useState<DraftContentUpdate | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const draftEpochRef = useRef(0);
@@ -122,6 +137,26 @@ export function DraftsPage({
     }, 5000);
     return () => window.clearTimeout(timer);
   }, [reviewJobs, onReviewChange]);
+
+  useEffect(() => {
+    if (!draftId || draft?.content_version || savedDrafts.length === 0) return;
+    const persisted = savedDrafts.find((item) => item.id === draftId);
+    if (persisted) onDraftChange(persisted);
+  }, [draftId, draft?.content_version, savedDrafts, onDraftChange]);
+
+  useEffect(() => {
+    if (!draft || !draft.content_version) {
+      setContentForm(null);
+      return;
+    }
+    setContentForm({
+      expected_content_version: draft.content_version,
+      title: draft.title,
+      description: draft.description,
+      brand: draft.brand,
+      image_urls: draft.image_urls.length > 0 ? draft.image_urls : [""],
+    });
+  }, [draftId, draft?.content_version]);
 
   useEffect(() => {
     draftEpochRef.current += 1;
@@ -176,6 +211,60 @@ export function DraftsPage({
     setPricing((current) => ({ ...current, [name]: Number(value) }));
   }
 
+  function updateContentField(name: "title" | "description" | "brand", value: string) {
+    setContentForm((current) => (current ? { ...current, [name]: value } : current));
+  }
+
+  function updateContentImage(index: number, value: string) {
+    setContentForm((current) => {
+      if (!current) return current;
+      const imageUrls = [...current.image_urls];
+      imageUrls[index] = value;
+      return { ...current, image_urls: imageUrls };
+    });
+  }
+
+  function removeContentImage(index: number) {
+    setContentForm((current) => {
+      if (!current) return current;
+      const imageUrls = current.image_urls.filter((_, itemIndex) => itemIndex !== index);
+      return { ...current, image_urls: imageUrls.length > 0 ? imageUrls : [""] };
+    });
+  }
+
+  async function saveContent() {
+    if (!draftId || !contentForm || !draft?.content_version) return;
+    setBusy("content");
+    setError("");
+    try {
+      const updated = await saveDraftContent(draftId, {
+        ...contentForm,
+        expected_content_version: draft.content_version,
+        image_urls: contentForm.image_urls.map((url) => url.trim()).filter(Boolean),
+      });
+      onDraftChange(updated);
+      setContentForm({
+        expected_content_version: updated.content_version,
+        title: updated.title,
+        description: updated.description,
+        brand: updated.brand,
+        image_urls: updated.image_urls.length > 0 ? updated.image_urls : [""],
+      });
+      if (updated.content_version !== draft.content_version) {
+        onReviewChange(null);
+        setProviderReview(null);
+      }
+      setSavedDrafts((items) => items.map((item) => (item.id === draftId ? updated : item)));
+    } catch (contentError) {
+      const message = contentError instanceof Error ? contentError.message : "Failed to save content";
+      setError(message.includes("draft_content_version_conflict")
+        ? "This draft changed in another operation. Reload it before saving your edits."
+        : message);
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function calculateAndSavePricing() {
     if (!draft || !draftId) return;
     setBusy("pricing");
@@ -183,13 +272,7 @@ export function DraftsPage({
     try {
       const saved = await saveDraftPricing(draftId, pricing);
       setPricingResult(saved);
-      const updatedDraft = {
-        ...draft,
-        source_price: saved.source_price,
-        source_currency: saved.source_currency,
-        price: saved.target_price,
-        currency: saved.target_currency,
-      };
+      const updatedDraft = saved.draft;
       onDraftChange(updatedDraft);
       onReviewChange(null);
       setProviderReview(null);
@@ -253,7 +336,11 @@ export function DraftsPage({
 
   async function queueBatchReview() {
     const draftIds = [...selectedDraftIds];
-    if (!providerCostAcknowledged || draftIds.length === 0) return;
+    if (
+      !providerCostAcknowledged
+      || draftIds.length === 0
+      || Boolean(contentDirty && draftId && selectedDraftIds.has(draftId))
+    ) return;
     setBusy("batch-review");
     setError("");
     try {
@@ -273,6 +360,31 @@ export function DraftsPage({
   const claudeReady = Boolean(readiness?.ai.claude_configured);
   const nvidiaReady = Boolean(readiness?.ai.nvidia_configured);
   const decision = typeof review?.decision === "string" ? review.decision : "not reviewed";
+  const normalizedContentImages = contentForm?.image_urls.map((url) => url.trim()).filter(Boolean) ?? [];
+  const contentDirty = Boolean(
+    draft
+    && contentForm
+    && (
+      contentForm.title !== draft.title
+      || contentForm.description !== draft.description
+      || contentForm.brand !== draft.brand
+      || JSON.stringify(normalizedContentImages) !== JSON.stringify(draft.image_urls)
+    )
+  );
+
+  useEffect(() => {
+    onContentDirtyChange(contentDirty);
+    return () => onContentDirtyChange(false);
+  }, [contentDirty, onContentDirtyChange]);
+
+  function selectSavedDraft(savedDraft: ProductDraftRead) {
+    if (
+      contentDirty
+      && savedDraft.id !== draftId
+      && !window.confirm("Discard unsaved listing content changes?")
+    ) return;
+    onSelectDraft(savedDraft);
+  }
 
   return (
     <section className="workspace">
@@ -310,6 +422,99 @@ export function DraftsPage({
             </div>
           </div>
 
+          {contentForm && (
+            <section className="surface content-editor">
+              <div className="section-heading">
+                <div><h3>Listing content</h3></div>
+                <span className={`state-pill ${contentDirty ? "blocked" : "ready"}`}>
+                  {contentDirty ? "Unsaved" : `Version ${draft.content_version}`}
+                </span>
+              </div>
+              <div className="form-grid two-col">
+                <label className="full-span">
+                  Title
+                  <input
+                    maxLength={200}
+                    value={contentForm.title}
+                    onChange={(event) => updateContentField("title", event.target.value)}
+                  />
+                </label>
+                <label>
+                  Brand
+                  <input
+                    maxLength={120}
+                    value={contentForm.brand}
+                    onChange={(event) => updateContentField("brand", event.target.value)}
+                  />
+                </label>
+                <label className="full-span">
+                  Description
+                  <textarea
+                    maxLength={50000}
+                    rows={6}
+                    value={contentForm.description}
+                    onChange={(event) => updateContentField("description", event.target.value)}
+                  />
+                </label>
+              </div>
+              <div className="image-url-editor">
+                <div className="section-heading compact">
+                  <div><h4>Product images</h4></div>
+                  <span>{contentForm.image_urls.filter(Boolean).length} / 12</span>
+                </div>
+                {contentForm.image_urls.map((url, index) => (
+                  <div className="image-url-row" key={`${index}-${contentForm.expected_content_version}`}>
+                    <ProductImage src={url} alt={`Product image ${index + 1}`} />
+                    <input
+                      aria-label={`Product image URL ${index + 1}`}
+                      value={url}
+                      onChange={(event) => updateContentImage(index, event.target.value)}
+                    />
+                    <button
+                      className="icon-button secondary-button"
+                      title="Remove image"
+                      aria-label={`Remove product image ${index + 1}`}
+                      onClick={() => removeContentImage(index)}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  className="secondary-button"
+                  disabled={contentForm.image_urls.length >= 12}
+                  onClick={() => setContentForm((current) => current
+                    ? { ...current, image_urls: [...current.image_urls, ""] }
+                    : current)}
+                >
+                  <Plus size={16} /> Add image
+                </button>
+              </div>
+              <div className="action-line">
+                <button
+                  disabled={!contentForm.title.trim() || !contentDirty || busy === "content"}
+                  onClick={saveContent}
+                >
+                  <Save size={16} /> {busy === "content" ? "Saving" : "Save content"}
+                </button>
+                <button
+                  className="secondary-button"
+                  disabled={!contentDirty || busy === "content"}
+                  onClick={() => setContentForm({
+                    expected_content_version: draft.content_version ?? 1,
+                    title: draft.title,
+                    description: draft.description,
+                    brand: draft.brand,
+                    image_urls: draft.image_urls.length > 0 ? draft.image_urls : [""],
+                  })}
+                >
+                  Reset
+                </button>
+                <span>Saving content requires a new Claude + NVIDIA review.</span>
+              </div>
+            </section>
+          )}
+
           <div className="workflow-grid">
             <section className="surface">
               <div className="section-heading">
@@ -331,7 +536,7 @@ export function DraftsPage({
                 <label>Round up to<input type="number" min="0.01" step="0.01" value={pricing.rounding_increment} onChange={(event) => updatePricing("rounding_increment", event.target.value)} /></label>
               </div>
               <div className="action-line">
-                <button disabled={!draftId || pricing.source_price <= 0 || pricing.exchange_rate <= 0 || busy === "pricing"} onClick={calculateAndSavePricing}>
+                <button disabled={!draftId || contentDirty || pricing.source_price <= 0 || pricing.exchange_rate <= 0 || busy === "pricing"} onClick={calculateAndSavePricing}>
                   <Calculator size={16} /> Calculate and save
                 </button>
                 {pricingResult && (
@@ -364,7 +569,7 @@ export function DraftsPage({
                   />
                   Confirm Claude and NVIDIA usage costs
                 </label>
-                <button disabled={!draftId || !pricingReady || !listingConfigured || !claudeReady || !nvidiaReady || !providerCostAcknowledged || Boolean(busy)} onClick={queueCurrentReview}><ShieldCheck size={16} /> Queue combined audit</button>
+                <button disabled={!draftId || contentDirty || !pricingReady || !listingConfigured || !claudeReady || !nvidiaReady || !providerCostAcknowledged || Boolean(busy)} onClick={queueCurrentReview}><ShieldCheck size={16} /> Queue combined audit</button>
                 <button className="secondary-button" disabled={!draftId} onClick={refreshReviewHistory}><RefreshCw size={16} /> History</button>
               </div>
               {!pricingReady && <p className="inline-warning">Save pricing before running provider review.</p>}
@@ -424,6 +629,7 @@ export function DraftsPage({
               <button
                 disabled={
                   selectedDraftIds.size === 0
+                  || Boolean(contentDirty && draftId && selectedDraftIds.has(draftId))
                   || !providerCostAcknowledged
                   || !claudeReady
                   || !nvidiaReady
@@ -460,13 +666,16 @@ export function DraftsPage({
                   aria-label={`Select draft ${savedDraft.id} for combined audit`}
                   checked={selectedDraftIds.has(savedDraft.id)}
                   disabled={
-                    !selectedDraftIds.has(savedDraft.id)
-                    && selectedDraftIds.size >= MAX_REVIEW_BATCH_SIZE
+                    Boolean(contentDirty && savedDraft.id === draftId)
+                    || (
+                      !selectedDraftIds.has(savedDraft.id)
+                      && selectedDraftIds.size >= MAX_REVIEW_BATCH_SIZE
+                    )
                   }
                   onChange={() => toggleBatchDraft(savedDraft.id)}
                 />
               </label>
-              <button className={`draft-row ${draftId === savedDraft.id ? "selected" : ""}`} onClick={() => onSelectDraft(savedDraft)}>
+              <button className={`draft-row ${draftId === savedDraft.id ? "selected" : ""}`} onClick={() => selectSavedDraft(savedDraft)}>
                 <ProductImage src={savedDraft.image_urls[0]} alt={savedDraft.title || "Product"} />
                 <span className="draft-copy">
                   <strong>{savedDraft.title}</strong>

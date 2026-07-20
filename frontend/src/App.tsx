@@ -16,6 +16,17 @@ export function App() {
     new URLSearchParams(window.location.search).get("meli_auth") ? "stores" : "dashboard",
   );
   const [status, setStatus] = useState("");
+  const [draftContentDirty, setDraftContentDirty] = useState(false);
+
+  function changePage(nextPage: string) {
+    if (
+      page === "drafts"
+      && nextPage !== "drafts"
+      && draftContentDirty
+      && !window.confirm("Discard unsaved listing content changes?")
+    ) return;
+    setPage(nextPage);
+  }
 
   async function importAndReview(
     sourceUrl: string,
@@ -58,7 +69,7 @@ export function App() {
   }
 
   return (
-    <Layout page={page} onPageChange={setPage}>
+    <Layout page={page} onPageChange={changePage}>
       {page === "dashboard" && <DashboardPage onNavigate={setPage} />}
       {page === "import" && (
         <ImportPage
@@ -74,6 +85,7 @@ export function App() {
           review={review}
           onReviewChange={setReview}
           onDraftChange={setDraft}
+          onContentDirtyChange={setDraftContentDirty}
           onSelectDraft={(selectedDraft) => {
             setDraft(selectedDraft);
             setDraftId(selectedDraft.id);

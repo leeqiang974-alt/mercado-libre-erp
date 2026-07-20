@@ -1,21 +1,26 @@
-from sqlalchemy import update
+from fastapi import HTTPException
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.product_draft import ProductDraft
-from app.schemas.drafts import ProductDraftCreate, ProductDraftRead
+from app.schemas.drafts import ProductDraftContentUpdate, ProductDraftCreate, ProductDraftRead
+from app.services.audit_events import create_audit_event
 
 
 def update_draft_content(
     db: Session,
     product_draft_id: int,
+    expected_content_version: int | None = None,
     **values: object,
 ) -> None:
     """Update draft fields and invalidate review with an atomic version increment."""
     # Sessions disable autoflush; preserve pending config changes before direct SQL.
     db.flush()
+    statement = update(ProductDraft).where(ProductDraft.id == product_draft_id)
+    if expected_content_version is not None:
+        statement = statement.where(ProductDraft.content_version == expected_content_version)
     result = db.execute(
-        update(ProductDraft)
-        .where(ProductDraft.id == product_draft_id)
+        statement
         .values(
             **values,
             content_version=ProductDraft.content_version + 1,
@@ -24,7 +29,74 @@ def update_draft_content(
         .execution_options(synchronize_session=False)
     )
     if result.rowcount != 1:
+        if expected_content_version is not None and db.get(ProductDraft, product_draft_id) is not None:
+            raise HTTPException(status_code=409, detail="draft_content_version_conflict")
         raise LookupError("Product draft not found.")
+
+
+def save_product_draft_content(
+    db: Session,
+    product_draft_id: int,
+    payload: ProductDraftContentUpdate,
+) -> ProductDraft:
+    draft = db.scalar(
+        select(ProductDraft).where(ProductDraft.id == product_draft_id).with_for_update()
+    )
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Product draft not found.")
+    if draft.content_version != payload.expected_content_version:
+        raise HTTPException(status_code=409, detail="draft_content_version_conflict")
+
+    values = {
+        "title": payload.title,
+        "description": payload.description,
+        "brand": payload.brand,
+        "image_urls_json": payload.image_urls,
+    }
+    before_values = {
+        "title": draft.title,
+        "description": draft.description,
+        "brand": draft.brand,
+        "image_urls_json": draft.image_urls_json or [],
+    }
+    changed_fields = [name for name, value in values.items() if before_values[name] != value]
+    if not changed_fields:
+        return draft
+
+    previous_version = draft.content_version
+    update_draft_content(
+        db,
+        product_draft_id,
+        expected_content_version=previous_version,
+        **values,
+    )
+    create_audit_event(
+        db,
+        actor_type="human",
+        actor_id="operator",
+        action="draft.content_updated",
+        entity_type="product_draft",
+        entity_id=str(product_draft_id),
+        before={
+            "content_version": previous_version,
+            "title": draft.title,
+            "brand": draft.brand,
+            "description_length": len(draft.description),
+            "image_count": len(draft.image_urls_json or []),
+        },
+        after={
+            "content_version": previous_version + 1,
+            "changed_fields": changed_fields,
+            "title": payload.title,
+            "brand": payload.brand,
+            "description_length": len(payload.description),
+            "image_count": len(payload.image_urls),
+        },
+        commit=False,
+    )
+    db.commit()
+    db.refresh(draft)
+    return draft
 
 
 def create_product_draft(
@@ -83,6 +155,7 @@ def to_draft_read(model: ProductDraft) -> ProductDraftRead:
         image_urls=model.image_urls_json or [],
         status=model.status.value if hasattr(model.status, "value") else str(model.status),
         risk_status=model.risk_status,
+        content_version=model.content_version,
     )
 
 

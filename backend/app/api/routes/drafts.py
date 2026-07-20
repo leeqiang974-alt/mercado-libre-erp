@@ -5,7 +5,7 @@ from app.db.session import get_db
 from app.models.product_draft import ProductDraft
 from app.schemas.draft_approvals import DraftApprovalCreate, DraftApprovalRead
 from app.schemas.draft_listing_config import DraftListingConfigRead, DraftListingConfigUpsert
-from app.schemas.drafts import ProductDraftRead
+from app.schemas.drafts import ProductDraftContentUpdate, ProductDraftRead
 from app.schemas.attribute_mapping import AttributeSuggestionRead
 from app.schemas.pricing import DraftPricingRead, DraftPricingUpsert
 from app.services.draft_approvals import approve_product_draft, to_approval_read
@@ -14,7 +14,7 @@ from app.services.draft_listing_configs import (
     to_listing_config_read,
     upsert_draft_listing_config,
 )
-from app.services.drafts import list_product_drafts
+from app.services.drafts import list_product_drafts, save_product_draft_content, to_draft_read
 from app.services.draft_pricing import (
     get_draft_pricing,
     require_current_draft_pricing,
@@ -31,13 +31,34 @@ def list_drafts(db: Session = Depends(get_db)) -> list[ProductDraftRead]:
     return list_product_drafts(db)
 
 
+@router.get("/{product_draft_id}", response_model=ProductDraftRead)
+def read_draft(
+    product_draft_id: int,
+    db: Session = Depends(get_db),
+) -> ProductDraftRead:
+    draft = db.get(ProductDraft, product_draft_id)
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Product draft not found.")
+    return to_draft_read(draft)
+
+
+@router.put("/{product_draft_id}/content", response_model=ProductDraftRead)
+def save_draft_content(
+    product_draft_id: int,
+    payload: ProductDraftContentUpdate,
+    db: Session = Depends(get_db),
+) -> ProductDraftRead:
+    return to_draft_read(save_product_draft_content(db, product_draft_id, payload))
+
+
 @router.put("/{product_draft_id}/pricing", response_model=DraftPricingRead)
 def save_pricing(
     product_draft_id: int,
     payload: DraftPricingUpsert,
     db: Session = Depends(get_db),
 ) -> DraftPricingRead:
-    return to_pricing_read(upsert_draft_pricing(db, product_draft_id, payload))
+    pricing, draft = upsert_draft_pricing(db, product_draft_id, payload)
+    return to_pricing_read(pricing, draft)
 
 
 @router.get("/{product_draft_id}/pricing", response_model=DraftPricingRead | None)
@@ -56,7 +77,7 @@ def read_pricing(
     if draft is None:
         raise HTTPException(status_code=404, detail="Product draft not found.")
     require_current_draft_pricing(db, draft)
-    return to_pricing_read(pricing)
+    return to_pricing_read(pricing, to_draft_read(draft))
 
 
 @router.put("/{product_draft_id}/listing-config", response_model=DraftListingConfigRead)
@@ -65,7 +86,8 @@ def save_listing_config(
     payload: DraftListingConfigUpsert,
     db: Session = Depends(get_db),
 ) -> DraftListingConfigRead:
-    return to_listing_config_read(upsert_draft_listing_config(db, product_draft_id, payload))
+    config, draft = upsert_draft_listing_config(db, product_draft_id, payload)
+    return to_listing_config_read(config, draft)
 
 
 @router.get("/{product_draft_id}/listing-config", response_model=DraftListingConfigRead | None)
@@ -75,7 +97,11 @@ def read_listing_config(
     db: Session = Depends(get_db),
 ) -> DraftListingConfigRead | None:
     try:
-        return to_listing_config_read(get_draft_listing_config(db, product_draft_id))
+        config = get_draft_listing_config(db, product_draft_id)
+        draft = db.get(ProductDraft, product_draft_id)
+        if draft is None:
+            raise HTTPException(status_code=404, detail="Product draft not found.")
+        return to_listing_config_read(config, to_draft_read(draft))
     except HTTPException as exc:
         if optional and exc.status_code == 404:
             return None

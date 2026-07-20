@@ -17,6 +17,7 @@ export type ProductDraft = {
   source_product_id?: number | null;
   source_variant_asin?: string;
   source_variant_attributes?: Record<string, string>;
+  content_version?: number;
 };
 
 export type ProductDraftRead = ProductDraft & {
@@ -26,6 +27,15 @@ export type ProductDraftRead = ProductDraft & {
   source_variant_attributes: Record<string, string>;
   status: string;
   risk_status: string;
+  content_version: number;
+};
+
+export type DraftContentUpdate = {
+  expected_content_version: number;
+  title: string;
+  description: string;
+  brand: string;
+  image_urls: string[];
 };
 
 export type PersistedDraftResponse = {
@@ -211,6 +221,8 @@ export type DraftListingConfig = {
   shipping_logistic_type: string;
   available_quantity: number | null;
   attributes: { id: string; value_name: string; value_id?: string | null }[];
+  draft_content_version: number;
+  draft: ProductDraftRead;
   created_at: string;
   updated_at: string;
 };
@@ -316,6 +328,8 @@ export type DraftPricing = DraftPricingInput & {
   product_draft_id: number;
   landed_cost: number;
   target_price: number;
+  draft_content_version: number;
+  draft: ProductDraftRead;
   created_at: string;
   updated_at: string;
 };
@@ -734,6 +748,22 @@ export async function listDrafts() {
   const response = await fetch(`${API_BASE}/api/drafts`);
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<ProductDraftRead[]>;
+}
+
+export async function getDraft(productDraftId: number) {
+  const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<ProductDraftRead>;
+}
+
+export async function saveDraftContent(productDraftId: number, payload: DraftContentUpdate) {
+  const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/content`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<ProductDraftRead>;
 }
 
 export async function listReviewHistory(productDraftId: number) {
