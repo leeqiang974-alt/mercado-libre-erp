@@ -9,11 +9,12 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.registry import import_all_models
+from app.models.store import Store
 from app.services.meli.client import MercadoLibreClient
 from app.services.meli.oauth import MercadoLibreOAuthClient, create_state_token
 
 
-def make_client():
+def make_client(with_session: bool = False):
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -31,7 +32,8 @@ def make_client():
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
-    return TestClient(app)
+    client = TestClient(app)
+    return (client, testing_session) if with_session else client
 
 
 def teardown_function():
@@ -185,3 +187,94 @@ def test_store_shipping_options_exclude_full(monkeypatch):
             {"mode": "me1", "logistic_type": "default"},
         ],
     }
+
+
+def test_store_category_listing_types_use_authorized_seller_eligibility(monkeypatch):
+    monkeypatch.setattr(stores.settings, "meli_client_id", "client-123")
+    monkeypatch.setattr(stores.settings, "meli_client_secret", "secret-456")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/users/me":
+            return httpx.Response(200, json={"id": 123, "site_id": "MLM"})
+        if request.url.path == "/users/123/available_listing_types":
+            assert request.url.params["category_id"] == "MLM123"
+            return httpx.Response(
+                200,
+                json={
+                    "category_id": "MLM123",
+                    "available": [
+                        {
+                            "site_id": "MLM",
+                            "id": "gold_special",
+                            "name": "Clásica",
+                            "remaining_listings": None,
+                        },
+                        {"site_id": "MLM", "id": "free", "name": "Gratuita"},
+                    ],
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "access-token",
+                "refresh_token": "refresh-token",
+                "expires_in": 21600,
+                "user_id": 123,
+            },
+        )
+
+    monkeypatch.setattr(
+        stores,
+        "create_oauth_client",
+        lambda db=None: MercadoLibreOAuthClient(
+            client_id="client-123",
+            client_secret="secret-456",
+            redirect_uri="http://localhost:8000/api/stores/meli/callback",
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+    monkeypatch.setattr(
+        stores,
+        "create_meli_client",
+        lambda access_token: MercadoLibreClient(
+            access_token=access_token,
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+    client = make_client()
+    state = create_state_token(stores.settings.token_encryption_key)
+    client.get(
+        f"/api/stores/meli/callback?code=code-789&state={state}",
+        follow_redirects=False,
+    )
+
+    response = client.get("/api/stores/1/categories/MLM123/listing-types")
+
+    assert response.status_code == 200
+    assert response.json()["listing_types"] == [
+        {
+            "id": "gold_special",
+            "name": "Clásica",
+            "site_id": "MLM",
+            "remaining_listings": None,
+        }
+    ]
+
+
+def test_store_category_listing_types_reject_cross_site_category(monkeypatch):
+    client, testing_session = make_client(with_session=True)
+    with testing_session() as db:
+        db.add(
+            Store(
+                site_id="MLM",
+                seller_id="123",
+                display_name="Demo",
+                oauth_status="connected",
+            )
+        )
+        db.commit()
+
+    response = client.get("/api/stores/1/categories/MLA123/listing-types")
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Category site does not match store site."

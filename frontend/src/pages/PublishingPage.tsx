@@ -20,6 +20,7 @@ import {
   getDraftListingConfig,
   getDraftAttributeSuggestions,
   getListingTypes,
+  getStoreCategoryListingTypes,
   getStoreShippingOptions,
   getSystemReadiness,
   listPublishJobs,
@@ -62,6 +63,8 @@ function shippingKey(option: ShippingOption) {
 }
 
 function readablePublishError(value: string) {
+  if (value === "listing_types_not_verified") return "Refresh seller/category listing eligibility before publishing.";
+  if (value === "listing_type_not_available") return "This listing type is not available for the selected seller and category.";
   if (value === "category_attributes_not_verified") return "Refresh verified category attributes before publishing.";
   if (value.startsWith("required_category_attribute_missing:")) {
     return `${value.split(":", 2)[1]} is required.`;
@@ -97,6 +100,7 @@ export function PublishingPage({
   const [siteId, setSiteId] = useState(draft?.target_site_id ?? "MLM");
   const [listingTypes, setListingTypes] = useState<string[]>([]);
   const [listingTypesVerified, setListingTypesVerified] = useState(false);
+  const [listingTypeNames, setListingTypeNames] = useState<Record<string, string>>({});
   const [listingTypeId, setListingTypeId] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [predictions, setPredictions] = useState<Record<string, unknown>[]>([]);
@@ -189,7 +193,12 @@ export function PublishingPage({
                 .map((item) => [item.id, item.value_id as string]),
             ),
           );
-          void loadAttributes(false, config.category_id);
+          void loadAttributes(
+            false,
+            config.category_id,
+            String(config.store_id ?? ""),
+            config.listing_type_id,
+          );
           return;
         }
         const matchingStore = storeRows.find(
@@ -253,6 +262,7 @@ export function PublishingPage({
   );
   const commercialTypes = COMMERCIAL_TYPES.map((type) => ({
     ...type,
+    label: listingTypeNames[type.id] || type.label,
     available: listingTypes.includes(type.id),
   }));
   const requiredAttributes = useMemo(
@@ -371,9 +381,20 @@ export function PublishingPage({
     setBusy("listing-types");
     setStatus("");
     try {
+      if (storeId && categoryId) {
+        const result = await getStoreCategoryListingTypes(Number(storeId), categoryId);
+        if (listingTypeRequestEpochRef.current !== requestEpoch) return;
+        setListingTypes(result.listing_types.map((item) => item.id));
+        setListingTypeNames(
+          Object.fromEntries(result.listing_types.map((item) => [item.id, item.name])),
+        );
+        setListingTypesVerified(result.verified);
+        return;
+      }
       const result = await refreshListingTypes(siteId);
       if (listingTypeRequestEpochRef.current !== requestEpoch) return;
       setListingTypes(result.listing_type_ids);
+      setListingTypeNames({});
       setListingTypesVerified(result.verified);
     } catch (error) {
       if (listingTypeRequestEpochRef.current === requestEpoch) {
@@ -402,18 +423,49 @@ export function PublishingPage({
     }
   }
 
-  async function loadAttributes(force = false, categoryOverride = "") {
+  async function loadAttributes(
+    force = false,
+    categoryOverride = "",
+    storeOverride = "",
+    listingTypeOverride = "",
+  ) {
     const requestedCategoryId = categoryOverride || categoryId;
+    const requestedStoreId = storeOverride || storeId;
+    const requestedListingTypeId = listingTypeOverride || listingTypeId;
     if (!requestedCategoryId) return;
     const requestEpoch = ++categoryAttributesEpochRef.current;
     setBusy("attributes");
     setStatus("");
     setAttributeError("");
     try {
-      const result = force
-        ? await refreshCategoryAttributes(requestedCategoryId)
-        : await getCategoryAttributes(requestedCategoryId);
+      const [result, eligibleTypes] = await Promise.all([
+        force
+          ? refreshCategoryAttributes(requestedCategoryId)
+          : getCategoryAttributes(requestedCategoryId),
+        requestedStoreId
+          ? getStoreCategoryListingTypes(Number(requestedStoreId), requestedCategoryId)
+          : Promise.resolve(null),
+      ]);
       if (categoryAttributesEpochRef.current !== requestEpoch) return;
+      if (eligibleTypes) {
+        const eligibleIds = eligibleTypes.listing_types.map((item) => item.id);
+        setListingTypes(eligibleIds);
+        setListingTypeNames(
+          Object.fromEntries(eligibleTypes.listing_types.map((item) => [item.id, item.name])),
+        );
+        setListingTypesVerified(eligibleTypes.verified);
+        if (eligibleIds.includes(requestedListingTypeId)) {
+          setListingTypeId(requestedListingTypeId);
+        } else {
+          setListingTypeId(
+            eligibleIds.includes("gold_special")
+              ? "gold_special"
+              : eligibleIds.includes("gold_pro") ? "gold_pro" : "",
+          );
+        }
+      } else {
+        setListingTypesVerified(false);
+      }
       setCategoryAttributes(result.attributes);
       setCategoryAttributesVerified(result.verified);
       if (!result.verified) {
@@ -440,9 +492,12 @@ export function PublishingPage({
     categorySelectionEpochRef.current += 1;
     categoryPredictionEpochRef.current += 1;
     categoryAttributesEpochRef.current += 1;
+    listingTypeRequestEpochRef.current += 1;
     setCategoryId(nextCategoryId);
     setCategoryAttributes([]);
     setCategoryAttributesVerified(false);
+    setListingTypesVerified(false);
+    setListingTypeNames({});
     setAttributeValues({});
     setAttributeValueIds({});
     setAttributeSuggestions([]);
@@ -639,9 +694,15 @@ export function PublishingPage({
           </label>
           <label>Authorized store
             <select value={storeId} onChange={(event) => {
+              categoryAttributesEpochRef.current += 1;
+              listingTypeRequestEpochRef.current += 1;
               setStoreId(event.target.value);
               setShippingOptions([]);
               setShippingStatus(event.target.value ? "Loading verified non-FULL shipping options..." : "");
+              setListingTypes([]);
+              setListingTypesVerified(false);
+              setListingTypeNames({});
+              setListingTypeId("");
               setSavedConfig(null);
               setPreview(null);
               setSelectedShippingKey("");
@@ -658,11 +719,11 @@ export function PublishingPage({
         <div className="listing-choice" role="group" aria-label="Listing type">
           {commercialTypes.map((type) => (
             <button key={type.id} className={listingTypeId === type.id ? "selected" : ""} disabled={!type.available} onClick={() => { setListingTypeId(type.id); setSavedConfig(null); setPreview(null); }}>
-              <strong>{type.label}</strong><span>{type.available ? type.note : "Unavailable for this site"}</span>
+              <strong>{type.label}</strong><span>{type.available ? "Available for this seller and category" : "Unavailable for this seller and category"}</span>
             </button>
           ))}
         </div>
-        {!listingTypesVerified && listingTypes.length > 0 && <p className="inline-warning">Classic and Premium are loaded from the standard catalog because live Mercado Libre metadata verification is currently unavailable.</p>}
+        {!listingTypesVerified && <p className="inline-warning">Load category attributes to verify Classic/Premium eligibility for this authorized seller and category.</p>}
         <div className="shipping-choice">
           <label><Truck size={16} /> Verified non-FULL shipping
             <select
@@ -788,7 +849,7 @@ export function PublishingPage({
           </p>
         )}
         {categoryAttributes.length > 0 && <div className="action-line"><span>{requiredAttributes.length} required · {categoryAttributes.length} total attributes loaded</span><button className="secondary-button" onClick={() => loadAttributes(true)}><RefreshCw size={16} /> Refresh metadata</button></div>}
-        <div className="action-line"><button onClick={saveConfig} disabled={!categoryId || !categoryAttributesVerified || !listingTypeId || !selectedShipping || !pricingValid || missingRequiredAttributes.length > 0 || busy === "config"}><Save size={16} /> Save listing configuration</button>{savedConfig && <span className="success-text"><CheckCircle2 size={16} /> Saved as non-FULL</span>}</div>
+        <div className="action-line"><button onClick={saveConfig} disabled={!categoryId || !categoryAttributesVerified || !listingTypesVerified || !listingTypeId || !selectedShipping || !pricingValid || missingRequiredAttributes.length > 0 || busy === "config"}><Save size={16} /> Save listing configuration</button>{savedConfig && <span className="success-text"><CheckCircle2 size={16} /> Saved as non-FULL</span>}</div>
       </section>
 
       <section className="surface publish-section">

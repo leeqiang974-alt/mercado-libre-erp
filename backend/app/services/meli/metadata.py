@@ -1,9 +1,73 @@
 from app.services.meli.client import MercadoLibreClient
+from app.schemas.draft_listing_config import SUPPORTED_LISTING_TYPE_IDS
 
 
 async def fetch_listing_type_ids(client: MercadoLibreClient, site_id: str) -> list[str]:
     data = await client.get(f"/sites/{site_id}/listing_types")
-    return [item["id"] for item in data if item.get("id")]
+    if not isinstance(data, list):
+        raise ValueError("invalid_listing_types_response")
+    listing_type_ids = [
+        str(item.get("id") or "").strip().lower()
+        for item in data
+        if isinstance(item, dict)
+    ]
+    supported: list[str] = []
+    for listing_type_id in listing_type_ids:
+        if (
+            listing_type_id in SUPPORTED_LISTING_TYPE_IDS
+            and listing_type_id not in supported
+        ):
+            supported.append(listing_type_id)
+    return supported
+
+
+async def fetch_available_listing_types(
+    client: MercadoLibreClient,
+    seller_id: str,
+    category_id: str,
+) -> dict[str, object]:
+    data = await client.get(
+        f"/users/{seller_id}/available_listing_types?category_id={category_id}"
+    )
+    if not isinstance(data, dict):
+        raise ValueError("invalid_available_listing_types_response")
+    response_category_id = str(data.get("category_id") or "").strip().upper()
+    if response_category_id != category_id.strip().upper():
+        raise ValueError("available_listing_types_category_mismatch")
+    available = data.get("available")
+    if not isinstance(available, list):
+        raise ValueError("invalid_available_listing_types_response")
+    listing_types: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for item in available:
+        if not isinstance(item, dict):
+            raise ValueError("invalid_available_listing_type_definition")
+        listing_type_id = str(item.get("id") or "").strip().lower()
+        if listing_type_id not in SUPPORTED_LISTING_TYPE_IDS or listing_type_id in seen:
+            continue
+        site_id = str(item.get("site_id") or "").strip().upper()
+        if not site_id:
+            raise ValueError("available_listing_type_site_missing")
+        remaining_listings = item.get("remaining_listings")
+        if (
+            remaining_listings is not None
+            and (
+                isinstance(remaining_listings, bool)
+                or not isinstance(remaining_listings, int)
+                or remaining_listings < 0
+            )
+        ):
+            raise ValueError("invalid_remaining_listings")
+        seen.add(listing_type_id)
+        listing_types.append(
+            {
+                "id": listing_type_id,
+                "name": str(item.get("name") or listing_type_id).strip(),
+                "site_id": site_id,
+                "remaining_listings": remaining_listings,
+            }
+        )
+    return {"category_id": response_category_id, "listing_types": listing_types}
 
 
 async def predict_category(client: MercadoLibreClient, site_id: str, query: str) -> list[dict]:

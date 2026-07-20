@@ -35,7 +35,7 @@ async def get_listing_types(site_id: str, db: Session = Depends(get_db)) -> dict
         return {
             "listing_type_ids": cached.get("listing_type_ids", []),
             "source": "cache",
-            "verified": cached.get("verified", True),
+            "verified": cached.get("verified") is True,
         }
     return {
         "listing_type_ids": STANDARD_LISTING_TYPE_IDS,
@@ -63,6 +63,13 @@ async def _fetch_listing_types_with_transparent_fallback(
             "listing_type_ids": STANDARD_LISTING_TYPE_IDS,
             "source": "standard_catalog",
             "verified": False,
+        }
+    if not listing_type_ids:
+        logger.warning("Mercado Libre exposes no supported listing types for %s", site_id)
+        return {
+            "listing_type_ids": [],
+            "source": "mercado_libre_api",
+            "verified": True,
         }
     payload = {
         "listing_type_ids": listing_type_ids,

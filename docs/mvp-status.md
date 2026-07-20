@@ -40,6 +40,8 @@ Implemented:
 - Persisted product drafts for successful URL collections.
 - Amazon source amount/currency remain read-only evidence in the pricing workspace. Saved pricing is recalculated against that evidence and the selected site's currency, and is required at persisted AI review, preview, queue, retry, worker, and direct publish boundaries.
 - Mercado Libre metadata proxy for listing types, category prediction, and category attributes.
+- Authorized seller/category listing eligibility uses `/users/{seller_id}/available_listing_types`, filters out non-Classic/Premium offers, preserves Mercado Libre's site-specific names, and caches exact store/category evidence for 15 minutes.
+- Listing configuration rejects cross-site categories and cannot be saved until the selected authorized seller is verified for the chosen category and commercial type. Direct execution, enqueue, retry, and publish workers reuse the same eligibility gate.
 - Authorized-store shipping preferences API with explicit non-FULL filtering and operator-selectable shipping mode/logistic type.
 - Versioned listing configuration binds site, authorized store, Classic/Premium choice, and non-FULL shipping; changing delivery invalidates prior AI review and approval.
 - Saved-draft preview and enqueue re-fetch the authorized store's current shipping preferences and fail closed when the selected non-FULL option was removed or the provider cannot be verified; execution performs the same check again before `/items`.
@@ -86,7 +88,7 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 286 passed, with 8 PostgreSQL-only tests skipped in the default run.
+- Backend suite: 314 passed, with 9 PostgreSQL-only tests skipped in the default run.
 - Isolated Docker PostgreSQL integration run: 8 passed, including serialized manual-snapshot recovery and refresh-token rotation, concurrent collection, publish-job, and source-variant draft deduplication, atomic draft-version invalidation, and a final publish-evidence row lock that blocks concurrent draft changes until publication completes.
 - PostgreSQL migrations through `20260721_0024` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, high-precision review execution costs, structured source snapshots, source-variant draft bindings, structured source measurements, provider usage/request telemetry, encrypted integration credentials, and a unique active price per provider/model.
 - The complete Alembic chain upgraded to head and downgraded to base successfully on a disposable D-drive SQLite database.

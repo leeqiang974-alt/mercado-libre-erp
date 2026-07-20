@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models.draft_listing_config import DraftListingConfig
 from app.models.product_draft import ProductDraft
 from app.models.store import Store
@@ -14,6 +15,7 @@ from app.services.audit_events import create_audit_event
 from app.services.drafts import update_draft_content
 from app.services.draft_pricing import require_current_draft_pricing
 from app.services.meli.category_validation import validate_category_attributes
+from app.services.meli.listing_type_validation import validate_store_category_listing_type
 
 
 def upsert_draft_listing_config(
@@ -32,6 +34,23 @@ def upsert_draft_listing_config(
             raise HTTPException(status_code=409, detail="Store is not connected.")
         if store.site_id.strip().upper() != payload.site_id.strip().upper():
             raise HTTPException(status_code=422, detail="Store site does not match listing site.")
+    else:
+        raise HTTPException(status_code=422, detail="Authorized store selection is required.")
+    if not payload.category_id.strip().upper().startswith(payload.site_id.strip().upper()):
+        raise HTTPException(status_code=422, detail="Category site does not match listing site.")
+    listing_type_errors = validate_store_category_listing_type(
+        db,
+        payload.store_id,
+        payload.category_id,
+        payload.listing_type_id,
+        require_verified_metadata=True,
+        max_age_seconds=get_settings().listing_type_cache_ttl_seconds,
+    )
+    if listing_type_errors:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_listing_type", "errors": listing_type_errors},
+        )
     category_errors = validate_category_attributes(
         db,
         payload.category_id,

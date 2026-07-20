@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -48,6 +50,20 @@ def make_client():
                 },
             )
         )
+        db.add(
+            MeliMetadataCache(
+                cache_key="available_listing_types:1:MLM123",
+                payload_json={
+                    "verified": True,
+                    "store_id": 1,
+                    "category_id": "MLM123",
+                    "listing_types": [
+                        {"id": "gold_special", "name": "Clásica"},
+                        {"id": "gold_pro", "name": "Premium"},
+                    ],
+                },
+            )
+        )
         draft = ProductDraft(
             title="Bottle",
             description="Leak proof.",
@@ -84,6 +100,14 @@ def make_client():
 
 def teardown_function():
     app.dependency_overrides.clear()
+
+
+def category_cache(db):
+    return (
+        db.query(MeliMetadataCache)
+        .filter(MeliMetadataCache.cache_key == "category_attributes:MLM123")
+        .one()
+    )
 
 
 def config_payload():
@@ -157,6 +181,64 @@ def test_listing_config_can_be_saved_and_read_for_draft():
         assert draft.listing_type_id == "gold_special"
 
 
+def test_listing_config_requires_verified_site_listing_types():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        db.query(MeliMetadataCache).filter(
+            MeliMetadataCache.cache_key == "available_listing_types:1:MLM123"
+        ).delete()
+        db.commit()
+
+    response = client.put("/api/drafts/1/listing-config", json=config_payload())
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {
+        "code": "invalid_listing_type",
+        "errors": ["listing_types_not_verified"],
+    }
+
+
+def test_listing_config_rejects_commercial_type_unavailable_for_site():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        cache = (
+            db.query(MeliMetadataCache)
+            .filter(
+                MeliMetadataCache.cache_key
+                == "available_listing_types:1:MLM123"
+            )
+            .one()
+        )
+        cache.payload_json = {
+            "verified": True,
+            "store_id": 1,
+            "category_id": "MLM123",
+            "listing_types": [{"id": "gold_special", "name": "Clásica"}],
+        }
+        db.commit()
+    payload = config_payload()
+    payload["listing_type_id"] = "gold_pro"
+
+    response = client.put("/api/drafts/1/listing-config", json=payload)
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {
+        "code": "invalid_listing_type",
+        "errors": ["listing_type_not_available"],
+    }
+
+
+def test_listing_config_rejects_category_from_another_site():
+    client, _ = make_client()
+    payload = config_payload()
+    payload["category_id"] = "MLA123"
+
+    response = client.put("/api/drafts/1/listing-config", json=payload)
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Category site does not match listing site."
+
+
 def test_source_variant_attributes_are_suggested_against_category_metadata():
     client, testing_session = make_client()
     with testing_session() as db:
@@ -164,7 +246,7 @@ def test_source_variant_attributes_are_suggested_against_category_metadata():
         draft.brand = "TrailPro"
         draft.source_variant_asin = "B000TEST02"
         draft.source_variant_attributes_json = {"Color Name": "Blue", "Size": "32 oz"}
-        cache = db.query(MeliMetadataCache).one()
+        cache = category_cache(db)
         cache.payload_json = {
                     "verified": True,
                     "attributes": [
@@ -233,7 +315,7 @@ def test_attribute_suggestions_do_not_match_modified_semantics():
     with testing_session() as db:
         draft = db.get(ProductDraft, 1)
         draft.source_variant_attributes_json = {"Color": "Blue", "Size": "32 oz"}
-        cache = db.query(MeliMetadataCache).one()
+        cache = category_cache(db)
         cache.payload_json = {
             "verified": True,
             "attributes": [
@@ -279,7 +361,7 @@ def test_selected_source_measurements_are_suggested_conservatively():
         draft = db.get(ProductDraft, 1)
         draft.source_product_id = source.id
         draft.source_variant_asin = "B000TEST01"
-        cache = db.query(MeliMetadataCache).one()
+        cache = category_cache(db)
         cache.payload_json = {
             "verified": True,
             "attributes": [
@@ -327,7 +409,7 @@ def test_other_source_variant_does_not_inherit_selected_page_measurements():
         draft = db.get(ProductDraft, 1)
         draft.source_product_id = source.id
         draft.source_variant_asin = "B000TEST02"
-        cache = db.query(MeliMetadataCache).one()
+        cache = category_cache(db)
         cache.payload_json = {
             "verified": True,
             "attributes": [{"id": "WEIGHT", "name": "Weight", "tags": {}}],
@@ -359,7 +441,7 @@ def test_legacy_selected_marker_and_empty_draft_asin_cannot_authorize_measuremen
         draft = db.get(ProductDraft, 1)
         draft.source_product_id = source.id
         draft.source_variant_asin = ""
-        cache = db.query(MeliMetadataCache).one()
+        cache = category_cache(db)
         cache.payload_json = {
             "verified": True,
             "attributes": [{"id": "WEIGHT", "name": "Weight", "tags": {}}],
@@ -447,7 +529,7 @@ def test_listing_config_preserves_value_ids_and_rejects_duplicate_attributes():
 def test_listing_config_rejects_missing_required_cached_category_attribute():
     client, testing_session = make_client()
     with testing_session() as db:
-        cache = db.query(MeliMetadataCache).one()
+        cache = category_cache(db)
         cache.payload_json = {
                     "verified": True,
                     "attributes": [
@@ -605,7 +687,7 @@ def test_publish_preview_blocks_missing_required_category_attribute():
     review_result_id = seed_publish_review(testing_session)
     client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
     with testing_session() as db:
-        cache = db.query(MeliMetadataCache).one()
+        cache = category_cache(db)
         cache.payload_json = {
                     "verified": True,
                         "attributes": [
@@ -631,3 +713,39 @@ def test_publish_preview_blocks_missing_required_category_attribute():
         "code": "listing_config_stale",
         "errors": ["required_category_attribute_missing:GTIN"],
     }
+
+
+def test_publish_preview_blocks_expired_seller_category_listing_eligibility(monkeypatch):
+    monkeypatch.setattr(
+        "app.api.routes.publishing._validate_current_store_shipping",
+        lambda *args, **kwargs: [],
+    )
+    client, testing_session = make_client()
+    assert client.put("/api/drafts/1/listing-config", json=config_payload()).status_code == 200
+    review_result_id = seed_publish_review(testing_session)
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+    with testing_session() as db:
+        cache = (
+            db.query(MeliMetadataCache)
+            .filter(
+                MeliMetadataCache.cache_key
+                == "available_listing_types:1:MLM123"
+            )
+            .one()
+        )
+        cache.refreshed_at = datetime.now(UTC) - timedelta(hours=1)
+        db.commit()
+
+    response = client.post(
+        "/api/publishing/preview-from-draft",
+        json={
+            "product_draft_id": 1,
+            "review": review_payload() | {"review_result_id": review_result_id},
+            "valid_listing_type_ids": ["gold_special"],
+            "human_approved": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["allowed"] is False
+    assert response.json()["errors"] == ["listing_types_not_verified"]

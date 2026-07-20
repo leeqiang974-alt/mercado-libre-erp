@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     token_encryption_key: str = "local-dev-token-key-change-me"
     job_stale_after_seconds: int = 900
     job_execution_timeout_seconds: int = 840
+    listing_type_cache_ttl_seconds: int = 900
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

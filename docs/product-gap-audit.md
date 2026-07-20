@@ -1,6 +1,6 @@
 # Product Gap Audit
 
-Updated: 2026-07-20
+Updated: 2026-07-21
 
 ## Honest Current State
 
@@ -13,6 +13,7 @@ The repository contains an operational local workflow for Amazon URL collection 
 - Amazon URL jobs persist success, manual-action, timeout, and failure outcomes. Operator HTML snapshots require a matching Amazon ASIN and complete core product fields.
 - A validated operator snapshot can now close its exact challenged queue item and atomically link the replacement source plus draft; URL/site mismatches and concurrent duplicate resolutions fail without partial records.
 - Mercado Libre publishing supports all configured sites and Classic/Premium offers while excluding FULL logistics before and after item creation.
+- Classic/Premium eligibility is fetched from Mercado Libre for the exact authorized seller and category. The verified result retains provider names, expires after 15 minutes, blocks cross-site categories, and is rechecked by synchronous and queued publish gates rather than treating the site catalog as seller permission.
 - Publish outcomes that may have created an item but cannot be confirmed are quarantined for manual reconciliation and cannot be retried automatically.
 - Claude and NVIDIA failures are explicit. Only the latest persisted combined behavioral audit can satisfy approval and publishing gates.
 - Claude and NVIDIA output follows a versioned strict schema. Unknown decisions or risk levels, missing/extra fields, and wrong types fail closed instead of being aggregated as a pass.
@@ -34,5 +35,5 @@ The repository contains an operational local workflow for Amazon URL collection 
 
 1. Configure a test Mercado Libre application and authorize one seller account for a controlled non-FULL publication.
 2. Configure Claude and NVIDIA credentials, run a real combined review, and retain provider/audit evidence.
-3. Verify live listing-type, category-attribute, shipping-preference, and post-publication responses for every target site used by the operator.
+3. Verify live seller/category listing-type, category-attribute, shipping-preference, and post-publication responses for every target site used by the operator.
 4. Continue expanding Amazon fidelity for undocumented embedded formats, remaining locale-specific labels/units, and page-specific per-variant evidence.

@@ -33,6 +33,7 @@ from app.services.meli.publisher import (
     validate_publish_request,
     validate_store_delivery,
 )
+from app.services.meli.listing_type_validation import validate_store_category_listing_type
 from app.services.meli.shipping import find_non_full_shipping_selection
 from app.services.meli.token_vault import resolve_fresh_store_access_token
 from app.services.publish_jobs import (
@@ -102,7 +103,19 @@ def publish_preview(
         if store is not None
         else ["configured_store_not_found"]
     )
-    errors = [*validation.errors, *store_errors]
+    listing_type_errors = (
+        validate_store_category_listing_type(
+            db,
+            store.id,
+            payload.draft.target_category_id,
+            payload.listing_choice.listing_type_id,
+            require_verified_metadata=True,
+            max_age_seconds=settings.listing_type_cache_ttl_seconds,
+        )
+        if store is not None
+        else []
+    )
+    errors = [*validation.errors, *store_errors, *listing_type_errors]
     if not errors and store is not None:
         errors.extend(_validate_current_store_shipping(db, store, payload.listing_choice))
     return validation.model_copy(update={"allowed": not errors, "errors": errors})
@@ -201,6 +214,14 @@ def publish_enqueue_from_draft(
     )
     validation_errors = [
         *validation.errors,
+        *validate_store_category_listing_type(
+            db,
+            store.id,
+            draft.target_category_id,
+            listing_choice.listing_type_id,
+            require_verified_metadata=settings.allow_live_publish,
+            max_age_seconds=settings.listing_type_cache_ttl_seconds,
+        ),
         *validate_store_delivery(
             store.id, store.site_id, store.oauth_status, listing_choice
         ),
@@ -406,6 +427,14 @@ async def _execute_with_payload(
     )
     validation_errors = [
         *validation.errors,
+        *validate_store_category_listing_type(
+            db,
+            store.id,
+            draft.target_category_id,
+            listing_choice.listing_type_id,
+            require_verified_metadata=settings.allow_live_publish,
+            max_age_seconds=settings.listing_type_cache_ttl_seconds,
+        ),
         *validate_store_delivery(
             store.id, store.site_id, store.oauth_status, listing_choice
         ),
@@ -489,6 +518,14 @@ async def _execute_with_payload(
     )
     final_errors = [
         *final_validation.errors,
+        *validate_store_category_listing_type(
+            db,
+            store.id,
+            draft.target_category_id,
+            listing_choice.listing_type_id,
+            require_verified_metadata=settings.allow_live_publish,
+            max_age_seconds=settings.listing_type_cache_ttl_seconds,
+        ),
         *validate_store_delivery(
             store.id, store.site_id, store.oauth_status, listing_choice
         ),
@@ -562,6 +599,18 @@ def _with_category_attribute_validation(
     errors = [
         *validation.errors,
         *store_errors,
+        *(
+            validate_store_category_listing_type(
+                db,
+                store.id,
+                draft.target_category_id,
+                listing_choice.listing_type_id,
+                require_verified_metadata=True,
+                max_age_seconds=settings.listing_type_cache_ttl_seconds,
+            )
+            if store is not None
+            else []
+        ),
         *validate_category_attributes(
             db,
             draft.target_category_id,

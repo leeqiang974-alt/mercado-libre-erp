@@ -9,6 +9,10 @@ def listing_types_key(site_id: str) -> str:
     return f"listing_types:{site_id}"
 
 
+def available_listing_types_key(store_id: int, category_id: str) -> str:
+    return f"available_listing_types:{store_id}:{category_id.strip().upper()}"
+
+
 def category_attributes_key(category_id: str) -> str:
     return f"category_attributes:{category_id}"
 

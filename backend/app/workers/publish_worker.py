@@ -16,6 +16,7 @@ from app.services.integration_credentials import resolve_integration_credentials
 from app.services.meli.client import MercadoLibreClient
 from app.services.meli.category_validation import validate_category_attributes
 from app.services.meli.oauth import MercadoLibreOAuthClient
+from app.services.meli.listing_type_validation import validate_store_category_listing_type
 from app.services.meli.publisher import (
     SUPPORTED_LISTING_TYPE_IDS,
     execute_publish,
@@ -141,9 +142,28 @@ async def run_pending_publish_job(
                     else allow_live_publish
                 ),
             )
-            if category_errors:
+            listing_type_errors = validate_store_category_listing_type(
+                db,
+                store.id,
+                draft.target_category_id,
+                listing_choice.listing_type_id,
+                require_verified_metadata=(
+                    get_settings().allow_live_publish
+                    if allow_live_publish is None
+                    else allow_live_publish
+                ),
+                max_age_seconds=get_settings().listing_type_cache_ttl_seconds,
+            )
+            if category_errors or listing_type_errors:
                 validation = validation.model_copy(
-                    update={"allowed": False, "errors": [*validation.errors, *category_errors]}
+                    update={
+                        "allowed": False,
+                        "errors": [
+                            *validation.errors,
+                            *listing_type_errors,
+                            *category_errors,
+                        ],
+                    }
                 )
             if not validation.allowed:
                 result = PublishExecutionResult(status="blocked", errors=validation.errors)
@@ -220,6 +240,18 @@ async def _publish_job(
     )
     final_errors = [
         *final_validation.errors,
+        *validate_store_category_listing_type(
+            db,
+            store.id,
+            draft.target_category_id,
+            listing_choice.listing_type_id,
+            require_verified_metadata=(
+                settings.allow_live_publish
+                if allow_live_publish is None
+                else allow_live_publish
+            ),
+            max_age_seconds=settings.listing_type_cache_ttl_seconds,
+        ),
         *validate_store_delivery(
             store.id, store.site_id, store.oauth_status, listing_choice
         ),

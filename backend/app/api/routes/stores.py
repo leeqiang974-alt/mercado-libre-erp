@@ -17,6 +17,11 @@ from app.services.meli.oauth import (
 from app.services.meli.token_vault import upsert_store_token
 from app.services.meli.shipping import list_non_full_shipping_options
 from app.services.meli.token_vault import resolve_fresh_store_access_token
+from app.services.meli.metadata import fetch_available_listing_types
+from app.services.meli.metadata_cache import (
+    available_listing_types_key,
+    upsert_cached_metadata,
+)
 
 router = APIRouter(prefix="/api/stores", tags=["stores"])
 settings = get_settings()
@@ -120,6 +125,63 @@ def list_stores(db: Session = Depends(get_db)) -> list[dict[str, str]]:
         }
         for store in db.query(Store).order_by(Store.id.desc()).all()
     ]
+
+
+@router.get("/{store_id}/categories/{category_id}/listing-types")
+async def get_store_category_listing_types(
+    store_id: int,
+    category_id: str,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    store = db.get(Store, store_id)
+    if store is None:
+        raise HTTPException(status_code=404, detail="Store not found.")
+    if store.oauth_status != "connected":
+        raise HTTPException(status_code=409, detail="Store is not connected.")
+    normalized_category_id = category_id.strip().upper()
+    if not normalized_category_id.startswith(store.site_id.strip().upper()):
+        raise HTTPException(status_code=422, detail="Category site does not match store site.")
+    try:
+        access_token = await resolve_fresh_store_access_token(
+            db=db,
+            store=store,
+            encryption_key=settings.token_encryption_key,
+            oauth_client=create_oauth_client(db),
+        )
+        if not access_token:
+            raise HTTPException(status_code=409, detail="Store access token is unavailable.")
+        result = await fetch_available_listing_types(
+            create_meli_client(access_token),
+            store.seller_id,
+            normalized_category_id,
+        )
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Mercado Libre seller listing types are unavailable.",
+        ) from exc
+    listing_types = result["listing_types"]
+    if any(
+        item.get("site_id") and item["site_id"] != store.site_id.strip().upper()
+        for item in listing_types
+    ):
+        raise HTTPException(status_code=502, detail="Mercado Libre listing type site mismatch.")
+    payload = {
+        "verified": True,
+        "store_id": store.id,
+        "seller_id": store.seller_id,
+        "site_id": store.site_id.strip().upper(),
+        "category_id": normalized_category_id,
+        "listing_types": listing_types,
+    }
+    upsert_cached_metadata(
+        db,
+        available_listing_types_key(store.id, normalized_category_id),
+        payload,
+    )
+    return payload
 
 
 @router.get("/{store_id}/shipping-options")

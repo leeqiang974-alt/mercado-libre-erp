@@ -49,6 +49,17 @@ def make_session():
         db.add(store)
         db.flush()
         db.add(
+            MeliMetadataCache(
+                cache_key=f"available_listing_types:{store.id}:MLM123",
+                payload_json={
+                    "verified": True,
+                    "store_id": store.id,
+                    "category_id": "MLM123",
+                    "listing_types": [{"id": "gold_special"}, {"id": "gold_pro"}],
+                },
+            )
+        )
+        db.add(
             TokenCredential(
                 store_id=store.id,
                 token_reference="meli:seller-1",
@@ -177,6 +188,113 @@ async def test_worker_publishes_pending_publish_jobs_up_to_limit():
             PublishJobStatus.PENDING,
         ]
         assert jobs[0].meli_item_id == "MLM-WORKER-1"
+
+
+@pytest.mark.asyncio
+async def test_worker_blocks_when_seller_category_listing_type_is_no_longer_available():
+    testing_session = make_session()
+    with testing_session() as db:
+        cache = (
+            db.query(MeliMetadataCache)
+            .filter(
+                MeliMetadataCache.cache_key
+                == "available_listing_types:1:MLM123"
+            )
+            .one()
+        )
+        cache.payload_json = {
+            "verified": True,
+            "store_id": 1,
+            "category_id": "MLM123",
+            "listing_types": [{"id": "gold_pro"}],
+        }
+        db.add(
+            PublishJob(
+                product_draft_id=1,
+                store_id=1,
+                requested_by="operator",
+                status=PublishJobStatus.PENDING,
+                request_summary_json=job_summary(),
+            )
+        )
+        db.commit()
+
+    async def unexpected_publisher(**kwargs):
+        raise AssertionError("unavailable listing type must block before /items")
+
+    with testing_session() as db:
+        summary = await run_pending_publish_jobs(
+            db,
+            limit=1,
+            publisher=unexpected_publisher,
+            allow_live_publish=True,
+            token_encryption_key="test-secret",
+        )
+
+    assert summary["blocked"] == 1
+    assert summary["published"] == 0
+    with testing_session() as db:
+        job = db.query(PublishJob).one()
+        assert job.response_summary_json["errors"] == ["listing_type_not_available"]
+
+
+@pytest.mark.asyncio
+async def test_worker_final_check_refreshes_listing_eligibility_after_token_resolution(
+    monkeypatch,
+):
+    testing_session = make_session()
+    with testing_session() as db:
+        db.add(
+            PublishJob(
+                product_draft_id=1,
+                store_id=1,
+                requested_by="operator",
+                status=PublishJobStatus.PENDING,
+                request_summary_json=job_summary(),
+            )
+        )
+        db.commit()
+
+    async def change_eligibility_while_resolving_token(**kwargs):
+        with testing_session() as concurrent_db:
+            cache = (
+                concurrent_db.query(MeliMetadataCache)
+                .filter(
+                    MeliMetadataCache.cache_key
+                    == "available_listing_types:1:MLM123"
+                )
+                .one()
+            )
+            cache.payload_json = {
+                "verified": True,
+                "store_id": 1,
+                "category_id": "MLM123",
+                "listing_types": [{"id": "gold_pro"}],
+            }
+            concurrent_db.commit()
+        return "access-token"
+
+    async def unexpected_publisher(**kwargs):
+        raise AssertionError("final eligibility check must block before /items")
+
+    monkeypatch.setattr(
+        publish_worker,
+        "resolve_fresh_store_access_token",
+        change_eligibility_while_resolving_token,
+    )
+    with testing_session() as db:
+        summary = await run_pending_publish_jobs(
+            db,
+            limit=1,
+            publisher=unexpected_publisher,
+            allow_live_publish=True,
+            token_encryption_key="test-secret",
+        )
+
+    assert summary["blocked"] == 1
+    with testing_session() as db:
+        job = db.query(PublishJob).one()
+        assert job.response_summary_json["errors"] == ["listing_type_not_available"]
 
 
 @pytest.mark.asyncio

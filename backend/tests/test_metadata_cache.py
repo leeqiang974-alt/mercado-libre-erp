@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -11,6 +13,7 @@ from app.main import app
 from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.registry import import_all_models
 from app.services.meli.category_validation import validate_category_attributes
+from app.services.meli.listing_type_validation import validate_store_category_listing_type
 
 
 def make_client():
@@ -54,6 +57,78 @@ def test_listing_types_are_cached_after_refresh(monkeypatch):
         cache = db.query(MeliMetadataCache).one()
         assert cache.cache_key == "listing_types:MLM"
         assert cache.payload_json["listing_type_ids"] == ["gold_special", "gold_pro"]
+
+
+def test_listing_type_validation_requires_verified_current_site_metadata():
+    _, testing_session = make_client()
+    with testing_session() as db:
+        assert validate_store_category_listing_type(
+            db, 1, "MLM123", "gold_special", require_verified_metadata=True
+        ) == ["listing_types_not_verified"]
+        db.add(
+            MeliMetadataCache(
+                cache_key="available_listing_types:1:MLM123",
+                payload_json={
+                    "verified": True,
+                    "store_id": 1,
+                    "category_id": "MLM123",
+                    "listing_types": [{"id": "gold_special", "name": "Clásica"}],
+                },
+            )
+        )
+        db.commit()
+        assert validate_store_category_listing_type(
+            db, 1, "MLM123", "gold_special", require_verified_metadata=True
+        ) == []
+        assert validate_store_category_listing_type(
+            db, 1, "MLM123", "gold_pro", require_verified_metadata=True
+        ) == ["listing_type_not_available"]
+
+
+def test_malformed_listing_type_cache_is_not_trusted():
+    _, testing_session = make_client()
+    with testing_session() as db:
+        db.add(
+            MeliMetadataCache(
+                cache_key="available_listing_types:1:MLM123",
+                payload_json={
+                    "verified": True,
+                    "store_id": 1,
+                    "category_id": "MLM123",
+                    "listing_types": "gold_special",
+                },
+            )
+        )
+        db.commit()
+        assert validate_store_category_listing_type(
+            db, 1, "MLM123", "gold_special", require_verified_metadata=True
+        ) == ["listing_types_not_verified"]
+
+
+def test_expired_seller_category_listing_types_are_not_trusted():
+    _, testing_session = make_client()
+    with testing_session() as db:
+        db.add(
+            MeliMetadataCache(
+                cache_key="available_listing_types:1:MLM123",
+                payload_json={
+                    "verified": True,
+                    "store_id": 1,
+                    "category_id": "MLM123",
+                    "listing_types": [{"id": "gold_special"}],
+                },
+                refreshed_at=datetime.now(UTC) - timedelta(hours=1),
+            )
+        )
+        db.commit()
+        assert validate_store_category_listing_type(
+            db,
+            1,
+            "MLM123",
+            "gold_special",
+            require_verified_metadata=True,
+            max_age_seconds=900,
+        ) == ["listing_types_not_verified"]
 
 
 def test_listing_types_read_uses_cache_without_fetching(monkeypatch):

@@ -684,6 +684,25 @@ export async function getStoreShippingOptions(storeId: number) {
   }>;
 }
 
+export async function getStoreCategoryListingTypes(storeId: number, categoryId: string) {
+  const response = await fetch(
+    `${API_BASE}/api/stores/${storeId}/categories/${encodeURIComponent(categoryId)}/listing-types`,
+  );
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<{
+    store_id: number;
+    site_id: string;
+    category_id: string;
+    verified: boolean;
+    listing_types: Array<{
+      id: string;
+      name: string;
+      site_id: string;
+      remaining_listings: number | null;
+    }>;
+  }>;
+}
+
 export async function getListingTypes(siteId: string) {
   const response = await fetch(`${API_BASE}/api/metadata/sites/${siteId}/listing-types`);
   if (!response.ok) throw new Error(await response.text());

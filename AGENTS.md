@@ -24,7 +24,7 @@
 - Never silently substitute local review for Claude or NVIDIA and present it as provider output.
 - Keep Amazon source currency separate from Mercado Libre target currency; never relabel an unconverted source price.
 - Treat Amazon source amount/currency as read-only evidence. A persisted pricing formula must match that evidence, the Mercado Libre site currency, and the current draft target price; enforce this before persisted AI review, preview, queue, retry, worker, and direct execution.
-- FULL fulfillment remains excluded. Supported listing choices come from live Mercado Libre metadata for the authorized store site.
+- FULL fulfillment remains excluded. A site-level listing-type catalog is display metadata only; save and publish gates require fresh `available_listing_types` evidence for the exact authorized seller and category. Recheck the same store/category/type binding in direct execution and publish workers before `/items`.
 - Treat Mercado Libre category attributes as verified only when the cache explicitly records `verified: true`; cache presence, non-empty definitions, and legacy saved configurations must never bypass category validation at save, review, preview, queue, retry, worker, or execute boundaries.
 - Treat a lost or ambiguous Mercado Libre create-item response as an unknown outcome that requires store reconciliation; never retry it automatically.
 - For local Mercado Libre marketplace items, create `/items` without `description`, then upload plain text through `/items/{item_id}/description`. Reconcile ambiguous description responses with GET; if the approved description cannot be proven, close the new item, retain its item id, and never create a replacement automatically.

@@ -8,6 +8,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.registry import import_all_models
+from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.store import Store
 
 
@@ -21,12 +22,23 @@ def make_client():
     Base.metadata.create_all(engine)
     testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with testing_session() as db:
-        db.add(
-            Store(
+        store = Store(
                 site_id="MLM",
                 seller_id="api-flow",
                 display_name="API Flow Store",
                 oauth_status="connected",
+            )
+        db.add(store)
+        db.flush()
+        db.add(
+            MeliMetadataCache(
+                cache_key=f"available_listing_types:{store.id}:MLM123",
+                payload_json={
+                    "verified": True,
+                    "store_id": store.id,
+                    "category_id": "MLM123",
+                    "listing_types": [{"id": "gold_special"}, {"id": "gold_pro"}],
+                },
             )
         )
         db.commit()

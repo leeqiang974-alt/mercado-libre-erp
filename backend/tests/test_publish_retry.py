@@ -39,6 +39,10 @@ def make_client():
                 payload_json={"attributes": [{"id": "BRAND", "tags": {}}], "verified": True},
             )
         )
+        db.add(MeliMetadataCache(
+            cache_key="available_listing_types:1:MLM123",
+            payload_json={"store_id": 1, "category_id": "MLM123", "listing_types": [{"id": "gold_special"}, {"id": "gold_pro"}], "verified": True},
+        ))
         store = Store(
             site_id="MLM",
             seller_id="seller-1",
