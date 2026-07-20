@@ -9,6 +9,7 @@ from app.schemas.drafts import ProductDraftCreate
 from app.schemas.source_products import AmazonSourceSnapshot
 from app.services.amazon.normalizer import normalize_amazon_product
 from app.services.amazon.parser import (
+    extract_displayed_asin,
     extract_amazon_asin,
     extract_snapshot_asins,
     parse_amazon_html,
@@ -112,6 +113,9 @@ def validate_amazon_snapshot(source_url: str, html: str) -> dict:
     if missing:
         raise ValueError(f"amazon_snapshot_incomplete:{','.join(missing)}")
     expected_asin = extract_amazon_asin(source_url)
+    displayed_asin = extract_displayed_asin(html)
+    if displayed_asin and displayed_asin != expected_asin:
+        raise ValueError("amazon_snapshot_identity_mismatch")
     if expected_asin not in extract_snapshot_asins(html):
         raise ValueError("amazon_snapshot_identity_mismatch")
     return parsed

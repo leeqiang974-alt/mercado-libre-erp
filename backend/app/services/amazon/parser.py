@@ -1,3 +1,4 @@
+import ast
 import json
 import re
 from urllib.parse import urlparse
@@ -104,6 +105,28 @@ def extract_snapshot_asins(html: str) -> set[str]:
     return {candidate for candidate in candidates if re.fullmatch(r"[A-Z0-9]{10}", candidate)}
 
 
+def extract_displayed_asin(html_or_soup: str | BeautifulSoup) -> str | None:
+    soup = (
+        html_or_soup
+        if isinstance(html_or_soup, BeautifulSoup)
+        else BeautifulSoup(html_or_soup, "html.parser")
+    )
+    asin_input = soup.select_one("#ASIN")
+    asin = str(asin_input.get("value", "")).strip().upper() if asin_input else ""
+    if re.fullmatch(r"[A-Z0-9]{10}", asin):
+        return asin
+    for script in soup.select("script"):
+        script_text = script.string or script.get_text(" ", strip=False)
+        match = re.search(
+            r'''["'](?:winningAsin|currentAsin)["']\s*:\s*["']([A-Z0-9]{10})["']''',
+            script_text,
+            re.IGNORECASE,
+        )
+        if match:
+            return match.group(1).upper()
+    return None
+
+
 def _normalize_number(value: str) -> float:
     compact = re.sub(r"\s", "", value)
     comma = compact.rfind(",")
@@ -175,11 +198,156 @@ def _json_object_after_key(text: str, key: str) -> dict:
     match = re.search(rf'["\']{re.escape(key)}["\']\s*:\s*', text)
     if not match:
         return {}
-    try:
-        value, _ = json.JSONDecoder().raw_decode(text[match.end() :])
-    except (TypeError, ValueError):
+    fragment = _balanced_object(text, match.end())
+    if not fragment:
         return {}
+    try:
+        value = json.loads(fragment)
+    except (TypeError, ValueError):
+        try:
+            value = ast.literal_eval(_pythonize_javascript_literals(fragment))
+        except (SyntaxError, ValueError):
+            return {}
     return value if isinstance(value, dict) else {}
+
+
+def _balanced_object(text: str, start: int) -> str:
+    while start < len(text) and text[start].isspace():
+        start += 1
+    if start >= len(text) or text[start] != "{":
+        return ""
+    depth = 0
+    quote = ""
+    escaped = False
+    for index in range(start, len(text)):
+        character = text[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = ""
+            continue
+        if character in ("'", '"'):
+            quote = character
+        elif character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return ""
+
+
+def _pythonize_javascript_literals(value: str) -> str:
+    replacements = {"null": "None", "true": "True", "false": "False", "undefined": "None"}
+    result: list[str] = []
+    quote = ""
+    escaped = False
+    index = 0
+    while index < len(value):
+        character = value[index]
+        if quote:
+            result.append(character)
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = ""
+            index += 1
+            continue
+        if character in ("'", '"'):
+            quote = character
+            result.append(character)
+            index += 1
+            continue
+        replaced = False
+        for token, replacement in replacements.items():
+            if not value.startswith(token, index):
+                continue
+            before = value[index - 1] if index else ""
+            after_index = index + len(token)
+            after = value[after_index] if after_index < len(value) else ""
+            if (not before or not (before.isalnum() or before == "_")) and (
+                not after or not (after.isalnum() or after == "_")
+            ):
+                result.append(replacement)
+                index = after_index
+                replaced = True
+                break
+        if not replaced:
+            result.append(character)
+            index += 1
+    return "".join(result).replace("\\/", "/")
+
+
+def _gallery_entry_url(entry: object) -> str:
+    if isinstance(entry, str):
+        return _valid_image_url(entry)
+    if not isinstance(entry, dict):
+        return ""
+    high_resolution = _valid_image_url(entry.get("hiRes"))
+    if high_resolution:
+        return high_resolution
+    main = entry.get("main")
+    if isinstance(main, dict):
+        candidates: list[tuple[float, str]] = []
+        for raw_url, raw_dimensions in main.items():
+            image_url = _valid_image_url(raw_url)
+            if not image_url:
+                continue
+            area = 0.0
+            if isinstance(raw_dimensions, (list, tuple)) and len(raw_dimensions) >= 2:
+                try:
+                    area = float(raw_dimensions[0]) * float(raw_dimensions[1])
+                except (TypeError, ValueError):
+                    pass
+            candidates.append((area, image_url))
+        if candidates:
+            return max(candidates, key=lambda candidate: candidate[0])[1]
+    for field in ("large", "mainUrl", "landingUrl", "thumb"):
+        value = _valid_image_url(entry.get(field))
+        if value:
+            return value
+    return ""
+
+
+def _extract_script_image_sets(
+    soup: BeautifulSoup, selected_asin: str
+) -> tuple[list[str], dict[str, list[str]], dict[str, str]]:
+    selected_images: list[str] = []
+    images_by_asin: dict[str, list[str]] = {}
+    color_by_asin: dict[str, str] = {}
+    for script in soup.select("script"):
+        script_text = script.string or script.get_text(" ", strip=False)
+        color_images = _json_object_after_key(script_text, "colorImages")
+        if not color_images:
+            continue
+        color_to_asin = _json_object_after_key(script_text, "colorToAsin")
+        asin_by_color: dict[str, str] = {}
+        for color, raw_mapping in color_to_asin.items():
+            candidate = raw_mapping.get("asin") if isinstance(raw_mapping, dict) else raw_mapping
+            asin = str(candidate or "").strip().upper()
+            if re.fullmatch(r"[A-Z0-9]{10}", asin):
+                asin_by_color[str(color)] = asin
+
+        for group_name, entries in color_images.items():
+            if not isinstance(entries, list):
+                continue
+            asin = selected_asin if group_name == "initial" else asin_by_color.get(group_name, "")
+            if not asin:
+                continue
+            asin_images = images_by_asin.setdefault(asin, [])
+            for entry in entries:
+                image_url = _gallery_entry_url(entry)
+                _append_unique(asin_images, image_url)
+                if group_name == "initial" or asin == selected_asin:
+                    _append_unique(selected_images, image_url)
+            if group_name != "initial":
+                color_by_asin.setdefault(asin, str(group_name).strip())
+    return selected_images, images_by_asin, color_by_asin
 
 
 def _variant_label(group_id: str) -> str:
@@ -205,7 +373,13 @@ def _variant_value(option) -> str:
     return ""
 
 
-def _extract_variants(soup: BeautifulSoup, source_url: str) -> list[dict]:
+def _extract_variants(
+    soup: BeautifulSoup,
+    source_url: str,
+    selected_asin: str | None = None,
+    script_images_by_asin: dict[str, list[str]] | None = None,
+    script_color_by_asin: dict[str, str] | None = None,
+) -> list[dict]:
     variants: dict[str, dict] = {}
     for group in soup.select("[id^='variation_'][id$='_name']"):
         attribute = _variant_label(str(group.get("id", "")))
@@ -256,7 +430,18 @@ def _extract_variants(soup: BeautifulSoup, source_url: str) -> list[dict]:
                 if attribute and str(value).strip():
                     variant["attributes"].setdefault(attribute, str(value).strip())
 
-    selected_asin = extract_amazon_asin(source_url) or ""
+    for asin, image_urls in (script_images_by_asin or {}).items():
+        variant = variants.setdefault(
+            asin,
+            {"asin": asin, "attributes": {}, "image_urls": [], "selected": False},
+        )
+        if image_urls:
+            variant["image_urls"] = list(image_urls)
+        color = (script_color_by_asin or {}).get(asin, "")
+        if color:
+            variant["attributes"].setdefault("Color", color)
+
+    selected_asin = selected_asin or extract_amazon_asin(source_url) or ""
     for asin, variant in variants.items():
         variant["selected"] = bool(selected_asin and asin == selected_asin)
     return sorted(variants.values(), key=lambda item: (not item["selected"], item["asin"]))
@@ -359,7 +544,13 @@ def parse_amazon_html(html: str, source_url: str) -> dict:
     brand = byline.replace("Brand:", "").replace("Visit the", "").replace("Store", "").strip()
     bullets = [_text(item) for item in soup.select("#feature-bullets li") if _text(item)]
     description = _text(soup.select_one("#productDescription"))
-    images = _extract_images(soup)
+    selected_asin = extract_displayed_asin(soup) or extract_amazon_asin(source_url) or ""
+    script_images, script_images_by_asin, script_color_by_asin = _extract_script_image_sets(
+        soup, selected_asin
+    )
+    images = list(script_images)
+    for image_url in _extract_images(soup):
+        _append_unique(images, image_url)
     technical_details = {}
     for row in soup.select(
         "#productDetails_techSpec_section_1 tr, #productDetails_detailBullets_sections1 tr, "
@@ -389,7 +580,13 @@ def parse_amazon_html(html: str, source_url: str) -> dict:
         "bullets": bullets,
         "description": description,
         "images": images,
-        "variants": _extract_variants(soup, source_url),
+        "variants": _extract_variants(
+            soup,
+            source_url,
+            selected_asin=selected_asin,
+            script_images_by_asin=script_images_by_asin,
+            script_color_by_asin=script_color_by_asin,
+        ),
         "technical_details": technical_details,
         "measurements": _extract_measurements(technical_details, source_url),
     }

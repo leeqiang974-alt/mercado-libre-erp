@@ -18,7 +18,7 @@ The repository contains an operational local workflow for Amazon URL collection 
 
 ## Missing or Misleading Behavior
 
-- Amazon collection still cannot guarantee a complete image set or per-variant dimensions/weight; when the selected page exposes item/package measurements, they are now retained as structured evidence without being copied to sibling variants.
+- Amazon collection now reads high-resolution `colorImages` galleries and binds `colorToAsin` groups without cross-variant image leakage, but cannot guarantee a complete image set or per-variant dimensions/weight on every page; selected-page measurements remain structured evidence and are not copied to sibling variants.
 - Amazon page structure and anti-automation challenges can still require an operator-provided HTML snapshot.
 - Store authorization, live metadata, AI providers, and live publishing are unconfigured in the running environment; encrypted credentials can now be entered from the Stores workspace without restarting API or workers.
 - Automated end-to-end tests mock external Amazon, AI, and Mercado Libre behavior; they prove internal orchestration, not live integration.
@@ -29,4 +29,4 @@ The repository contains an operational local workflow for Amazon URL collection 
 1. Configure a test Mercado Libre application and authorize one seller account for a controlled non-FULL publication.
 2. Configure Claude and NVIDIA credentials, run a real combined review, and retain provider/audit evidence.
 3. Verify live listing-type, category-attribute, shipping-preference, and post-publication responses for every target site used by the operator.
-4. Expand Amazon fidelity for variants, dimensions, weight, and complete image sets where the source page exposes them.
+4. Continue expanding Amazon fidelity for alternate script formats and per-variant dimensions/weight where the source page exposes them.

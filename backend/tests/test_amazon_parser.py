@@ -1,3 +1,6 @@
+import pytest
+
+from app.services.amazon.collector import validate_amazon_snapshot
 from app.services.amazon.normalizer import normalize_amazon_product
 from app.services.amazon.parser import parse_amazon_html
 
@@ -178,6 +181,95 @@ def test_parse_amazon_html_extracts_image_gallery_and_variants():
         "Size": "32 oz",
     }
     assert variants["B000TEST02"]["image_urls"] == ["https://example.com/blue.jpg"]
+
+
+def test_parse_amazon_script_gallery_binds_high_resolution_images_to_asins():
+    html = """
+    <input id="ASIN" value="B000TEST01" />
+    <span id="productTitle">Script gallery bottle</span>
+    <img id="landingImage" src="https://example.com/landing-thumb.jpg" />
+    <div id="variation_color_name">
+      <span data-asin="B000TEST02" title="Blue">
+        <img src="https://example.com/blue-swatch-thumb.jpg" />
+      </span>
+    </div>
+    <script>
+      var imageData = {
+        'colorImages': {
+          'initial': [
+            {'hiRes':'https://example.com/black-main-hires.jpg','large':'https://example.com/black-main-large.jpg'},
+            {'hiRes':null,'large':'https://example.com/black-side-large.jpg'}
+          ],
+          'Black': [
+            {'large':'https://example.com/black-main-hires.jpg'},
+            {'mainUrl':'https://example.com/black-detail.jpg'}
+          ],
+          'Blue': [
+            {'hiRes':'https://example.com/blue-main-hires.jpg'},
+            {
+              'hiRes':null,
+              'large':'https://example.com/blue-side-large.jpg',
+              'main': {
+                'https://example.com/blue-side-small.jpg':[400,400],
+                'https://example.com/blue-side-max.jpg':[1600,1200]
+              }
+            }
+          ]
+        },
+        'colorToAsin': {
+          'Black':{'asin':'B000TEST01'},
+          'Blue':{'asin':'B000TEST02'}
+        }
+      };
+    </script>
+    """
+
+    parsed = parse_amazon_html(html, "https://www.amazon.com/dp/B000TEST01")
+
+    assert parsed["images"] == [
+        "https://example.com/black-main-hires.jpg",
+        "https://example.com/black-side-large.jpg",
+        "https://example.com/black-detail.jpg",
+        "https://example.com/landing-thumb.jpg",
+    ]
+    variants = {variant["asin"]: variant for variant in parsed["variants"]}
+    assert variants["B000TEST01"]["selected"] is True
+    assert variants["B000TEST01"]["attributes"] == {"Color": "Black"}
+    assert variants["B000TEST01"]["image_urls"] == [
+        "https://example.com/black-main-hires.jpg",
+        "https://example.com/black-side-large.jpg",
+        "https://example.com/black-detail.jpg",
+    ]
+    assert variants["B000TEST02"]["selected"] is False
+    assert variants["B000TEST02"]["attributes"] == {"Color": "Blue"}
+    assert variants["B000TEST02"]["image_urls"] == [
+        "https://example.com/blue-main-hires.jpg",
+        "https://example.com/blue-side-max.jpg",
+    ]
+
+
+def test_displayed_asin_owns_initial_gallery_and_mismatch_is_rejected():
+    html = """
+    <link rel="canonical" href="https://amazon.com/dp/B000TEST01" />
+    <span id="productTitle">Redirected Bottle</span>
+    <span class="a-price"><span class="a-offscreen">$20.00</span></span>
+    <script>
+      var imageData = {
+        'winningAsin':'B000TEST02',
+        'colorImages': {'initial':[{'hiRes':'https://example.com/blue.jpg'}]},
+        'colorToAsin': {}
+      };
+    </script>
+    """
+
+    parsed = parse_amazon_html(html, "https://amazon.com/dp/B000TEST01")
+
+    variants = {variant["asin"]: variant for variant in parsed["variants"]}
+    assert variants["B000TEST02"]["selected"] is True
+    assert variants["B000TEST02"]["image_urls"] == ["https://example.com/blue.jpg"]
+    assert "B000TEST01" not in variants
+    with pytest.raises(ValueError, match="amazon_snapshot_identity_mismatch"):
+        validate_amazon_snapshot("https://amazon.com/dp/B000TEST01", html)
 
 
 def test_requested_url_asin_wins_when_snapshot_contains_another_canonical_asin():

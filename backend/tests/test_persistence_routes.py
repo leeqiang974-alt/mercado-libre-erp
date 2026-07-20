@@ -75,6 +75,55 @@ def test_import_amazon_html_can_persist_and_list_draft():
         assert session.query(ProductDraft).one().source_product_id == source.id
 
 
+def test_import_amazon_html_uses_selected_script_gallery_for_persisted_draft():
+    client, testing_session = make_client()
+    html = """
+    <input id="ASIN" value="B000TEST01" />
+    <span id="productTitle">Gallery Bottle</span>
+    <span class="a-price"><span class="a-offscreen">$15.00</span></span>
+    <script>
+      var imageData = {
+        "colorImages": {
+          "initial": [
+            {"hiRes":"https://example.com/main-hires.jpg"},
+            {"large":"https://example.com/side-large.jpg"}
+          ],
+          "Blue": [{"hiRes":"https://example.com/blue-hires.jpg"}]
+        },
+        "colorToAsin": {"Blue":{"asin":"B000TEST02"}}
+      };
+    </script>
+    """
+
+    response = client.post(
+        "/api/imports/amazon-html",
+        json={
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
+            "html": html,
+            "target_site_id": "MLM",
+            "persist": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["draft"]["image_urls"] == [
+        "https://example.com/main-hires.jpg",
+        "https://example.com/side-large.jpg",
+    ]
+    with testing_session() as db:
+        source = db.query(SourceProduct).one()
+        assert source.image_urls_json == [
+            "https://example.com/main-hires.jpg",
+            "https://example.com/side-large.jpg",
+        ]
+        variants = {variant["asin"]: variant for variant in source.variants_json}
+        assert variants["B000TEST02"]["image_urls"] == [
+            "https://example.com/blue-hires.jpg"
+        ]
+        draft = db.query(ProductDraft).one()
+        assert draft.image_urls_json == source.image_urls_json
+
+
 def test_import_amazon_html_rejects_non_amazon_and_incomplete_snapshots():
     client, _ = make_client()
     valid_html = "<input id='ASIN' value='B000TEST01' /><span id='productTitle'>Bottle</span><span class='a-price'><span class='a-offscreen'>$9.99</span></span><img id='landingImage' src='https://example.com/a.jpg' />"

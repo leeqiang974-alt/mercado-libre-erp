@@ -13,6 +13,7 @@ Implemented:
 - Backend collection worker CLI for processing pending Amazon URL collection jobs in batches.
 - Persisted Amazon URL collection results as source products, including manual-action and failed collection states.
 - Structured Amazon source snapshots persist the full collected title, price, brand, bullets, description, image gallery, technical details, and discovered ASIN variants instead of reducing the source record to a URL/status shell.
+- Amazon `colorImages`/`colorToAsin` page data supplies high-resolution galleries before DOM thumbnails, including single-quoted JavaScript objects and maximum-area `main` image maps; displayed-ASIN validation prevents redirected pages from contaminating the requested product, and each discovered color ASIN receives only its own authoritative script gallery.
 - Collection history exposes a lightweight source summary and a lazy-loaded review panel for the full image gallery and variant evidence on desktop and mobile.
 - Operators can create an idempotent, site-specific draft from any discovered Amazon variant; the draft retains its source ASIN/attributes and prefers variant-specific images.
 - Saved drafts expose their Amazon ASIN and variant attributes so operators can distinguish otherwise identical titles.
@@ -73,7 +74,7 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 213 passed, with 5 PostgreSQL-only tests skipped in the default run.
+- Backend suite: 216 passed, with 5 PostgreSQL-only tests skipped in the default run.
 - Docker PostgreSQL integration run: 5 passed, including concurrent collection, publish-job, and source-variant draft deduplication plus atomic draft-version invalidation under simultaneous edits.
 - PostgreSQL migrations through `20260720_0021` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, review execution metadata, structured source snapshots, source-variant draft bindings, structured source measurements, provider usage/request telemetry, and encrypted integration credentials.
 - The complete Alembic chain upgraded to head and downgraded to base successfully on a disposable D-drive SQLite database.
