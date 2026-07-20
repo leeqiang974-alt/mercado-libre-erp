@@ -7,10 +7,12 @@ import time
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.models.collection_job import CollectionJob
+from app.models.audit_event import AuditEvent
+from app.models.collection_job import CollectionJob, CollectionJobStatus
 from app.models.draft_listing_config import DraftListingConfig
 from app.models.draft_pricing_config import DraftPricingConfig
 from app.models.meli_metadata_cache import MeliMetadataCache
@@ -20,7 +22,13 @@ from app.models.publish_job import PublishJob
 from app.models.review_result import ReviewDecision, ReviewResult
 from app.models.store import Store
 from app.models.token_credential import TokenCredential
-from app.api.routes.imports import AmazonUrlImport, create_amazon_url_collection_job
+from app.api.routes import imports as imports_route
+from app.api.routes.imports import (
+    AmazonHtmlImport,
+    AmazonUrlImport,
+    create_amazon_url_collection_job,
+    import_amazon_html,
+)
 from app.services.amazon.collector import CollectionResult, CollectionStatus
 from app.schemas.drafts import ProductDraftCreate
 from app.schemas.publishing import ListingChoice
@@ -39,6 +47,94 @@ from app.services.meli.token_vault import (
 
 
 POSTGRES_URL = os.getenv("TEST_POSTGRES_URL", "")
+
+
+@pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")
+def test_postgres_serializes_manual_snapshot_job_resolution(monkeypatch):
+    engine = create_engine(POSTGRES_URL, pool_pre_ping=True)
+    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    marker = uuid4().hex
+    asin = f"B{marker[:9]}".upper()
+    source_url = f"https://www.amazon.com/dp/{asin}"
+    with testing_session() as db:
+        job = CollectionJob(
+            source_url=source_url,
+            source_identity=source_url,
+            target_site_id="MLM",
+            status=CollectionJobStatus.NEEDS_MANUAL_ACTION,
+            message="Amazon challenge detected",
+        )
+        db.add(job)
+        db.commit()
+        job_id = job.id
+
+    original_validate = imports_route.validate_amazon_snapshot
+    both_snapshots_validated = Barrier(2)
+
+    def synchronized_validate(source_url: str, html: str):
+        snapshot = original_validate(source_url, html)
+        both_snapshots_validated.wait(timeout=10)
+        return snapshot
+
+    monkeypatch.setattr(imports_route, "validate_amazon_snapshot", synchronized_validate)
+    payload = AmazonHtmlImport(
+        source_url=source_url,
+        html=(
+            f"<input id='ASIN' value='{asin}' />"
+            "<span id='productTitle'>Concurrent Snapshot</span>"
+            "<span class='a-price'><span class='a-offscreen'>$9.99</span></span>"
+            "<img id='landingImage' src='https://example.com/a.jpg' />"
+        ),
+        target_site_id="MLM",
+        persist=True,
+        collection_job_id=job_id,
+    )
+
+    def resolve_snapshot():
+        with testing_session() as db:
+            try:
+                result = import_amazon_html(payload, db)
+                return "completed", result.id
+            except HTTPException as exc:
+                db.rollback()
+                return "rejected", exc.status_code, exc.detail
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: resolve_snapshot(), range(2)))
+        assert sorted(result[0] for result in results) == ["completed", "rejected"]
+        rejected = next(result for result in results if result[0] == "rejected")
+        assert rejected[1:] == (409, "collection_job_not_waiting_for_snapshot")
+        with testing_session() as db:
+            job = db.get(CollectionJob, job_id)
+            assert job.status == CollectionJobStatus.COMPLETED
+            assert db.query(ProductDraft).filter_by(id=job.draft_id).count() == 1
+            assert db.query(SourceProduct).filter_by(id=job.source_product_id).count() == 1
+            assert (
+                db.query(AuditEvent)
+                .filter(
+                    AuditEvent.action == "collection_job.snapshot_resolved",
+                    AuditEvent.entity_id == str(job_id),
+                )
+                .count()
+                == 1
+            )
+    finally:
+        with testing_session() as db:
+            job = db.get(CollectionJob, job_id)
+            draft_id = job.draft_id if job else None
+            source_product_id = job.source_product_id if job else None
+            db.query(AuditEvent).filter(
+                AuditEvent.action == "collection_job.snapshot_resolved",
+                AuditEvent.entity_id == str(job_id),
+            ).delete()
+            db.query(CollectionJob).filter_by(id=job_id).delete()
+            if draft_id is not None:
+                db.query(ProductDraft).filter_by(id=draft_id).delete()
+            if source_product_id is not None:
+                db.query(SourceProduct).filter_by(id=source_product_id).delete()
+            db.commit()
+        engine.dispose()
 
 
 @pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not configured")

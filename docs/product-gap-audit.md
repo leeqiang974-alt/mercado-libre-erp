@@ -11,6 +11,7 @@ The repository contains an operational local workflow for Amazon URL collection 
 - Docker API, frontend, PostgreSQL, Redis, collection worker, and publish worker run with localhost-only ports.
 - PostgreSQL and Redis data are bind-mounted under the project on D drive; Docker Desktop's WSL disk is configured under `D:\\DockerDesktop\\wsl`.
 - Amazon URL jobs persist success, manual-action, timeout, and failure outcomes. Operator HTML snapshots require a matching Amazon ASIN and complete core product fields.
+- A validated operator snapshot can now close its exact challenged queue item and atomically link the replacement source plus draft; URL/site mismatches and concurrent duplicate resolutions fail without partial records.
 - Mercado Libre publishing supports all configured sites and Classic/Premium offers while excluding FULL logistics before and after item creation.
 - Publish outcomes that may have created an item but cannot be confirmed are quarantined for manual reconciliation and cannot be retried automatically.
 - Claude and NVIDIA failures are explicit. Only the latest persisted combined behavioral audit can satisfy approval and publishing gates.

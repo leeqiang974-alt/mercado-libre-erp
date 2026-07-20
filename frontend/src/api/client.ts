@@ -272,11 +272,18 @@ export async function importAmazonHtml(
   html: string,
   targetSiteId: string,
   persist = false,
+  collectionJobId: number | null = null,
 ) {
   const response = await fetch(`${API_BASE}/api/imports/amazon-html`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source_url: sourceUrl, html, target_site_id: targetSiteId, persist }),
+    body: JSON.stringify({
+      source_url: sourceUrl,
+      html,
+      target_site_id: targetSiteId,
+      persist,
+      collection_job_id: collectionJobId,
+    }),
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<ProductDraft | PersistedDraftResponse>;

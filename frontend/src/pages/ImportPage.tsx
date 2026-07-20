@@ -134,6 +134,7 @@ export function ImportPage({
     html: string,
     targetSiteId: string,
     persist: boolean,
+    collectionJobId: number | null,
   ) => Promise<void>;
   onCollectUrl: (sourceUrl: string, targetSiteId: string) => Promise<void>;
   status: string;
@@ -144,6 +145,7 @@ export function ImportPage({
   const [targetSiteId, setTargetSiteId] = useState("MLM");
   const [html, setHtml] = useState("");
   const [persist, setPersist] = useState(true);
+  const [snapshotJobId, setSnapshotJobId] = useState<number | null>(null);
   const [allowExisting, setAllowExisting] = useState(false);
   const [batchResult, setBatchResult] = useState<CollectionBatchResult | null>(null);
   const [collectionJobs, setCollectionJobs] = useState<CollectionJobRecord[]>([]);
@@ -244,7 +246,7 @@ export function ImportPage({
     setError("");
     setBusyAction("html");
     try {
-      await onImportHtml(snapshotUrl, html, targetSiteId, persist);
+      await onImportHtml(snapshotUrl, html, targetSiteId, persist, snapshotJobId);
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : "Import failed");
     } finally {
@@ -285,6 +287,8 @@ export function ImportPage({
   function useSnapshotFallback(job: CollectionJobRecord) {
     setSnapshotUrl(job.source_url);
     setTargetSiteId(job.target_site_id);
+    setPersist(true);
+    setSnapshotJobId(job.id);
     setMode("html");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -445,7 +449,10 @@ export function ImportPage({
                 type="url"
                 placeholder="https://www.amazon.com/dp/..."
                 value={snapshotUrl}
-                onChange={(event) => setSnapshotUrl(event.target.value)}
+                onChange={(event) => {
+                  setSnapshotUrl(event.target.value);
+                  setSnapshotJobId(null);
+                }}
               />
             )}
           </label>
@@ -455,6 +462,7 @@ export function ImportPage({
               value={targetSiteId}
               onChange={(event) => {
                 setTargetSiteId(event.target.value);
+                setSnapshotJobId(null);
                 setBatchResult(null);
               }}
             >
@@ -546,8 +554,9 @@ export function ImportPage({
                   type="checkbox"
                   checked={persist}
                   onChange={(event) => setPersist(event.target.checked)}
+                  disabled={snapshotJobId !== null}
                 />
-                Save as product draft
+                {snapshotJobId !== null ? `Resolve job #${snapshotJobId} and save draft` : "Save as product draft"}
               </label>
               <button disabled={!snapshotUrl.trim() || !html.trim() || isBusy} onClick={runHtmlImport}>
                 {busyAction === "html" ? <LoaderCircle className="spin" size={17} /> : <Upload size={17} />}

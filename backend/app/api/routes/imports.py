@@ -1,4 +1,5 @@
 from typing import Annotated
+from datetime import UTC, datetime
 import re
 from urllib.parse import urlparse
 
@@ -18,6 +19,7 @@ from app.services.amazon.collector import (
 )
 from app.services.amazon.normalizer import normalize_amazon_product
 from app.services.drafts import create_product_draft, to_draft_read
+from app.services.audit_events import create_audit_event
 from app.services.source_products import (
     create_or_get_source_variant_draft,
     create_source_product,
@@ -39,7 +41,7 @@ from app.schemas.collection_jobs import (
     CollectionJobRead,
     SourceVariantCollectionBatchRead,
 )
-from app.models.collection_job import CollectionJob
+from app.models.collection_job import CollectionJob, CollectionJobStatus
 from app.services.meli.sites import SITE_CURRENCIES
 from app.schemas.source_products import (
     SourceProductRead,
@@ -57,6 +59,7 @@ class AmazonHtmlImport(BaseModel):
     html: str
     target_site_id: str = "MLM"
     persist: bool = False
+    collection_job_id: int | None = Field(default=None, ge=1)
 
 
 class AmazonUrlImport(BaseModel):
@@ -75,16 +78,47 @@ class AmazonUrlBatchImport(BaseModel):
 def import_amazon_html(
     payload: AmazonHtmlImport, db: Session = Depends(get_db)
 ) -> ProductDraftCreate | PersistedDraftResponse:
+    source_url = _normalized_amazon_url_or_422(payload.source_url)
+    target_site_id = _target_site_or_422(payload.target_site_id)
     try:
-        parsed = validate_amazon_snapshot(payload.source_url, payload.html)
+        parsed = validate_amazon_snapshot(source_url, payload.html)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    draft = normalize_amazon_product(parsed, payload.target_site_id)
+    draft = normalize_amazon_product(parsed, target_site_id)
+    if payload.collection_job_id is not None and not payload.persist:
+        raise HTTPException(status_code=422, detail="snapshot_job_resolution_requires_persist")
     if not payload.persist:
         return draft
+    job = None
+    if payload.collection_job_id is not None:
+        job = (
+            db.query(CollectionJob)
+            .filter(CollectionJob.id == payload.collection_job_id)
+            .with_for_update()
+            .populate_existing()
+            .one_or_none()
+        )
+        if job is None:
+            raise HTTPException(status_code=404, detail="collection_job_not_found")
+        if job.status != CollectionJobStatus.NEEDS_MANUAL_ACTION:
+            raise HTTPException(
+                status_code=409,
+                detail="collection_job_not_waiting_for_snapshot",
+            )
+        try:
+            job_source_url = normalize_amazon_product_url(job.source_url)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="collection_job_source_invalid",
+            ) from exc
+        if job_source_url != source_url:
+            raise HTTPException(status_code=409, detail="collection_job_source_mismatch")
+        if job.target_site_id != target_site_id:
+            raise HTTPException(status_code=409, detail="collection_job_site_mismatch")
     source = create_source_product(
         db,
-        source_url=payload.source_url,
+        source_url=source_url,
         status=SourceProductStatus.NEEDS_MANUAL_ACTION,
         collection_error=(
             "Operator-provided HTML snapshot; ASIN matched but content was not independently fetched."
@@ -99,7 +133,38 @@ def import_amazon_html(
         source_product_id=source.id,
         source_variant_asin=variant_asin,
         source_variant_attributes=variant_attributes,
+        commit=False,
     )
+    if job is not None:
+        previous_source_product_id = job.source_product_id
+        job.source_product_id = source.id
+        job.draft_id = model.id
+        job.status = CollectionJobStatus.COMPLETED
+        job.message = (
+            "Operator HTML snapshot imported; source identity matched but content "
+            "was not independently fetched."
+        )
+        job.completed_at = datetime.now(UTC)
+        create_audit_event(
+            db=db,
+            actor_type="operator",
+            actor_id="local-ui",
+            action="collection_job.snapshot_resolved",
+            entity_type="collection_job",
+            entity_id=str(job.id),
+            before={
+                "status": CollectionJobStatus.NEEDS_MANUAL_ACTION.value,
+                "source_product_id": previous_source_product_id,
+            },
+            after={
+                "status": CollectionJobStatus.COMPLETED.value,
+                "source_product_id": source.id,
+                "draft_id": model.id,
+                "collection_method": "operator_snapshot",
+            },
+            commit=False,
+        )
+    db.commit()
     return PersistedDraftResponse(id=model.id, draft=draft)
 
 

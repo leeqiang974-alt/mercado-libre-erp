@@ -9,6 +9,8 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.product_draft import ProductDraft
+from app.models.audit_event import AuditEvent
+from app.models.collection_job import CollectionJob, CollectionJobStatus
 from app.models.registry import import_all_models
 from app.models.source_product import SourceProduct, SourceProductStatus
 from app.models.store import Store
@@ -73,6 +75,112 @@ def test_import_amazon_html_can_persist_and_list_draft():
         assert source.raw_status == SourceProductStatus.NEEDS_MANUAL_ACTION
         assert "not independently fetched" in source.collection_error
         assert session.query(ProductDraft).one().source_product_id == source.id
+
+
+def test_import_amazon_html_resolves_manual_collection_job_atomically():
+    client, testing_session = make_client()
+    source_url = "https://www.amazon.com/dp/B000TEST01"
+    with testing_session() as db:
+        old_source = SourceProduct(
+            source_url=source_url,
+            asin="B000TEST01",
+            raw_status=SourceProductStatus.NEEDS_MANUAL_ACTION,
+            collection_error="Amazon challenge detected",
+        )
+        db.add(old_source)
+        db.flush()
+        job = CollectionJob(
+            source_url=source_url,
+            source_identity=source_url,
+            target_site_id="MLM",
+            status=CollectionJobStatus.NEEDS_MANUAL_ACTION,
+            message="Amazon challenge detected",
+            source_product_id=old_source.id,
+        )
+        db.add(job)
+        db.commit()
+        job_id = job.id
+        old_source_id = old_source.id
+
+    response = client.post(
+        "/api/imports/amazon-html",
+        json={
+            "source_url": source_url,
+            "html": "<input id='ASIN' value='B000TEST01' /><span id='productTitle'>Recovered Bottle</span><span class='a-price'><span class='a-offscreen'>$9.99</span></span><img id='landingImage' src='https://example.com/a.jpg' />",
+            "target_site_id": "MLM",
+            "persist": True,
+            "collection_job_id": job_id,
+        },
+    )
+
+    assert response.status_code == 200
+    with testing_session() as db:
+        job = db.get(CollectionJob, job_id)
+        assert job.status == CollectionJobStatus.COMPLETED
+        assert job.draft_id == response.json()["id"]
+        assert job.source_product_id != old_source_id
+        source = db.get(SourceProduct, job.source_product_id)
+        assert source.collection_method == "operator_snapshot"
+        assert source.title == "Recovered Bottle"
+        assert db.get(ProductDraft, job.draft_id).source_product_id == source.id
+        audit = (
+            db.query(AuditEvent)
+            .filter(AuditEvent.action == "collection_job.snapshot_resolved")
+            .one()
+        )
+        assert audit.before_json["source_product_id"] == old_source_id
+        assert audit.after_json["source_product_id"] == source.id
+        assert audit.after_json["draft_id"] == job.draft_id
+
+
+def test_import_amazon_html_rejects_invalid_collection_job_binding_without_writes():
+    client, testing_session = make_client()
+    source_url = "https://www.amazon.com/dp/B000TEST01"
+    with testing_session() as db:
+        job = CollectionJob(
+            source_url=source_url,
+            source_identity=source_url,
+            target_site_id="MLM",
+            status=CollectionJobStatus.NEEDS_MANUAL_ACTION,
+        )
+        db.add(job)
+        db.commit()
+        job_id = job.id
+
+    base_payload = {
+        "source_url": source_url,
+        "html": "<input id='ASIN' value='B000TEST01' /><span id='productTitle'>Bottle</span><span class='a-price'><span class='a-offscreen'>$9.99</span></span><img id='landingImage' src='https://example.com/a.jpg' />",
+        "target_site_id": "MLM",
+        "persist": True,
+        "collection_job_id": job_id,
+    }
+    not_persisted = client.post(
+        "/api/imports/amazon-html",
+        json={**base_payload, "persist": False},
+    )
+    wrong_site = client.post(
+        "/api/imports/amazon-html",
+        json={**base_payload, "target_site_id": "MLB"},
+    )
+    wrong_source = client.post(
+        "/api/imports/amazon-html",
+        json={
+            **base_payload,
+            "source_url": "https://www.amazon.com/dp/B000TEST02",
+            "html": base_payload["html"].replace("B000TEST01", "B000TEST02"),
+        },
+    )
+
+    assert not_persisted.status_code == 422
+    assert not_persisted.json()["detail"] == "snapshot_job_resolution_requires_persist"
+    assert wrong_site.status_code == 409
+    assert wrong_site.json()["detail"] == "collection_job_site_mismatch"
+    assert wrong_source.status_code == 409
+    assert wrong_source.json()["detail"] == "collection_job_source_mismatch"
+    with testing_session() as db:
+        assert db.query(SourceProduct).count() == 0
+        assert db.query(ProductDraft).count() == 0
+        assert db.get(CollectionJob, job_id).status == CollectionJobStatus.NEEDS_MANUAL_ACTION
 
 
 def test_import_amazon_html_uses_selected_script_gallery_for_persisted_draft():

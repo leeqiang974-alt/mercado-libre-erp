@@ -17,9 +17,21 @@ export function App() {
   );
   const [status, setStatus] = useState("");
 
-  async function importAndReview(sourceUrl: string, html: string, targetSiteId: string, persist: boolean) {
+  async function importAndReview(
+    sourceUrl: string,
+    html: string,
+    targetSiteId: string,
+    persist: boolean,
+    collectionJobId: number | null,
+  ) {
     setStatus("Importing Amazon page snapshot");
-    const importResult = await importAmazonHtml(sourceUrl, html, targetSiteId, persist);
+    const importResult = await importAmazonHtml(
+      sourceUrl,
+      html,
+      targetSiteId,
+      persist,
+      collectionJobId,
+    );
     const nextDraft = "draft" in importResult ? importResult.draft : importResult;
     const nextDraftId = "draft" in importResult ? importResult.id : null;
     setDraft(nextDraft);
