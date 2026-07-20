@@ -68,8 +68,10 @@ python -m app.worker --queue publish --loop --interval 30 --limit 10
 - Run API, collection worker, and publish worker services through Docker Compose.
 - Persist successful URL collections as source products and product drafts.
 - Persist reviewable Amazon source snapshots with the original image gallery, bullets, technical details, and discovered ASIN variants.
+- Parse and persist reviewable item/package weight and product/package dimensions from Amazon specification tables and detail bullets, retaining the original label and value.
 - Review collected source evidence from the collection queue and create idempotent, site-specific drafts from individual Amazon variants.
 - Match saved Amazon ASIN attributes such as color, size, and brand against verified Mercado Libre category metadata, preserve exact `value_id` values, and require operator confirmation before saving the listing configuration.
+- Suggest selected-ASIN weight and dimensional evidence only for explicit Mercado Libre weight/length/width/height attributes; measurements are never inherited by a different Amazon variant.
 - Persist failed/manual-action URL collections as source products for later handling.
 - List saved drafts.
 - Generate a Mercado Libre OAuth authorization URL and persist the connected store callback as a token reference.

@@ -15,6 +15,29 @@ class AmazonSourceVariant(BaseModel):
     selected: bool = False
 
 
+class SourceWeight(BaseModel):
+    value: float
+    unit: str
+    raw: str
+    source_label: str
+
+
+class SourceDimensions(BaseModel):
+    length: float
+    width: float
+    height: float
+    unit: str
+    raw: str
+    source_label: str
+
+
+class AmazonSourceMeasurements(BaseModel):
+    item_weight: SourceWeight | None = None
+    package_weight: SourceWeight | None = None
+    product_dimensions: SourceDimensions | None = None
+    package_dimensions: SourceDimensions | None = None
+
+
 class AmazonSourceSnapshot(BaseModel):
     source_url: str
     title: str = ""
@@ -25,6 +48,7 @@ class AmazonSourceSnapshot(BaseModel):
     images: list[str] = Field(default_factory=list)
     variants: list[AmazonSourceVariant] = Field(default_factory=list)
     technical_details: dict[str, str] = Field(default_factory=dict)
+    measurements: AmazonSourceMeasurements = Field(default_factory=AmazonSourceMeasurements)
 
 
 class SourceProductRead(BaseModel):

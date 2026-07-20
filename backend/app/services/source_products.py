@@ -52,6 +52,11 @@ def create_source_product(
         technical_details_json=(
             normalized_snapshot.technical_details if normalized_snapshot else {}
         ),
+        measurements_json=(
+            normalized_snapshot.measurements.model_dump(exclude_none=True)
+            if normalized_snapshot
+            else {}
+        ),
     )
     db.add(model)
     db.flush()
@@ -71,6 +76,7 @@ def to_source_product_read(model: SourceProduct) -> SourceProductRead:
             images=model.image_urls_json or [],
             variants=model.variants_json or [],
             technical_details=model.technical_details_json or {},
+            measurements=model.measurements_json or {},
         )
     return SourceProductRead(
         id=model.id,

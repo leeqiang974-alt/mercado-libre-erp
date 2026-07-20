@@ -54,6 +54,28 @@ EXPLICIT_CURRENCIES = {
     "JPY": "JPY",
 }
 
+WEIGHT_UNITS = {
+    "lb": "lb", "lbs": "lb", "pound": "lb", "pounds": "lb",
+    "oz": "oz", "ounce": "oz", "ounces": "oz",
+    "kg": "kg", "kilogram": "kg", "kilograms": "kg",
+    "g": "g", "gram": "g", "grams": "g",
+}
+DIMENSION_UNITS = {
+    "in": "in", "inch": "in", "inches": "in",
+    "cm": "cm", "centimeter": "cm", "centimeters": "cm",
+    "mm": "mm", "millimeter": "mm", "millimeters": "mm",
+    "ft": "ft", "foot": "ft", "feet": "ft",
+    "m": "m", "meter": "m", "meters": "m",
+}
+COMMA_DECIMAL_DOMAINS = {
+    "amazon.com.br",
+    "amazon.de",
+    "amazon.es",
+    "amazon.fr",
+    "amazon.it",
+    "amazon.nl",
+}
+
 
 def _currency_for_url(source_url: str) -> str:
     host = (urlparse(source_url).hostname or "").lower()
@@ -240,6 +262,91 @@ def _extract_variants(soup: BeautifulSoup, source_url: str) -> list[dict]:
     return sorted(variants.values(), key=lambda item: (not item["selected"], item["asin"]))
 
 
+def _parse_weight(raw: str, decimal_separator: str = ".") -> dict | None:
+    match = re.search(
+        r"(?P<value>\d+(?:[.,]\d+)?)\s*(?P<unit>lb|lbs|pounds?|oz|ounces?|kg|kilograms?|g|grams?)\b",
+        raw,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    unit = WEIGHT_UNITS.get(match.group("unit").lower())
+    if not unit:
+        return None
+    return {
+        "value": _parse_measurement_number(match.group("value"), decimal_separator),
+        "unit": unit,
+        "raw": raw,
+    }
+
+
+def _parse_dimensions(raw: str, decimal_separator: str = ".") -> dict | None:
+    match = re.search(
+        r"(?P<length>\d+(?:[.,]\d+)?)\s*[x×]\s*"
+        r"(?P<width>\d+(?:[.,]\d+)?)\s*[x×]\s*"
+        r"(?P<height>\d+(?:[.,]\d+)?)\s*"
+        r"(?P<unit>inches?|in|centimeters?|cm|millimeters?|mm|feet|foot|ft|meters?|m)\b",
+        raw,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    unit = DIMENSION_UNITS.get(match.group("unit").lower())
+    if not unit:
+        return None
+    return {
+        "length": _parse_measurement_number(match.group("length"), decimal_separator),
+        "width": _parse_measurement_number(match.group("width"), decimal_separator),
+        "height": _parse_measurement_number(match.group("height"), decimal_separator),
+        "unit": unit,
+        "raw": raw,
+    }
+
+
+def _parse_measurement_number(value: str, decimal_separator: str) -> float:
+    compact = value.replace(" ", "")
+    if "," in compact and "." in compact:
+        return _normalize_number(compact)
+    separator = "," if "," in compact else "." if "." in compact else ""
+    if not separator:
+        return float(compact)
+    parts = compact.split(separator)
+    if separator != decimal_separator:
+        return float("".join(parts))
+    if len(parts) == 2:
+        return float(f"{parts[0]}.{parts[1]}")
+    return float("".join(parts))
+
+
+def _extract_measurements(
+    technical_details: dict[str, str], source_url: str
+) -> dict[str, dict]:
+    measurements: dict[str, dict] = {}
+    host = (urlparse(source_url).hostname or "").lower()
+    decimal_separator = "," if any(
+        host == domain or host.endswith(f".{domain}") for domain in COMMA_DECIMAL_DOMAINS
+    ) else "."
+    aliases = {
+        "itemweight": ("item_weight", _parse_weight),
+        "productweight": ("item_weight", _parse_weight),
+        "packageweight": ("package_weight", _parse_weight),
+        "shippingweight": ("package_weight", _parse_weight),
+        "productdimensions": ("product_dimensions", _parse_dimensions),
+        "itemdimensionslxwxh": ("product_dimensions", _parse_dimensions),
+        "packagedimensions": ("package_dimensions", _parse_dimensions),
+    }
+    for label, raw in technical_details.items():
+        normalized_label = re.sub(r"[^a-z0-9]", "", label.lower())
+        target = aliases.get(normalized_label)
+        if not target:
+            continue
+        field, parser = target
+        parsed = parser(raw, decimal_separator)
+        if parsed and field not in measurements:
+            measurements[field] = {**parsed, "source_label": label}
+    return measurements
+
+
 def parse_amazon_html(html: str, source_url: str) -> dict:
     soup = BeautifulSoup(html, "html.parser")
     title = _text(soup.select_one("#productTitle"))
@@ -254,11 +361,26 @@ def parse_amazon_html(html: str, source_url: str) -> dict:
     description = _text(soup.select_one("#productDescription"))
     images = _extract_images(soup)
     technical_details = {}
-    for row in soup.select("#productDetails_techSpec_section_1 tr, #productDetails_detailBullets_sections1 tr"):
+    for row in soup.select(
+        "#productDetails_techSpec_section_1 tr, #productDetails_detailBullets_sections1 tr, "
+        "#productOverview_feature_div tr"
+    ):
         key = _text(row.select_one("th"))
-        value = _text(row.select_one("td"))
+        cells = row.select("td")
+        value = _text(cells[0]) if key and cells else ""
+        if not key and len(cells) >= 2:
+            key = _text(cells[0])
+            value = _text(cells[1])
         if key and value:
             technical_details[key] = value
+    for item in soup.select("#detailBullets_feature_div li"):
+        key_node = item.select_one(".a-text-bold")
+        key_text = _text(key_node).replace("\u200e", "")
+        key = key_text.rstrip(": ")
+        full_value = _text(item)
+        value = full_value.replace("\u200e", "")[len(key_text) :].strip(" :") if key_node else ""
+        if key and value:
+            technical_details.setdefault(key, value)
     return {
         "source_url": source_url,
         "title": title,
@@ -269,4 +391,5 @@ def parse_amazon_html(html: str, source_url: str) -> dict:
         "images": images,
         "variants": _extract_variants(soup, source_url),
         "technical_details": technical_details,
+        "measurements": _extract_measurements(technical_details, source_url),
     }

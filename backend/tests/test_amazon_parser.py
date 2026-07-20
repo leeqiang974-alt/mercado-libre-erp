@@ -12,6 +12,7 @@ HTML = """
   <img id="landingImage" src="https://example.com/main.jpg" />
   <table id="productDetails_techSpec_section_1">
     <tr><th>Item Weight</th><td>1.2 pounds</td></tr>
+    <tr><th>Product Dimensions</th><td>12 x 8 x 4 inches</td></tr>
   </table>
 </html>
 """
@@ -25,6 +26,81 @@ def test_parse_amazon_html_extracts_core_fields():
     assert parsed["images"] == ["https://example.com/main.jpg"]
     assert "Leak proof lid" in parsed["bullets"]
     assert parsed["technical_details"]["Item Weight"] == "1.2 pounds"
+    assert parsed["measurements"] == {
+        "item_weight": {
+            "value": 1.2,
+            "unit": "lb",
+            "raw": "1.2 pounds",
+            "source_label": "Item Weight",
+        },
+        "product_dimensions": {
+            "length": 12.0,
+            "width": 8.0,
+            "height": 4.0,
+            "unit": "in",
+            "raw": "12 x 8 x 4 inches",
+            "source_label": "Product Dimensions",
+        },
+    }
+
+
+def test_parse_amazon_detail_bullets_extracts_package_measurements():
+    html = """
+    <span id="productTitle">Package evidence</span>
+    <div id="detailBullets_feature_div"><ul>
+      <li><span><span class="a-text-bold">Package Dimensions :</span> 30 × 20 × 10 cm</span></li>
+      <li><span><span class="a-text-bold">Shipping Weight :</span> 750 grams</span></li>
+    </ul></div>
+    """
+
+    parsed = parse_amazon_html(html, "https://amazon.com/dp/B000TEST01")
+
+    assert parsed["measurements"]["package_dimensions"]["unit"] == "cm"
+    assert parsed["measurements"]["package_dimensions"]["length"] == 30
+    assert parsed["measurements"]["package_weight"] == {
+        "value": 750.0,
+        "unit": "g",
+        "raw": "750 grams",
+        "source_label": "Shipping Weight",
+    }
+
+
+def test_parse_amazon_measurements_handles_grouping_and_overview_cells():
+    html = """
+    <span id="productTitle">Localized measurements</span>
+    <div id="productOverview_feature_div"><table>
+      <tr><td>Item Weight</td><td>1.200 grams</td></tr>
+      <tr><td>Product Dimensions</td><td>12,5 x 8,5 x 4,5 cm</td></tr>
+    </table></div>
+    """
+
+    parsed = parse_amazon_html(html, "https://amazon.de/dp/B000TEST01")
+
+    assert parsed["measurements"]["item_weight"]["value"] == 1200
+    assert parsed["measurements"]["product_dimensions"] | {
+        "length": 12.5,
+        "width": 8.5,
+        "height": 4.5,
+    } == parsed["measurements"]["product_dimensions"]
+
+
+def test_parse_amazon_measurements_preserves_three_decimal_values():
+    html = """
+    <span id="productTitle">Precise measurements</span>
+    <table id="productDetails_techSpec_section_1">
+      <tr><th>Item Weight</th><td>0.125 pounds</td></tr>
+      <tr><th>Product Dimensions</th><td>1.125 x 0.125 x 0.250 inches</td></tr>
+    </table>
+    """
+
+    parsed = parse_amazon_html(html, "https://amazon.com/dp/B000TEST01")
+
+    assert parsed["measurements"]["item_weight"]["value"] == 0.125
+    assert parsed["measurements"]["product_dimensions"] | {
+        "length": 1.125,
+        "width": 0.125,
+        "height": 0.25,
+    } == parsed["measurements"]["product_dimensions"]
 
 
 def test_normalize_amazon_product_creates_draft_defaults():

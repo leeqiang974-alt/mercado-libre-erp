@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.product_draft import ProductDraft
+from app.models.source_product import SourceProduct
 from app.schemas.attribute_mapping import AttributeSuggestion, AttributeSuggestionRead
 from app.services.meli.metadata_cache import category_attributes_key, get_cached_metadata
 
@@ -30,6 +31,14 @@ ATTRIBUTE_ALIASES = {
         "tamano",
         "tamanho",
     },
+    "weight": {"itemweight", "peso", "productweight", "weight"},
+    "package_weight": {"packageweight", "pesodelpaquete", "shippingweight"},
+    "length": {"itemlength", "length", "productlength"},
+    "width": {"itemwidth", "productwidth", "width"},
+    "height": {"height", "itemheight", "productheight"},
+    "package_length": {"packagelength", "largodelpaquete"},
+    "package_width": {"packagewidth", "anchodelpaquete"},
+    "package_height": {"packageheight", "alturadelpaquete"},
 }
 
 
@@ -49,6 +58,7 @@ def suggest_draft_category_attributes(
     source_attributes = dict(draft.source_variant_attributes_json or {})
     if draft.brand and not any(_semantic_group(name) == "brand" for name in source_attributes):
         source_attributes["Brand"] = draft.brand
+    source_attributes.update(_source_measurement_attributes(db, draft))
 
     definitions = [
         definition
@@ -133,6 +143,38 @@ def _matching_value_id(value_name: str, values: object) -> str | None:
         and _compact(str(value.get("name", ""))) == normalized
     ]
     return matches[0] if len(matches) == 1 else None
+
+
+def _source_measurement_attributes(db: Session, draft: ProductDraft) -> dict[str, str]:
+    if draft.source_product_id is None:
+        return {}
+    source = db.get(SourceProduct, draft.source_product_id)
+    if source is None:
+        return {}
+    selected_asin = source.asin.strip().upper()
+    draft_asin = draft.source_variant_asin.strip().upper()
+    if not draft_asin or not selected_asin or draft_asin != selected_asin:
+        return {}
+
+    measurements = source.measurements_json or {}
+    attributes: dict[str, str] = {}
+    for field, label in (("item_weight", "Weight"), ("package_weight", "Package weight")):
+        measurement = measurements.get(field)
+        if isinstance(measurement, dict) and measurement.get("raw"):
+            attributes[label] = str(measurement["raw"])
+    for field, prefix in (
+        ("product_dimensions", ""),
+        ("package_dimensions", "Package "),
+    ):
+        dimensions = measurements.get(field)
+        if not isinstance(dimensions, dict) or not dimensions.get("unit"):
+            continue
+        unit = str(dimensions["unit"])
+        for dimension in ("length", "width", "height"):
+            value = dimensions.get(dimension)
+            if value is not None:
+                attributes[f"{prefix}{dimension}".strip().title()] = f"{value:g} {unit}"
+    return attributes
 
 
 def _semantic_group(value: str) -> str:

@@ -305,6 +305,22 @@ def fulfill_source_product(route) -> None:
                 {"asin": "B000TEST03", "attributes": {"Color": "Blue", "Size": "32 oz SuperInsulatedOutdoorExpeditionEdition"}, "image_urls": [], "selected": False},
             ],
             "technical_details": {"Material": "Stainless steel"},
+            "measurements": {
+                "item_weight": {
+                    "value": 1.2,
+                    "unit": "lb",
+                    "raw": "1.2 pounds",
+                    "source_label": "Item Weight",
+                },
+                "product_dimensions": {
+                    "length": 12,
+                    "width": 8,
+                    "height": 4,
+                    "unit": "in",
+                    "raw": "12 x 8 x 4 inches",
+                    "source_label": "Product Dimensions",
+                },
+            },
         },
     }
     route.fulfill(status=200, content_type="application/json", body=json.dumps(source))
@@ -407,8 +423,10 @@ def inspect_import_workspace(page: Page) -> dict[str, object]:
     page.get_by_text("Blue · 32 oz SuperInsulatedOutdoorExpeditionEdition", exact=True).wait_for()
     source_images = page.locator(".source-image-gallery img").count()
     source_variants = page.locator(".source-variant-list > span").count()
+    source_measurements = page.locator(".source-measurements > span").count()
     assert source_images == 3, f"Expected 3 source images, got {source_images}"
     assert source_variants == 3, f"Expected 3 source variants, got {source_variants}"
+    assert source_measurements == 2, f"Expected 2 source measurements, got {source_measurements}"
     page.get_by_role("button", name="Create MLM draft", exact=True).last.click()
     page.get_by_role("button", name="Draft #8103", exact=True).wait_for()
     url_input = page.get_by_label("Amazon product URLs", exact=True)
@@ -427,6 +445,7 @@ def inspect_import_workspace(page: Page) -> dict[str, object]:
         "batch_result_count": batch_result_count,
         "source_images": source_images,
         "source_variants": source_variants,
+        "source_measurements": source_measurements,
         "horizontal_overflow": page.evaluate("document.documentElement.scrollWidth > innerWidth"),
     }
 

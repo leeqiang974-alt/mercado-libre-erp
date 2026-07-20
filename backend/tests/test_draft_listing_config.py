@@ -10,6 +10,7 @@ from app.main import app
 from app.models.audit_event import AuditEvent
 from app.models.draft_listing_config import DraftListingConfig
 from app.models.product_draft import ProductDraft
+from app.models.source_product import SourceProduct, SourceProductStatus
 from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.registry import import_all_models
 from app.models.review_result import ReviewDecision, ReviewResult
@@ -247,6 +248,125 @@ def test_attribute_suggestions_do_not_match_modified_semantics():
         "Color": "Blue",
         "Size": "32 oz",
     }
+
+
+def test_selected_source_measurements_are_suggested_conservatively():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        source = SourceProduct(
+            source_url="https://amazon.com/dp/B000TEST01",
+            asin="B000TEST01",
+            raw_status=SourceProductStatus.COLLECTED,
+            variants_json=[
+                {"asin": "B000TEST01", "attributes": {}, "selected": True},
+            ],
+            measurements_json={
+                "item_weight": {"value": 1.2, "unit": "lb", "raw": "1.2 pounds"},
+                "package_dimensions": {
+                    "length": 30,
+                    "width": 20,
+                    "height": 10,
+                    "unit": "cm",
+                    "raw": "30 x 20 x 10 cm",
+                },
+            },
+        )
+        db.add(source)
+        db.flush()
+        draft = db.get(ProductDraft, 1)
+        draft.source_product_id = source.id
+        draft.source_variant_asin = "B000TEST01"
+        cache = db.query(MeliMetadataCache).one()
+        cache.payload_json = {
+            "verified": True,
+            "attributes": [
+                {"id": "WEIGHT", "name": "Weight", "tags": {}},
+                {"id": "PACKAGE_LENGTH", "name": "Package length", "tags": {}},
+                {"id": "PACKAGE_WIDTH", "name": "Package width", "tags": {}},
+                {"id": "PACKAGE_HEIGHT", "name": "Package height", "tags": {}},
+                {"id": "SIZE", "name": "Size", "tags": {}},
+            ],
+        }
+        db.commit()
+
+    response = client.get("/api/drafts/1/attribute-suggestions?category_id=MLM123")
+
+    assert response.status_code == 200
+    suggestions = {
+        item["attribute_id"]: item["value_name"] for item in response.json()["suggestions"]
+    }
+    assert suggestions == {
+        "WEIGHT": "1.2 pounds",
+        "PACKAGE_LENGTH": "30 cm",
+        "PACKAGE_WIDTH": "20 cm",
+        "PACKAGE_HEIGHT": "10 cm",
+    }
+    assert "SIZE" not in suggestions
+
+
+def test_other_source_variant_does_not_inherit_selected_page_measurements():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        source = SourceProduct(
+            source_url="https://amazon.com/dp/B000TEST01",
+            asin="B000TEST01",
+            raw_status=SourceProductStatus.COLLECTED,
+            variants_json=[
+                {"asin": "B000TEST01", "attributes": {}, "selected": True},
+                {"asin": "B000TEST02", "attributes": {}, "selected": False},
+            ],
+            measurements_json={
+                "item_weight": {"value": 1.2, "unit": "lb", "raw": "1.2 pounds"},
+            },
+        )
+        db.add(source)
+        db.flush()
+        draft = db.get(ProductDraft, 1)
+        draft.source_product_id = source.id
+        draft.source_variant_asin = "B000TEST02"
+        cache = db.query(MeliMetadataCache).one()
+        cache.payload_json = {
+            "verified": True,
+            "attributes": [{"id": "WEIGHT", "name": "Weight", "tags": {}}],
+        }
+        db.commit()
+
+    response = client.get("/api/drafts/1/attribute-suggestions?category_id=MLM123")
+
+    assert response.status_code == 200
+    assert response.json()["suggestions"] == []
+
+
+def test_legacy_selected_marker_and_empty_draft_asin_cannot_authorize_measurements():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        source = SourceProduct(
+            source_url="https://amazon.com/dp/B000TEST01",
+            asin="B000TEST01",
+            raw_status=SourceProductStatus.COLLECTED,
+            variants_json=[
+                {"asin": "B000TEST02", "attributes": {}, "selected": True},
+            ],
+            measurements_json={
+                "item_weight": {"value": 1.2, "unit": "lb", "raw": "1.2 pounds"},
+            },
+        )
+        db.add(source)
+        db.flush()
+        draft = db.get(ProductDraft, 1)
+        draft.source_product_id = source.id
+        draft.source_variant_asin = ""
+        cache = db.query(MeliMetadataCache).one()
+        cache.payload_json = {
+            "verified": True,
+            "attributes": [{"id": "WEIGHT", "name": "Weight", "tags": {}}],
+        }
+        db.commit()
+
+    response = client.get("/api/drafts/1/attribute-suggestions?category_id=MLM123")
+
+    assert response.status_code == 200
+    assert response.json()["suggestions"] == []
 
 
 def test_legacy_duplicate_attributes_can_be_read_but_not_built():

@@ -258,6 +258,16 @@ export type SourceProductRecord = {
     images: string[];
     variants: AmazonSourceVariant[];
     technical_details: Record<string, string>;
+    measurements: {
+      item_weight?: { value: number; unit: string; raw: string; source_label: string } | null;
+      package_weight?: { value: number; unit: string; raw: string; source_label: string } | null;
+      product_dimensions?: {
+        length: number; width: number; height: number; unit: string; raw: string; source_label: string;
+      } | null;
+      package_dimensions?: {
+        length: number; width: number; height: number; unit: string; raw: string; source_label: string;
+      } | null;
+    };
   } | null;
 };
 

@@ -35,3 +35,4 @@ class SourceProduct(Base):
     image_urls_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     variants_json: Mapped[list[dict]] = mapped_column(JSON, default=list)
     technical_details_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    measurements_json: Mapped[dict] = mapped_column(JSON, default=dict)

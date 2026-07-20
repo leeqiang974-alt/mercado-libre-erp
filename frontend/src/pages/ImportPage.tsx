@@ -469,6 +469,20 @@ export function ImportPage({
                                   ))}
                                 </ul>
                               )}
+                              {Object.entries(sourceDetails[job.source_product.id].snapshot!.measurements)
+                                .filter(([, measurement]) => Boolean(measurement))
+                                .length > 0 && (
+                                <div className="source-measurements">
+                                  {Object.entries(sourceDetails[job.source_product.id].snapshot!.measurements)
+                                    .filter((entry): entry is [string, NonNullable<typeof entry[1]>] => Boolean(entry[1]))
+                                    .map(([key, measurement]) => (
+                                      <span key={key}>
+                                        <small>{measurement.source_label}</small>
+                                        <strong>{measurement.raw}</strong>
+                                      </span>
+                                    ))}
+                                </div>
+                              )}
                               <div className="source-variant-list">
                                 {sourceDetails[job.source_product.id].snapshot!.variants.map((variant) => (
                                   <span className={variant.selected ? "selected" : ""} key={variant.asin}>

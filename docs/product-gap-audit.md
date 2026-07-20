@@ -18,7 +18,7 @@ The repository contains an operational local workflow for Amazon URL collection 
 
 ## Missing or Misleading Behavior
 
-- Amazon collection does not provide a reliable source market/currency contract, complete image set, variants, SKU dimensions, or shipping weight.
+- Amazon collection still cannot guarantee a complete image set or per-variant dimensions/weight; when the selected page exposes item/package measurements, they are now retained as structured evidence without being copied to sibling variants.
 - Amazon page structure and anti-automation challenges can still require an operator-provided HTML snapshot.
 - Store authorization, live metadata, AI providers, and live publishing are unconfigured in the running environment.
 - Automated end-to-end tests mock external Amazon, AI, and Mercado Libre behavior; they prove internal orchestration, not live integration.

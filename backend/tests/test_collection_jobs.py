@@ -312,6 +312,14 @@ def test_running_collection_job_persists_source_and_draft(monkeypatch):
                 brand="TrailPro",
                 bullets=["Leak proof"],
                 images=["https://example.com/a.jpg", "https://example.com/b.jpg"],
+                measurements={
+                    "item_weight": {
+                        "value": 1.2,
+                        "unit": "lb",
+                        "raw": "1.2 pounds",
+                        "source_label": "Item Weight",
+                    }
+                },
                 variants=[
                     {
                         "asin": "B000TEST01",
@@ -356,6 +364,7 @@ def test_running_collection_job_persists_source_and_draft(monkeypatch):
         assert source.source_currency == "USD"
         assert len(source.image_urls_json) == 2
         assert len(source.variants_json) == 2
+        assert source.measurements_json["item_weight"]["value"] == 1.2
         initial_draft = db.query(ProductDraft).one()
         assert initial_draft.title == "Queued Bottle"
         assert initial_draft.source_variant_asin == "B000TEST01"
@@ -370,6 +379,7 @@ def test_running_collection_job_persists_source_and_draft(monkeypatch):
     assert detail.json()["snapshot"]["title"] == "Queued Bottle"
     assert len(detail.json()["snapshot"]["images"]) == 2
     assert detail.json()["snapshot"]["variants"][1]["attributes"] == {"Color": "Blue"}
+    assert detail.json()["snapshot"]["measurements"]["item_weight"]["raw"] == "1.2 pounds"
 
     variant_draft = client.post(
         "/api/imports/source-products/1/variants/B000TEST02/draft",

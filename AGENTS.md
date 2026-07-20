@@ -27,6 +27,7 @@
 - Treat Mercado Libre category attributes as verified only when the cache explicitly records `verified: true`; cache presence, non-empty definitions, and legacy saved configurations must never bypass category validation at save, review, preview, queue, retry, worker, or execute boundaries.
 - Treat a lost or ambiguous Mercado Libre create-item response as an unknown outcome that requires store reconciliation; never retry it automatically.
 - Treat operator-provided Amazon HTML as a manual source. Require the requested ASIN to match a strong page identity signal, and never label it as independently collected.
+- Preserve Amazon measurement labels and raw values as source evidence. Never copy selected-page measurements to a different ASIN variant; only map dimensions or weights when the draft is bound to the page's selected ASIN.
 - Live publishing requires PostgreSQL row locking. SQLite is allowed only while live publishing is disabled.
 - Every write that can invalidate review or approval must atomically increment the draft content version in the database. Verify shared write paths with a real PostgreSQL concurrent-session test so simultaneous pricing, listing, store, or shipping edits cannot preserve a stale review.
 - Every semantic change to the Claude/NVIDIA review prompt or required response contract must increment `REVIEW_PROMPT_VERSION` and update persistence/history tests. Store the version identifier, model, duration, and provider status; never persist API keys, authorization headers, or full provider prompts/responses in review metadata.
