@@ -7,7 +7,7 @@ class ProductDraftCreate(BaseModel):
     brand: str = ""
     target_site_id: str = "MLM"
     target_category_id: str = ""
-    condition: str = "new"
+    condition: str = ""
     source_price: float | None = None
     source_currency: str = ""
     price: float | None = None

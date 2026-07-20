@@ -19,16 +19,25 @@ def complete_draft():
     )
 
 
+def item_condition():
+    return {"id": "ITEM_CONDITION", "value_id": "2230284", "value_name": "New"}
+
+
 def test_build_item_payload_maps_required_fields():
     payload = build_item_payload(
         draft=complete_draft(),
         listing_choice=ListingChoice(
-            site_id="MLM", listing_type_id="gold_special", fulfillment="not_full"
+            site_id="MLM",
+            listing_type_id="gold_special",
+            fulfillment="not_full",
+            attributes=[item_condition()],
         ),
     )
     assert payload["title"] == "Stainless Water Bottle"
     assert payload["listing_type_id"] == "gold_special"
     assert payload["available_quantity"] == 3
+    assert "condition" not in payload
+    assert payload["attributes"] == [item_condition()]
     assert payload["pictures"][0]["source"] == "https://example.com/a.jpg"
     assert "description" not in payload
     assert build_description_payload(complete_draft()) == {
@@ -61,10 +70,24 @@ def test_build_item_payload_includes_listing_attributes():
             site_id="MLM",
             listing_type_id="gold_special",
             fulfillment="not_full",
+            attributes=[item_condition(), {"id": "BRAND", "value_name": "Acme"}],
+        ),
+    )
+
+    assert payload["attributes"] == [item_condition(), {"id": "BRAND", "value_name": "Acme"}]
+
+
+def test_build_item_payload_keeps_legacy_condition_with_other_attributes():
+    payload = build_item_payload(
+        draft=complete_draft().model_copy(update={"condition": "new"}),
+        listing_choice=ListingChoice(
+            site_id="MLM",
+            listing_type_id="gold_special",
             attributes=[{"id": "BRAND", "value_name": "Acme"}],
         ),
     )
 
+    assert payload["condition"] == "new"
     assert payload["attributes"] == [{"id": "BRAND", "value_name": "Acme"}]
 
 
@@ -74,11 +97,15 @@ def test_build_item_payload_preserves_category_value_ids():
         ListingChoice(
             site_id="MLM",
             listing_type_id="gold_special",
-            attributes=[{"id": "COLOR", "value_id": "52028", "value_name": "Blue"}],
+            attributes=[
+                item_condition(),
+                {"id": "COLOR", "value_id": "52028", "value_name": "Blue"},
+            ],
         ),
     )
 
     assert payload["attributes"] == [
+        item_condition(),
         {"id": "COLOR", "value_id": "52028", "value_name": "Blue"}
     ]
 
@@ -86,7 +113,11 @@ def test_build_item_payload_preserves_category_value_ids():
 def test_build_item_payload_includes_me2_shipping_fields():
     payload = build_item_payload(
         draft=complete_draft(),
-        listing_choice=ListingChoice(site_id="MLM", listing_type_id="gold_special"),
+        listing_choice=ListingChoice(
+            site_id="MLM",
+            listing_type_id="gold_special",
+            attributes=[item_condition()],
+        ),
         shipping_mode="me2",
         shipping_logistic_type="drop_off",
     )
@@ -103,7 +134,11 @@ def test_build_item_payload_includes_me2_shipping_fields():
 def test_build_item_payload_does_not_add_me2_fields_to_me1():
     payload = build_item_payload(
         draft=complete_draft(),
-        listing_choice=ListingChoice(site_id="MLM", listing_type_id="gold_special"),
+        listing_choice=ListingChoice(
+            site_id="MLM",
+            listing_type_id="gold_special",
+            attributes=[item_condition()],
+        ),
         shipping_mode="me1",
         shipping_logistic_type="default",
     )

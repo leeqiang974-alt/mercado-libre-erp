@@ -46,6 +46,16 @@ def make_client():
                             "values": [{"id": "52028", "name": "Blue"}],
                             "tags": {"variation_attribute": True},
                         },
+                        {
+                            "id": "ITEM_CONDITION",
+                            "name": "Item condition",
+                            "value_type": "list",
+                            "values": [
+                                {"id": "2230284", "name": "New"},
+                                {"id": "2230581", "name": "Used"},
+                            ],
+                            "tags": {"hidden": True},
+                        },
                     ],
                 },
             )
@@ -119,9 +129,11 @@ def config_payload():
         "fulfillment": "not_full",
         "shipping_mode": "me2",
         "shipping_logistic_type": "drop_off",
+        "available_quantity": 2,
         "attributes": [
             {"id": "BRAND", "value_name": "Acme"},
             {"id": "MODEL", "value_name": "B-100"},
+            {"id": "ITEM_CONDITION", "value_id": "2230284", "value_name": "New"},
         ],
     }
 
@@ -169,6 +181,7 @@ def test_listing_config_can_be_saved_and_read_for_draft():
     assert body["listing_type_id"] == "gold_special"
     assert body["shipping_mode"] == "me2"
     assert body["shipping_logistic_type"] == "drop_off"
+    assert body["available_quantity"] == 2
     assert body["attributes"][0]["id"] == "BRAND"
 
     get_response = client.get("/api/drafts/1/listing-config")
@@ -179,6 +192,42 @@ def test_listing_config_can_be_saved_and_read_for_draft():
         draft = db.get(ProductDraft, 1)
         assert draft.target_category_id == "MLM123"
         assert draft.listing_type_id == "gold_special"
+        assert draft.stock == 2
+        assert draft.condition == "new"
+
+
+def test_listing_config_requires_explicit_inventory_confirmation():
+    client, _ = make_client()
+    missing = config_payload()
+    missing.pop("available_quantity")
+
+    missing_response = client.put("/api/drafts/1/listing-config", json=missing)
+    zero_response = client.put(
+        "/api/drafts/1/listing-config",
+        json=config_payload() | {"available_quantity": 0},
+    )
+
+    assert missing_response.status_code == 422
+    assert "available_quantity" in missing_response.text
+    assert zero_response.status_code == 422
+
+
+def test_listing_config_requires_verified_item_condition():
+    client, _ = make_client()
+    payload = config_payload()
+    payload["attributes"] = [
+        attribute
+        for attribute in payload["attributes"]
+        if attribute["id"] != "ITEM_CONDITION"
+    ]
+
+    response = client.put("/api/drafts/1/listing-config", json=payload)
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {
+        "code": "invalid_category_attributes",
+        "errors": ["required_category_attribute_missing:ITEM_CONDITION"],
+    }
 
 
 def test_listing_config_requires_verified_site_listing_types():
@@ -467,7 +516,9 @@ def test_legacy_duplicate_attributes_can_be_read_but_not_built():
                 fulfillment="not_full",
                 shipping_mode="me2",
                 shipping_logistic_type="drop_off",
+                available_quantity=2,
                 attributes_json=[
+                    {"id": "ITEM_CONDITION", "value_id": "2230284", "value_name": "New"},
                     {"id": "BRAND", "value_name": "Acme"},
                     {"id": "brand", "value_name": "Other"},
                 ],
@@ -490,7 +541,7 @@ def test_legacy_duplicate_attributes_can_be_read_but_not_built():
     )
 
     assert readable.status_code == 200
-    assert len(readable.json()["attributes"]) == 2
+    assert len(readable.json()["attributes"]) == 3
     assert review.status_code == 409
     assert review.json()["detail"] == {
         "code": "listing_config_stale",
@@ -502,6 +553,7 @@ def test_listing_config_preserves_value_ids_and_rejects_duplicate_attributes():
     client, _ = make_client()
     payload = config_payload() | {
         "attributes": [
+            {"id": "ITEM_CONDITION", "value_id": "2230284", "value_name": "New"},
             {"id": "COLOR", "value_id": "52028", "value_name": "Blue"},
         ]
     }
@@ -512,6 +564,7 @@ def test_listing_config_preserves_value_ids_and_rejects_duplicate_attributes():
         json=payload
         | {
             "attributes": [
+                {"id": "ITEM_CONDITION", "value_id": "2230284", "value_name": "New"},
                 {"id": "COLOR", "value_name": "Blue"},
                 {"id": "color", "value_name": "Red"},
             ]
@@ -520,6 +573,7 @@ def test_listing_config_preserves_value_ids_and_rejects_duplicate_attributes():
 
     assert saved.status_code == 200
     assert saved.json()["attributes"] == [
+        {"id": "ITEM_CONDITION", "value_name": "New", "value_id": "2230284"},
         {"id": "COLOR", "value_name": "Blue", "value_id": "52028"}
     ]
     assert duplicate.status_code == 422
@@ -536,6 +590,12 @@ def test_listing_config_rejects_missing_required_cached_category_attribute():
                         {"id": "BRAND", "tags": {"required": True}},
                         {"id": "COLOR", "tags": {"catalog_required": True}},
                         {"id": "MODEL", "tags": {}},
+                        {
+                            "id": "ITEM_CONDITION",
+                            "value_type": "list",
+                            "values": [{"id": "2230284", "name": "New"}],
+                            "tags": {"hidden": True},
+                        },
                     ],
                 }
         db.commit()
@@ -692,9 +752,15 @@ def test_publish_preview_blocks_missing_required_category_attribute():
                     "verified": True,
                         "attributes": [
                             {"id": "BRAND", "tags": {"required": True}},
-                            {"id": "MODEL", "tags": {}},
-                            {"id": "GTIN", "tags": {"required": True}},
-                    ],
+                                {"id": "MODEL", "tags": {}},
+                                {"id": "GTIN", "tags": {"required": True}},
+                                {
+                                    "id": "ITEM_CONDITION",
+                                    "value_type": "list",
+                                    "values": [{"id": "2230284", "name": "New"}],
+                                    "tags": {"hidden": True},
+                                },
+                        ],
                 }
         db.commit()
 

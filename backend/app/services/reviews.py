@@ -11,6 +11,7 @@ from app.models.store import Store
 from app.schemas.draft_listing_config import SUPPORTED_LISTING_TYPE_IDS
 from app.schemas.reviews import ReviewResponse, ReviewResultRead
 from app.services.ai.provider_utils import BEHAVIORAL_AUDIT_PROMPT_VERSION
+from app.services.meli.category_validation import validate_category_attributes
 from app.services.meli.payload_builder import (
     SUPPORTED_NON_FULL_LOGISTIC_TYPES,
     SUPPORTED_SHIPPING_MODES,
@@ -359,6 +360,17 @@ def provider_review_context_errors(
         errors.append("non_full_shipping_mode_invalid")
     if config.shipping_logistic_type not in SUPPORTED_NON_FULL_LOGISTIC_TYPES:
         errors.append("non_full_shipping_logistic_type_invalid")
+    if config.available_quantity is None or config.available_quantity < 1:
+        errors.append("available_quantity_confirmation_required")
+    errors.extend(
+        validate_category_attributes(
+            db,
+            config.category_id,
+            config.attributes_json or [],
+            require_verified_metadata=True,
+            require_item_condition=True,
+        )
+    )
     return list(dict.fromkeys(errors))
 
 

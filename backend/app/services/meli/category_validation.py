@@ -12,6 +12,7 @@ def validate_category_attributes(
     attributes: list[dict],
     *,
     require_verified_metadata: bool,
+    require_item_condition: bool = False,
 ) -> list[str]:
     cached = get_cached_metadata(db, category_attributes_key(category_id))
     raw_definitions = cached.get("attributes") if cached else None
@@ -37,6 +38,11 @@ def validate_category_attributes(
         for definition in raw_definitions
         if isinstance(definition, dict) and str(definition.get("id", "")).strip()
     }
+    if require_item_condition:
+        if "ITEM_CONDITION" not in definitions:
+            missing.append("item_condition_attribute_not_verified")
+        elif "ITEM_CONDITION" not in provided_ids:
+            missing.append("required_category_attribute_missing:ITEM_CONDITION")
     for attribute_id, definition in definitions.items():
         tags = definition.get("tags") or {}
         if (
@@ -85,6 +91,29 @@ def validate_category_attributes(
             elif not (definition.get("tags") or {}).get("variation_attribute"):
                 missing.append(f"category_attribute_value_name_invalid:{attribute_id}")
     return missing
+
+
+def canonical_item_condition(attributes: list[dict]) -> str:
+    condition = next(
+        (
+            attribute
+            for attribute in attributes
+            if isinstance(attribute, dict)
+            and str(attribute.get("id", "")).strip().upper() == "ITEM_CONDITION"
+        ),
+        None,
+    )
+    if condition is None:
+        return ""
+    known_values = {
+        "2230284": "new",
+        "2230581": "used",
+        "2230582": "refurbished",
+    }
+    value_id = str(condition.get("value_id") or "").strip()
+    if value_id in known_values:
+        return known_values[value_id]
+    return str(condition.get("value_name") or "").strip().lower()[:40]
 
 
 def _has_value(attribute: dict) -> bool:

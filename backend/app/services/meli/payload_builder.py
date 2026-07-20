@@ -38,6 +38,20 @@ def build_item_payload(
         raise ValueError("At least one picture is required.")
     if not draft.description.strip():
         raise ValueError("Description is required.")
+    item_condition = next(
+        (
+            attribute
+            for attribute in listing_choice.attributes
+            if str(attribute.get("id", "")).strip().upper() == "ITEM_CONDITION"
+            and any(
+                attribute.get(key) not in (None, "", {})
+                for key in ("value_id", "value_name", "value_struct")
+            )
+        ),
+        None,
+    )
+    if item_condition is None and not draft.condition.strip():
+        raise ValueError("Verified ITEM_CONDITION attribute is required.")
     if shipping_mode and shipping_mode not in SUPPORTED_SHIPPING_MODES:
         raise ValueError("Unsupported non-FULL shipping mode.")
     if shipping_logistic_type and shipping_logistic_type not in SUPPORTED_NON_FULL_LOGISTIC_TYPES:
@@ -52,12 +66,14 @@ def build_item_payload(
         "currency_id": draft.currency,
         "available_quantity": draft.stock,
         "buying_mode": "buy_it_now",
-        "condition": draft.condition,
         "listing_type_id": listing_choice.listing_type_id,
         "pictures": [{"source": url} for url in draft.image_urls],
     }
     if listing_choice.attributes:
         payload["attributes"] = listing_choice.attributes
+    if item_condition is None and draft.condition.strip():
+        # Backward-compatible direct requests; saved configurations use ITEM_CONDITION.
+        payload["condition"] = draft.condition.strip().lower()
     if shipping_mode:
         payload["shipping"] = {
             "mode": shipping_mode,

@@ -45,7 +45,7 @@ def make_client():
         db.add(
             MeliMetadataCache(
                 cache_key="category_attributes:MLM123",
-                payload_json={"attributes": [{"id": "BRAND", "tags": {}}], "verified": True},
+                payload_json={"attributes": [{"id": "BRAND", "tags": {}}, {"id": "ITEM_CONDITION", "value_type": "list", "values": [{"id": "2230284", "name": "New"}], "tags": {"hidden": True}}], "verified": True},
             )
         )
         db.add(MeliMetadataCache(
@@ -165,9 +165,13 @@ async def test_amazon_to_pre_listing_queue_and_worker_flow(monkeypatch):
             "category_id": "MLM123",
             "listing_type_id": "gold_pro",
             "fulfillment": "not_full",
-            "shipping_mode": "me2",
-            "shipping_logistic_type": "drop_off",
-            "attributes": [{"id": "BRAND", "value_name": "TrailPro"}],
+                "shipping_mode": "me2",
+                "shipping_logistic_type": "drop_off",
+                "available_quantity": 3,
+                "attributes": [
+                    {"id": "ITEM_CONDITION", "value_id": "2230284", "value_name": "New"},
+                    {"id": "BRAND", "value_name": "TrailPro"},
+                ],
         },
     )
     assert configured.status_code == 200
@@ -264,9 +268,10 @@ def test_selected_site_requires_matching_authorized_store_before_queueing():
             "category_id": "MLA123",
             "listing_type_id": "gold_special",
             "fulfillment": "not_full",
-            "shipping_mode": "me2",
-            "shipping_logistic_type": "drop_off",
-            "attributes": [],
+                "shipping_mode": "me2",
+                "shipping_logistic_type": "drop_off",
+                "available_quantity": 1,
+                "attributes": [],
         },
     )
     assert configured.status_code == 422

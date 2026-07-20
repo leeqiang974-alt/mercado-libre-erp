@@ -23,6 +23,9 @@ def review_draft_locally(draft: ProductDraftCreate) -> ReviewResponse:
     if draft.stock < 1:
         reason_codes.append("missing_stock")
         reasons.append("Stock must be at least 1 before publishing.")
+    if not draft.condition.strip():
+        reason_codes.append("missing_item_condition")
+        reasons.append("A verified item condition is required before publishing.")
     if not draft.image_urls:
         reason_codes.append("missing_image")
         reasons.append("At least one image is required before publishing.")

@@ -16,6 +16,7 @@ from app.models.source_product import SourceProduct, SourceProductStatus
 from app.models.store import Store
 from app.models.token_credential import TokenCredential
 from app.schemas.drafts import ProductDraftCreate
+from app.services.drafts import create_product_draft
 from app.services.amazon.collector import CollectionResult, CollectionStatus
 from app.services.meli.oauth import MercadoLibreOAuthClient, create_state_token
 from app.services.meli.client import MercadoLibreClient
@@ -45,6 +46,26 @@ def make_client():
 
 def teardown_function():
     app.dependency_overrides.clear()
+
+
+def test_target_price_is_never_backfilled_as_amazon_source_evidence():
+    _, testing_session = make_client()
+    with testing_session() as db:
+        draft = create_product_draft(
+            db,
+            ProductDraftCreate(
+                title="Manual target offer",
+                price=500,
+                currency="MXN",
+            ),
+        )
+
+    assert draft.source_price is None
+    assert draft.source_currency == ""
+    assert draft.price == 500
+    assert draft.currency == "MXN"
+    assert draft.condition == ""
+    assert draft.stock == 0
 
 
 def test_import_amazon_html_can_persist_and_list_draft():

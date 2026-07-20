@@ -35,7 +35,18 @@ def make_client(with_config: bool = True):
         db.add(
             MeliMetadataCache(
                 cache_key="category_attributes:MLM123",
-                payload_json={"attributes": [{"id": "BRAND", "tags": {}}], "verified": True},
+                payload_json={
+                    "attributes": [
+                        {"id": "BRAND", "tags": {}},
+                        {
+                            "id": "ITEM_CONDITION",
+                            "value_type": "list",
+                            "values": [{"id": "2230284", "name": "New"}],
+                            "tags": {"hidden": True},
+                        },
+                    ],
+                    "verified": True,
+                },
             )
         )
         db.add(MeliMetadataCache(
@@ -94,7 +105,11 @@ def make_client(with_config: bool = True):
                 "fulfillment": "not_full",
                 "shipping_mode": "me2",
                 "shipping_logistic_type": "drop_off",
-                "attributes": [{"id": "BRAND", "value_name": "Acme"}],
+                "available_quantity": 2,
+                "attributes": [
+                    {"id": "ITEM_CONDITION", "value_id": "2230284", "value_name": "New"},
+                    {"id": "BRAND", "value_name": "Acme"},
+                ],
             },
         )
     return client, testing_session
@@ -149,7 +164,10 @@ def test_publish_execute_from_draft_uses_saved_config_and_persists_job(monkeypat
         assert kwargs["client"].access_token == "access-token"
         assert kwargs["draft"].target_category_id == "MLM123"
         assert kwargs["listing_choice"].listing_type_id == "gold_special"
-        assert kwargs["listing_choice"].attributes == [{"id": "BRAND", "value_name": "Acme"}]
+        assert kwargs["listing_choice"].attributes == [
+            {"id": "ITEM_CONDITION", "value_name": "New", "value_id": "2230284"},
+            {"id": "BRAND", "value_name": "Acme"},
+        ]
         return PublishExecutionResult(
             status="published",
             item_id="MLM999",
@@ -345,9 +363,13 @@ def test_shipping_change_invalidates_existing_review_and_approval(monkeypatch):
             "category_id": "MLM123",
             "listing_type_id": "gold_special",
             "fulfillment": "not_full",
-            "shipping_mode": "me2",
-            "shipping_logistic_type": "self_service",
-            "attributes": [{"id": "BRAND", "value_name": "Acme"}],
+                "shipping_mode": "me2",
+                "shipping_logistic_type": "self_service",
+                "available_quantity": 2,
+                "attributes": [
+                    {"id": "ITEM_CONDITION", "value_id": "2230284", "value_name": "New"},
+                    {"id": "BRAND", "value_name": "Acme"},
+                ],
         },
     )
     assert changed.status_code == 200
@@ -507,9 +529,10 @@ def test_generic_preview_rechecks_current_store_shipping(monkeypatch):
                 "target_site_id": "MLM",
                 "target_category_id": "MLM123",
                 "price": 100,
-                "currency": "MXN",
-                "stock": 2,
-                "image_urls": ["https://example.com/a.jpg"],
+                    "currency": "MXN",
+                    "stock": 2,
+                    "condition": "new",
+                    "image_urls": ["https://example.com/a.jpg"],
             },
             "review": review_payload(),
             "listing_choice": {

@@ -14,7 +14,10 @@ from app.schemas.publishing import ListingChoice
 from app.services.audit_events import create_audit_event
 from app.services.drafts import update_draft_content
 from app.services.draft_pricing import require_current_draft_pricing
-from app.services.meli.category_validation import validate_category_attributes
+from app.services.meli.category_validation import (
+    canonical_item_condition,
+    validate_category_attributes,
+)
 from app.services.meli.listing_type_validation import validate_store_category_listing_type
 
 
@@ -56,6 +59,7 @@ def upsert_draft_listing_config(
         payload.category_id,
         [attribute.model_dump(exclude_none=True) for attribute in payload.attributes],
         require_verified_metadata=True,
+        require_item_condition=True,
     )
     if category_errors:
         raise HTTPException(
@@ -81,6 +85,7 @@ def upsert_draft_listing_config(
             "listing_type_id": config.listing_type_id,
             "shipping_mode": config.shipping_mode,
             "shipping_logistic_type": config.shipping_logistic_type,
+            "available_quantity": config.available_quantity,
             "attributes": config.attributes_json or [],
         }
 
@@ -91,6 +96,7 @@ def upsert_draft_listing_config(
     config.fulfillment = payload.fulfillment
     config.shipping_mode = payload.shipping_mode
     config.shipping_logistic_type = payload.shipping_logistic_type
+    config.available_quantity = payload.available_quantity
     config.attributes_json = [
         attribute.model_dump(exclude_none=True) for attribute in payload.attributes
     ]
@@ -102,6 +108,8 @@ def upsert_draft_listing_config(
         target_site_id=payload.site_id,
         target_category_id=payload.category_id,
         listing_type_id=payload.listing_type_id,
+        condition=canonical_item_condition(config.attributes_json),
+        stock=payload.available_quantity,
     )
     create_audit_event(
         db,
@@ -119,6 +127,7 @@ def upsert_draft_listing_config(
             "fulfillment": config.fulfillment,
             "shipping_mode": config.shipping_mode,
             "shipping_logistic_type": config.shipping_logistic_type,
+            "available_quantity": config.available_quantity,
             "attributes": config.attributes_json or [],
         },
         commit=False,
@@ -156,11 +165,20 @@ def build_configured_draft(
         config.category_id,
         config.attributes_json or [],
         require_verified_metadata=True,
+        require_item_condition=True,
     )
     if category_errors:
         raise HTTPException(
             status_code=409,
             detail={"code": "listing_config_stale", "errors": category_errors},
+        )
+    if config.available_quantity is None or config.available_quantity < 1:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "listing_config_stale",
+                "errors": ["available_quantity_confirmation_required"],
+            },
         )
     return (
         ProductDraftCreate(
@@ -169,12 +187,12 @@ def build_configured_draft(
             brand=draft.brand,
             target_site_id=config.site_id,
             target_category_id=config.category_id,
-            condition=draft.condition,
+            condition=canonical_item_condition(config.attributes_json or []),
             source_price=draft.source_price,
             source_currency=draft.source_currency,
             price=draft.price,
             currency=draft.currency,
-            stock=draft.stock,
+            stock=config.available_quantity,
             listing_type_id=config.listing_type_id,
             image_urls=draft.image_urls_json or [],
             attributes=config.attributes_json or [],
@@ -202,6 +220,7 @@ def to_listing_config_read(config: DraftListingConfig) -> DraftListingConfigRead
         fulfillment=config.fulfillment,
         shipping_mode=config.shipping_mode,
         shipping_logistic_type=config.shipping_logistic_type,
+        available_quantity=config.available_quantity,
         attributes=config.attributes_json or [],
         created_at=config.created_at,
         updated_at=config.updated_at,

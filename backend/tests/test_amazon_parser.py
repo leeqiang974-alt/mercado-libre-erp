@@ -259,7 +259,8 @@ def test_normalize_amazon_product_creates_draft_defaults():
     assert draft.source_currency == "USD"
     assert draft.price is None
     assert draft.currency == "MXN"
-    assert draft.stock == 1
+    assert draft.stock == 0
+    assert draft.condition == ""
 
 
 def test_parse_amazon_price_handles_grouping_and_site_currency():

@@ -37,7 +37,7 @@ class ProductDraft(Base):
     title: Mapped[str] = mapped_column(String(200))
     description: Mapped[str] = mapped_column(Text, default="")
     brand: Mapped[str] = mapped_column(String(120), default="")
-    condition: Mapped[str] = mapped_column(String(40), default="new")
+    condition: Mapped[str] = mapped_column(String(40), default="")
     source_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     source_currency: Mapped[str] = mapped_column(String(8), default="")
     price: Mapped[float | None] = mapped_column(Float, nullable=True)

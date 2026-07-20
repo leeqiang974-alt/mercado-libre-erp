@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, JSON, String
+from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -20,6 +20,7 @@ class DraftListingConfig(Base):
     fulfillment: Mapped[str] = mapped_column(String(40), default="not_full")
     shipping_mode: Mapped[str] = mapped_column(String(40), default="")
     shipping_logistic_type: Mapped[str] = mapped_column(String(40), default="")
+    available_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
     attributes_json: Mapped[list[dict]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))

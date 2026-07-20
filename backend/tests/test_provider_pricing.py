@@ -102,7 +102,7 @@ def test_persisted_review_cost_keeps_the_exact_price_version_snapshot():
     with testing_session() as db:
         db.add(MeliMetadataCache(
             cache_key="category_attributes:MLM123",
-            payload_json={"attributes": [], "verified": True},
+            payload_json={"attributes": [{"id": "ITEM_CONDITION", "value_type": "list", "values": [{"id": "2230284", "name": "New"}], "tags": {"hidden": True}}], "verified": True},
         ))
         draft = ProductDraft(
             title="Bottle",
@@ -135,7 +135,8 @@ def test_persisted_review_cost_keeps_the_exact_price_version_snapshot():
             fulfillment="not_full",
             shipping_mode="me2",
             shipping_logistic_type="drop_off",
-            attributes_json=[],
+            available_quantity=1,
+            attributes_json=[{"id": "ITEM_CONDITION", "value_id": "2230284", "value_name": "New"}],
         ))
         first_price = save_provider_model_price(
             db,

@@ -96,8 +96,10 @@ def test_import_review_publish_preview_flow(monkeypatch):
     assert priced.status_code == 200
     draft = client.get("/api/drafts").json()[0]
     draft["target_category_id"] = "MLM123"
+    draft["stock"] = 1
+    draft["condition"] = "new"
 
-    reviewed = client.post(f"/api/reviews/local?product_draft_id={draft_id}", json=draft)
+    reviewed = client.post("/api/reviews/local", json=draft)
     assert reviewed.status_code == 200
     assert reviewed.json()["decision"] == "pass"
 
@@ -113,6 +115,9 @@ def test_import_review_publish_preview_flow(monkeypatch):
                     "fulfillment": "not_full",
                     "shipping_mode": "me2",
                     "shipping_logistic_type": "drop_off",
+                    "attributes": [
+                        {"id": "ITEM_CONDITION", "value_id": "2230284", "value_name": "New"},
+                    ],
                 },
             "valid_listing_type_ids": ["gold_special", "gold_pro"],
             "human_approved": True,

@@ -180,6 +180,7 @@ export type DraftListingConfig = {
   fulfillment: string;
   shipping_mode: string;
   shipping_logistic_type: string;
+  available_quantity: number | null;
   attributes: { id: string; value_name: string; value_id?: string | null }[];
   created_at: string;
   updated_at: string;
@@ -795,6 +796,7 @@ export async function saveDraftListingConfig(
     fulfillment: string;
     shipping_mode: string;
     shipping_logistic_type: string;
+    available_quantity: number;
     attributes: { id: string; value_name: string; value_id?: string | null }[];
   },
 ) {

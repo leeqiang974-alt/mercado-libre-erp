@@ -18,6 +18,7 @@ def test_review_requires_human_for_sensitive_claims():
         price=10,
         currency="USD",
         stock=1,
+        condition="new",
         image_urls=["https://example.com/a.jpg"],
     )
     result = review_draft_locally(draft)
@@ -33,6 +34,7 @@ def test_review_passes_basic_complete_draft():
         price=19.99,
         currency="USD",
         stock=2,
+        condition="new",
         image_urls=["https://example.com/a.jpg"],
     )
     result = review_draft_locally(draft)

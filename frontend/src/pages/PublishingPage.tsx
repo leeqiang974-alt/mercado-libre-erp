@@ -119,6 +119,7 @@ export function PublishingPage({
   const [storeId, setStoreId] = useState("");
   const [shippingOptions, setShippingOptions] = useState<ShippingOption[]>([]);
   const [selectedShippingKey, setSelectedShippingKey] = useState("");
+  const [availableQuantity, setAvailableQuantity] = useState("");
   const [shippingStatus, setShippingStatus] = useState("");
   const [jobs, setJobs] = useState<PublishJobRecord[]>([]);
   const [readiness, setReadiness] = useState<SystemReadiness | null>(null);
@@ -151,6 +152,7 @@ export function PublishingPage({
     setAttributeSuggestions([]);
     setAttributeError("");
     setSavedConfig(null);
+    setAvailableQuantity("");
     setPreview(null);
     setApproval(null);
     setExecution(null);
@@ -178,6 +180,9 @@ export function PublishingPage({
           setStoreId(config.store_id ? String(config.store_id) : "");
           setCategoryId(config.category_id);
           setListingTypeId(config.listing_type_id);
+          setAvailableQuantity(
+            config.available_quantity ? String(config.available_quantity) : "",
+          );
           setSelectedShippingKey(
             config.shipping_mode && config.shipping_logistic_type
               ? `${config.shipping_mode}:${config.shipping_logistic_type}`
@@ -267,8 +272,9 @@ export function PublishingPage({
   }));
   const requiredAttributes = useMemo(
     () => categoryAttributes.filter((attribute) => {
+      const id = String(attribute.id ?? "");
       const tags = attribute.tags as Record<string, unknown> | undefined;
-      return Boolean(tags?.required || tags?.catalog_required);
+      return Boolean(id === "ITEM_CONDITION" || tags?.required || tags?.catalog_required);
     }),
     [categoryAttributes],
   );
@@ -277,7 +283,12 @@ export function PublishingPage({
     return categoryAttributes.filter((attribute) => {
       const id = String(attribute.id ?? "");
       const tags = attribute.tags as Record<string, unknown> | undefined;
-      return Boolean(tags?.required || tags?.catalog_required || suggestedIds.has(id));
+      return Boolean(
+        id === "ITEM_CONDITION"
+          || tags?.required
+          || tags?.catalog_required
+          || suggestedIds.has(id),
+      );
     });
   }, [attributeSuggestions, categoryAttributes]);
   const currentAttributes = useMemo(
@@ -303,6 +314,7 @@ export function PublishingPage({
   );
   const missingRequiredAttributes = requiredAttributes.filter((attribute) => {
     const id = String(attribute.id ?? "");
+    if (id === "ITEM_CONDITION") return !attributeValueIds[id]?.trim();
     return !attributeValues[id]?.trim();
   });
   const currentConfigFingerprint = JSON.stringify({
@@ -315,6 +327,7 @@ export function PublishingPage({
     listing_type_id: listingTypeId,
     shipping_mode: selectedShipping?.mode ?? "",
     shipping_logistic_type: selectedShipping?.logistic_type ?? "",
+    available_quantity: Number(availableQuantity),
     attributes: currentAttributes,
   });
   const currentConfigFingerprintRef = useRef(currentConfigFingerprint);
@@ -547,6 +560,7 @@ export function PublishingPage({
         fulfillment: "not_full",
         shipping_mode: selectedShipping?.mode ?? "",
         shipping_logistic_type: selectedShipping?.logistic_type ?? "",
+        available_quantity: Number(availableQuantity),
         attributes: currentAttributes,
       });
       setSavedConfig(config);
@@ -556,6 +570,8 @@ export function PublishingPage({
           target_site_id: config.site_id,
           target_category_id: config.category_id,
           listing_type_id: config.listing_type_id,
+          condition: currentAttributes.find((item) => item.id === "ITEM_CONDITION")?.value_name ?? "",
+          stock: config.available_quantity ?? 0,
         });
       }
       setStatus("Listing configuration saved");
@@ -655,6 +671,7 @@ export function PublishingPage({
       && selectedShipping
       && savedConfig.shipping_mode === selectedShipping.mode
       && savedConfig.shipping_logistic_type === selectedShipping.logistic_type
+      && savedConfig.available_quantity === Number(availableQuantity)
       && categoryAttributesVerified
       && JSON.stringify(normalizedSavedAttributes) === JSON.stringify(currentAttributes)
       && missingRequiredAttributes.length === 0
@@ -710,6 +727,20 @@ export function PublishingPage({
               <option value="">Select a connected {siteId} store</option>
               {siteStores.map((store) => <option key={store.id} value={store.id}>{store.display_name} · seller {store.seller_id}</option>)}
             </select>
+          </label>
+          <label>Available quantity
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={availableQuantity}
+              aria-invalid={!Number.isInteger(Number(availableQuantity)) || Number(availableQuantity) < 1}
+              onChange={(event) => {
+                setAvailableQuantity(event.target.value);
+                setSavedConfig(null);
+                setPreview(null);
+              }}
+            />
           </label>
         </div>
         {!siteMatchesDraft && <p className="inline-warning">This draft was prepared for {draft.target_site_id}. Return to Import, select {siteId}, then reprice and rerun the AI review before publishing.</p>}
@@ -807,29 +838,48 @@ export function PublishingPage({
           const listId = `attribute-values-${id}`;
           return (
             <label key={id}>
-              {String(attribute.name ?? id)}{tags?.required || tags?.catalog_required ? " *" : ""}
-              <input
-                list={values.length ? listId : undefined}
-                aria-invalid={Boolean((tags?.required || tags?.catalog_required) && !attributeValues[id]?.trim())}
-                value={attributeValues[id] ?? ""}
-                onChange={(event) => {
-                  const valueName = event.target.value;
-                  const exactMatches = values.filter(
-                    (value) => String(value.name ?? "").toLocaleLowerCase() === valueName.toLocaleLowerCase(),
-                  );
-                  const exact = exactMatches.length === 1 ? exactMatches[0] : undefined;
-                  setAttributeValues((current) => ({ ...current, [id]: valueName }));
-                  setAttributeValueIds((current) => {
-                    const next = { ...current };
-                    if (exact?.id) next[id] = String(exact.id);
-                    else delete next[id];
-                    return next;
-                  });
-                  setSavedConfig(null);
-                  setPreview(null);
-                }}
-              />
-              {values.length > 0 && (
+              {String(attribute.name ?? id)}{id === "ITEM_CONDITION" || tags?.required || tags?.catalog_required ? " *" : ""}
+              {id === "ITEM_CONDITION" && values.length > 0 ? (
+                <select
+                  aria-invalid={!attributeValues[id]?.trim()}
+                  value={attributeValueIds[id] ?? ""}
+                  onChange={(event) => {
+                    const exact = values.find((value) => String(value.id ?? "") === event.target.value);
+                    setAttributeValues((current) => ({ ...current, [id]: String(exact?.name ?? "") }));
+                    setAttributeValueIds((current) => ({ ...current, [id]: event.target.value }));
+                    setSavedConfig(null);
+                    setPreview(null);
+                  }}
+                >
+                  <option value="">Select item condition</option>
+                  {values.map((value) => (
+                    <option key={String(value.id)} value={String(value.id)}>{String(value.name ?? "")}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  list={values.length ? listId : undefined}
+                  aria-invalid={Boolean((tags?.required || tags?.catalog_required) && !attributeValues[id]?.trim())}
+                  value={attributeValues[id] ?? ""}
+                  onChange={(event) => {
+                    const valueName = event.target.value;
+                    const exactMatches = values.filter(
+                      (value) => String(value.name ?? "").toLocaleLowerCase() === valueName.toLocaleLowerCase(),
+                    );
+                    const exact = exactMatches.length === 1 ? exactMatches[0] : undefined;
+                    setAttributeValues((current) => ({ ...current, [id]: valueName }));
+                    setAttributeValueIds((current) => {
+                      const next = { ...current };
+                      if (exact?.id) next[id] = String(exact.id);
+                      else delete next[id];
+                      return next;
+                    });
+                    setSavedConfig(null);
+                    setPreview(null);
+                  }}
+                />
+              )}
+              {id !== "ITEM_CONDITION" && values.length > 0 && (
                 <datalist id={listId}>
                   {values.map((value) => (
                     <option key={String(value.id ?? value.name)} value={String(value.name ?? "")} />
@@ -849,7 +899,7 @@ export function PublishingPage({
           </p>
         )}
         {categoryAttributes.length > 0 && <div className="action-line"><span>{requiredAttributes.length} required · {categoryAttributes.length} total attributes loaded</span><button className="secondary-button" onClick={() => loadAttributes(true)}><RefreshCw size={16} /> Refresh metadata</button></div>}
-        <div className="action-line"><button onClick={saveConfig} disabled={!categoryId || !categoryAttributesVerified || !listingTypesVerified || !listingTypeId || !selectedShipping || !pricingValid || missingRequiredAttributes.length > 0 || busy === "config"}><Save size={16} /> Save listing configuration</button>{savedConfig && <span className="success-text"><CheckCircle2 size={16} /> Saved as non-FULL</span>}</div>
+        <div className="action-line"><button onClick={saveConfig} disabled={!categoryId || !categoryAttributesVerified || !listingTypesVerified || !listingTypeId || !selectedShipping || !pricingValid || !Number.isInteger(Number(availableQuantity)) || Number(availableQuantity) < 1 || missingRequiredAttributes.length > 0 || busy === "config"}><Save size={16} /> Save listing configuration</button>{savedConfig && <span className="success-text"><CheckCircle2 size={16} /> Saved as non-FULL</span>}</div>
       </section>
 
       <section className="surface publish-section">
@@ -860,6 +910,7 @@ export function PublishingPage({
           <div><span>Offer</span><strong>{COMMERCIAL_TYPES.find((type) => type.id === listingTypeId)?.label ?? "Not selected"}</strong></div>
           <div><span>Shipping</span><strong>{selectedShipping ? (SHIPPING_LABELS[selectedShippingKey] ?? selectedShippingKey) : "Not selected"}</strong></div>
           <div><span>Price</span><strong>{draft.price ? `${draft.currency} ${draft.price}` : "Not priced"}</strong></div>
+          <div><span>Inventory</span><strong>{availableQuantity || "Not confirmed"}</strong></div>
         </div>
         <div className="button-row">
           <button disabled={!canApprove || busy === "approval"} onClick={approveCurrentDraft}><CheckCircle2 size={16} /> Record human approval</button>

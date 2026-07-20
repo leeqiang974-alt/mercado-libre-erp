@@ -46,6 +46,7 @@
 - Any Mercado Libre access-token refresh must serialize on the `TokenCredential` row and recheck expiry after acquiring the lock. Verify refresh-token rotation with concurrent sessions on real PostgreSQL so diagnostics, metadata reads, workers, and direct publishing cannot consume the same refresh token twice.
 - Mercado Libre OAuth authorization must use the marketplace domain for the selected site. Bind that site into the signed OAuth state and reject the callback before token persistence when `/users/me.site_id` differs from the requested site.
 - Every browser-based Amazon collection path must reserve a per-marketplace-domain request slot through persistent database coordination. CAPTCHA challenges require exponential backoff that survives worker restarts; never issue an immediate second page request inside one job. Reuse collected evidence only for the exact normalized Amazon domain and ASIN, and expose deferred execution time to the operator.
+- Amazon collection must not infer sale condition or available inventory. Require the operator to confirm inventory and choose the verified category-specific `ITEM_CONDITION` before AI review or publishing. Keep Amazon source price/currency separate from target price/currency; never backfill one from the other.
 
 ## Verification
 

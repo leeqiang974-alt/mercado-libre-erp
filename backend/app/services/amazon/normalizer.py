@@ -22,6 +22,6 @@ def normalize_amazon_product(parsed: dict, target_site_id: str) -> ProductDraftC
         source_currency=price.get("currency", ""),
         price=None,
         currency=expected_currency(target_site_id),
-        stock=1,
+        stock=0,
         image_urls=parsed.get("images", []),
     )

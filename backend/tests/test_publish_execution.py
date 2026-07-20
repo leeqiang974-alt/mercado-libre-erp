@@ -17,6 +17,7 @@ def valid_draft():
         price=19.99,
         currency="MXN",
         stock=3,
+        condition="new",
         image_urls=["https://example.com/a.jpg"],
     )
 

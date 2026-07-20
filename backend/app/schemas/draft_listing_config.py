@@ -46,6 +46,7 @@ class DraftListingConfigUpsert(BaseModel):
     fulfillment: str = "not_full"
     shipping_mode: str = ""
     shipping_logistic_type: str = ""
+    available_quantity: int = Field(ge=1)
     attributes: list[ListingAttributeValue] = Field(default_factory=list)
 
     @field_validator("listing_type_id")
@@ -106,6 +107,7 @@ class DraftListingConfigRead(BaseModel):
     fulfillment: str
     shipping_mode: str
     shipping_logistic_type: str
+    available_quantity: int | None = None
     attributes: list[ListingAttributeValue] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime

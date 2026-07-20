@@ -36,7 +36,7 @@ def make_client():
         db.add(
             MeliMetadataCache(
                 cache_key="category_attributes:MLM123",
-                payload_json={"attributes": [{"id": "BRAND", "tags": {}}], "verified": True},
+                payload_json={"attributes": [{"id": "BRAND", "tags": {}}, {"id": "ITEM_CONDITION", "value_type": "list", "values": [{"id": "2230284", "name": "New"}], "tags": {"hidden": True}}], "verified": True},
             )
         )
         db.add(MeliMetadataCache(
@@ -84,7 +84,8 @@ def make_client():
                 fulfillment="classic",
                 shipping_mode="me2",
                 shipping_logistic_type="drop_off",
-                attributes_json=[{"id": "BRAND", "value_name": "Demo"}],
+                available_quantity=2,
+                attributes_json=[{"id": "ITEM_CONDITION", "value_id": "2230284", "value_name": "New"}, {"id": "BRAND", "value_name": "Demo"}],
             )
         )
         db.add(

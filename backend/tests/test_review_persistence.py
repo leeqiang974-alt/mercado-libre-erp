@@ -36,7 +36,17 @@ def make_client():
         db.add(
             MeliMetadataCache(
                 cache_key="category_attributes:MLM123",
-                payload_json={"attributes": [], "verified": True},
+                payload_json={
+                    "attributes": [
+                        {
+                            "id": "ITEM_CONDITION",
+                            "value_type": "list",
+                            "values": [{"id": "2230284", "name": "New"}],
+                            "tags": {"hidden": True},
+                        }
+                    ],
+                    "verified": True,
+                },
             )
         )
         draft = ProductDraft(
@@ -71,7 +81,10 @@ def make_client():
                 fulfillment="not_full",
                 shipping_mode="me2",
                 shipping_logistic_type="drop_off",
-                attributes_json=[],
+                available_quantity=1,
+                attributes_json=[
+                    {"id": "ITEM_CONDITION", "value_id": "2230284", "value_name": "New"}
+                ],
             )
         )
         db.commit()
