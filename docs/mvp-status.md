@@ -1,6 +1,6 @@
 # MVP Skeleton Status
 
-Verified on: 2026-07-20
+Verified on: 2026-07-21
 
 Implemented:
 
@@ -48,6 +48,7 @@ Implemented:
 - Publish preview from saved draft listing configuration.
 - Publishing validation gates for human approval, listing type availability, and FULL exclusion.
 - Guarded Mercado Libre publish execution adapter that posts to `/items` only when live publishing is explicitly enabled.
+- Local marketplace publishing follows Mercado Libre's two-stage contract: `/items` is created without a description, then plain text is sent to `/items/{item_id}/description`. Ambiguous description responses are read back; rejected or unverified descriptions close the new item and retain its id so item creation is never retried.
 - Guarded publish execution API now uses `store_id` rather than accepting access tokens from the frontend.
 - Guarded publish execution resolves encrypted store access tokens server-side.
 - OAuth callback resolves and persists the seller's real Mercado Libre `site_id`; enqueue, direct execution, and workers enforce store/site matching.
@@ -81,7 +82,7 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 246 passed, with 6 PostgreSQL-only tests skipped in the default run.
+- Backend suite: 254 passed, with 6 PostgreSQL-only tests skipped in the default run.
 - Isolated Docker PostgreSQL integration run: 6 passed, including concurrent collection, publish-job, and source-variant draft deduplication, atomic draft-version invalidation, and a final publish-evidence row lock that blocks concurrent draft changes until publication completes.
 - PostgreSQL migrations through `20260720_0021` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, review execution metadata, structured source snapshots, source-variant draft bindings, structured source measurements, provider usage/request telemetry, and encrypted integration credentials.
 - The complete Alembic chain upgraded to head and downgraded to base successfully on a disposable D-drive SQLite database.

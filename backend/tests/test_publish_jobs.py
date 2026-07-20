@@ -68,6 +68,7 @@ def make_client(with_token: bool = True):
             )
         draft = ProductDraft(
             title="Persisted Bottle",
+            description="Leak proof.",
             target_site_id="MLM",
             target_category_id="MLM123",
             price=9.99,

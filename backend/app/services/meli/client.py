@@ -1,6 +1,10 @@
 import httpx
 
 
+class MercadoLibreResponseError(httpx.RequestError):
+    pass
+
+
 class MercadoLibreClient:
     def __init__(
         self,
@@ -20,24 +24,42 @@ class MercadoLibreClient:
             headers["Authorization"] = f"Bearer {self.access_token}"
         return headers
 
-    async def get(self, path: str) -> dict:
+    async def get(self, path: str) -> dict | list:
         async with httpx.AsyncClient(transport=self.transport, timeout=self.timeout) as client:
             response = await client.get(f"{self.base_url}{path}", headers=self._headers())
             response.raise_for_status()
-            return response.json()
+            return _response_json(response)
 
-    async def post(self, path: str, payload: dict) -> dict:
+    async def post(self, path: str, payload: dict) -> dict | list:
         async with httpx.AsyncClient(transport=self.transport, timeout=self.timeout) as client:
             response = await client.post(
                 f"{self.base_url}{path}", json=payload, headers=self._headers()
             )
             response.raise_for_status()
-            return response.json()
+            return _response_json(response)
 
-    async def put(self, path: str, payload: dict) -> dict:
+    async def put(self, path: str, payload: dict) -> dict | list:
         async with httpx.AsyncClient(transport=self.transport, timeout=self.timeout) as client:
             response = await client.put(
                 f"{self.base_url}{path}", json=payload, headers=self._headers()
             )
             response.raise_for_status()
-            return response.json()
+            return _response_json(response)
+
+
+def _response_json(response: httpx.Response) -> dict | list:
+    if not response.content.strip():
+        return {}
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise MercadoLibreResponseError(
+            "Mercado Libre returned a non-JSON success response.",
+            request=response.request,
+        ) from exc
+    if not isinstance(payload, (dict, list)):
+        raise MercadoLibreResponseError(
+            "Mercado Libre returned an unexpected JSON response.",
+            request=response.request,
+        )
+    return payload

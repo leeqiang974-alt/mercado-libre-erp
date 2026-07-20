@@ -36,6 +36,8 @@ def build_item_payload(
         raise ValueError("Available quantity must be at least one.")
     if not draft.image_urls:
         raise ValueError("At least one picture is required.")
+    if not draft.description.strip():
+        raise ValueError("Description is required.")
     if shipping_mode and shipping_mode not in SUPPORTED_SHIPPING_MODES:
         raise ValueError("Unsupported non-FULL shipping mode.")
     if shipping_logistic_type and shipping_logistic_type not in SUPPORTED_NON_FULL_LOGISTIC_TYPES:
@@ -52,7 +54,6 @@ def build_item_payload(
         "buying_mode": "buy_it_now",
         "condition": draft.condition,
         "listing_type_id": listing_choice.listing_type_id,
-        "description": {"plain_text": draft.description},
         "pictures": [{"source": url} for url in draft.image_urls],
     }
     if listing_choice.attributes:
@@ -67,3 +68,10 @@ def build_item_payload(
         if shipping_mode == "me2":
             payload["shipping"]["free_methods"] = []
     return payload
+
+
+def build_description_payload(draft: ProductDraftCreate) -> dict[str, str]:
+    description = draft.description.strip()
+    if not description:
+        raise ValueError("Description is required.")
+    return {"plain_text": description}

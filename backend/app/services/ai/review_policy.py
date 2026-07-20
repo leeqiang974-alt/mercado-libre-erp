@@ -11,6 +11,9 @@ def review_draft_locally(draft: ProductDraftCreate) -> ReviewResponse:
     if not draft.title.strip():
         reason_codes.append("missing_title")
         reasons.append("Title is required before publishing.")
+    if not draft.description.strip():
+        reason_codes.append("missing_description")
+        reasons.append("Description is required before publishing.")
     if not draft.price:
         reason_codes.append("missing_price")
         reasons.append("Price is required before publishing.")

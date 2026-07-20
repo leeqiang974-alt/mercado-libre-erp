@@ -259,6 +259,34 @@ def test_unknown_publish_outcome_cannot_be_retried():
     assert "reconcile the store" in response.json()["detail"]
 
 
+def test_description_failure_with_created_item_cannot_be_retried(monkeypatch):
+    async def unexpected_publish(**kwargs):
+        raise AssertionError("an existing item id must never create a replacement")
+
+    monkeypatch.setattr(publishing, "execute_publish", unexpected_publish)
+    client, testing_session = make_client()
+    with testing_session() as db:
+        db.add(
+            PublishJob(
+                product_draft_id=1,
+                store_id=1,
+                requested_by="operator",
+                status=PublishJobStatus.FAILED,
+                meli_item_id="MLM-DESCRIPTION-1",
+                request_summary_json=job_summary(),
+                response_summary_json={
+                    "errors": ["meli_description_failed:422"]
+                },
+            )
+        )
+        db.commit()
+
+    response = client.post("/api/publishing/jobs/1/retry")
+
+    assert response.status_code == 409
+    assert "already created an item" in response.json()["detail"]
+
+
 def test_retry_preflight_failure_keeps_terminal_job_state():
     client, testing_session = make_client()
     with testing_session() as db:

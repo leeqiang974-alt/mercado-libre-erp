@@ -1,11 +1,14 @@
+import asyncio
+
 import httpx
 
 from app.schemas.drafts import ProductDraftCreate
 from app.schemas.publishing import ListingChoice, PublishExecutionResult, PublishValidationResult
 from app.schemas.reviews import ReviewResponse
-from app.services.meli.client import MercadoLibreClient
+from app.services.meli.client import MercadoLibreClient, MercadoLibreResponseError
 from app.services.meli.payload_builder import (
     SUPPORTED_NON_FULL_LOGISTIC_TYPES,
+    build_description_payload,
     build_item_payload,
 )
 from app.services.meli.shipping import (
@@ -147,6 +150,13 @@ async def execute_publish(
     )
     try:
         response = await client.post("/items", payload)
+    except MercadoLibreResponseError:
+        return PublishExecutionResult(
+            status="blocked",
+            shipping_mode=shipping.mode,
+            shipping_logistic_type=shipping.logistic_type,
+            errors=["publish_outcome_unknown_manual_reconciliation_required"],
+        )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code >= 500:
             return PublishExecutionResult(
@@ -202,27 +212,7 @@ async def execute_publish(
     elif actual_logistic_type not in SUPPORTED_NON_FULL_LOGISTIC_TYPES:
         verification_errors.append("meli_publish_logistic_type_unverified")
     if verification_errors:
-        try:
-            close_response = await client.put(f"/items/{item_id}", {"status": "closed"})
-            close_status = (
-                str(close_response.get("status", "")).strip().lower()
-                if isinstance(close_response, dict)
-                else ""
-            )
-            if close_status != "closed":
-                verification_errors.extend(
-                    [
-                        "meli_item_close_unverified",
-                        "publish_outcome_unknown_manual_reconciliation_required",
-                    ]
-                )
-        except httpx.HTTPError:
-            verification_errors.extend(
-                [
-                    "meli_item_close_failed",
-                    "publish_outcome_unknown_manual_reconciliation_required",
-                ]
-            )
+        verification_errors.extend(await _close_item(client, item_id))
         return PublishExecutionResult(
             status=(
                 "blocked"
@@ -236,6 +226,24 @@ async def execute_publish(
             shipping_logistic_type=actual_logistic_type or shipping.logistic_type,
             errors=verification_errors,
         )
+    description_errors = await _create_or_reconcile_description(
+        client, item_id, build_description_payload(draft)["plain_text"]
+    )
+    if description_errors:
+        description_errors.extend(await _close_item(client, item_id))
+        return PublishExecutionResult(
+            status=(
+                "blocked"
+                if "publish_outcome_unknown_manual_reconciliation_required"
+                in description_errors
+                else "failed"
+            ),
+            item_id=item_id,
+            permalink=permalink,
+            shipping_mode=actual_mode,
+            shipping_logistic_type=actual_logistic_type,
+            errors=description_errors,
+        )
     return PublishExecutionResult(
         status="published",
         item_id=item_id,
@@ -244,3 +252,55 @@ async def execute_publish(
         shipping_logistic_type=actual_logistic_type,
         errors=[],
     )
+
+
+async def _create_or_reconcile_description(
+    client: MercadoLibreClient, item_id: str, plain_text: str
+) -> list[str]:
+    try:
+        await client.post(f"/items/{item_id}/description", {"plain_text": plain_text})
+        return []
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code < 500 and exc.response.status_code != 408:
+            return [f"meli_description_failed:{exc.response.status_code}"]
+    except httpx.HTTPError:
+        pass
+    for delay in (0, 0.2, 0.5):
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            description = await client.get(f"/items/{item_id}/description")
+        except httpx.HTTPError:
+            continue
+        if not isinstance(description, dict):
+            continue
+        if _normalized_description(
+            description.get("plain_text", "")
+        ) == _normalized_description(plain_text):
+            return []
+    return ["meli_description_outcome_unverified"]
+
+
+async def _close_item(client: MercadoLibreClient, item_id: str) -> list[str]:
+    try:
+        close_response = await client.put(f"/items/{item_id}", {"status": "closed"})
+    except httpx.HTTPError:
+        return [
+            "meli_item_close_failed",
+            "publish_outcome_unknown_manual_reconciliation_required",
+        ]
+    close_status = (
+        str(close_response.get("status", "")).strip().lower()
+        if isinstance(close_response, dict)
+        else ""
+    )
+    if close_status == "closed":
+        return []
+    return [
+        "meli_item_close_unverified",
+        "publish_outcome_unknown_manual_reconciliation_required",
+    ]
+
+
+def _normalized_description(value: object) -> str:
+    return str(value).replace("\r\n", "\n").replace("\r", "\n").strip()

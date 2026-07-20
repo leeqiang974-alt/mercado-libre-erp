@@ -7,6 +7,7 @@ def test_review_blocks_missing_required_publish_fields():
     result = review_draft_locally(draft)
     assert result.decision == "block"
     assert "missing_title" in result.reason_codes
+    assert "missing_description" in result.reason_codes
 
 
 def test_review_requires_human_for_sensitive_claims():

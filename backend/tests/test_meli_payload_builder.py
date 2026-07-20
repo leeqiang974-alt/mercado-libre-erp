@@ -2,7 +2,7 @@ import pytest
 
 from app.schemas.drafts import ProductDraftCreate
 from app.schemas.publishing import ListingChoice
-from app.services.meli.payload_builder import build_item_payload
+from app.services.meli.payload_builder import build_description_payload, build_item_payload
 
 
 def complete_draft():
@@ -30,6 +30,10 @@ def test_build_item_payload_maps_required_fields():
     assert payload["listing_type_id"] == "gold_special"
     assert payload["available_quantity"] == 3
     assert payload["pictures"][0]["source"] == "https://example.com/a.jpg"
+    assert "description" not in payload
+    assert build_description_payload(complete_draft()) == {
+        "plain_text": "Leak proof bottle."
+    }
 
 
 def test_build_item_payload_rejects_full_fulfillment():
@@ -39,6 +43,14 @@ def test_build_item_payload_rejects_full_fulfillment():
             listing_choice=ListingChoice(
                 site_id="MLM", listing_type_id="gold_special", fulfillment="full"
             ),
+        )
+
+
+def test_build_item_payload_rejects_missing_description_before_item_creation():
+    with pytest.raises(ValueError, match="Description is required"):
+        build_item_payload(
+            complete_draft().model_copy(update={"description": "  "}),
+            ListingChoice(site_id="MLM", listing_type_id="gold_special"),
         )
 
 

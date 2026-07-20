@@ -88,6 +88,7 @@ python -m app.worker --queue publish --loop --interval 30 --limit 10
 - Preview publishing from saved draft listing configuration.
 - Execute a guarded publish adapter only when `ALLOW_LIVE_PUBLISH=true`.
 - Execute guarded publishing directly from saved draft listing configuration.
+- Create local marketplace items first, then upload their plain-text descriptions through the dedicated Mercado Libre description endpoint; uncertain description responses are reconciled before the item can be reported as published.
 - Queue saved draft publishing as pending jobs for the backend publish worker.
 - Resolve encrypted store tokens server-side for guarded publish execution.
 - Bind each authorized store to the `site_id` returned by Mercado Libre seller profile lookup and reject cross-site publish attempts.

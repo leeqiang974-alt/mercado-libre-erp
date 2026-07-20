@@ -56,7 +56,7 @@ def test_import_review_publish_preview_flow(monkeypatch):
         "/api/imports/amazon-html",
         json={
             "source_url": "https://www.amazon.com/dp/B000TEST01",
-            "html": "<input id='ASIN' value='B000TEST01' /><span id='productTitle'>Bottle</span><span class='a-price'><span class='a-offscreen'>$9.99</span></span><img id='landingImage' src='https://example.com/a.jpg' />",
+            "html": "<input id='ASIN' value='B000TEST01' /><span id='productTitle'>Bottle</span><span class='a-price'><span class='a-offscreen'>$9.99</span></span><div id='productDescription'>Leak proof bottle.</div><img id='landingImage' src='https://example.com/a.jpg' />",
             "target_site_id": "MLM",
             "persist": True,
         },
