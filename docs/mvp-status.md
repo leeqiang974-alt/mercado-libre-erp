@@ -9,6 +9,7 @@ Implemented:
 - Playwright-backed Amazon URL collection adapter with manual-action handling for CAPTCHA/challenge pages.
 - Playwright collection uses storefront-specific locale and language headers, waits for title/primary-price/main-image evidence, and exits challenge pages early. Price extraction is scoped to the main product area so a recommendation price cannot be mistaken for source evidence when Amazon omits the product DOM.
 - Amazon URL collection job model, single/batch create, list/run APIs, and frontend queue controls with per-row validation and duplicate reporting.
+- CSV/XLSX file imports read a recognized URL column or a headerless first column and feed the same 100-row validation, canonicalization, duplicate detection, and queue path as pasted URLs.
 - Manual HTML snapshots can resolve the exact challenged collection job after normalized Amazon URL and target-site matching. The operator source, draft, completed queue linkage, and audit event commit atomically under a job row lock; the source remains explicitly labeled as not independently fetched.
 - Batch intake persists and indexes canonical Amazon domain/ASIN identities, limits each request to 100 URLs, and serializes deduplication on both PostgreSQL and SQLite so concurrent operator requests reuse the same job by default.
 - Collection queue polling is bounded to the latest 100 jobs by default and supports limit/offset pagination; URL collection and manual HTML snapshot inputs keep independent state.

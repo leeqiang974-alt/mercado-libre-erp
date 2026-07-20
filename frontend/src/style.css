@@ -188,6 +188,32 @@ button:disabled {
   margin: 10px 0;
 }
 
+.file-picker {
+  align-items: center;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 8px;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-picker input {
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+.file-picker:focus-within { outline: 2px solid #2563eb; outline-offset: 2px; }
+.file-picker.disabled { cursor: not-allowed; opacity: 0.55; }
+
 @media (max-width: 760px) {
   .app { display: block; }
   .sidebar { height: 56px; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; padding: 8px 10px; box-sizing: border-box; }

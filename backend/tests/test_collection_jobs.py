@@ -393,6 +393,65 @@ def test_amazon_url_batch_normalizes_deduplicates_and_reports_invalid_rows():
         ]
 
 
+def test_amazon_url_file_import_uses_existing_batch_queue_path():
+    client, testing_session = make_client()
+
+    response = client.post(
+        "/api/imports/amazon-url/jobs/file",
+        files={
+            "file": (
+                "products.csv",
+                b"url\nhttps://www.amazon.com/dp/B000TEST01\n"
+                b"https://m.amazon.com/gp/product/B000TEST01\n"
+                b"https://www.amazon.com.mx/dp/B000TEST02\n",
+                "text/csv",
+            )
+        },
+        data={"target_site_id": "MLB", "allow_existing": "false"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["created_count"] == 2
+    assert response.json()["duplicate_count"] == 1
+    with testing_session() as db:
+        jobs = db.query(CollectionJob).order_by(CollectionJob.id).all()
+        assert [job.target_site_id for job in jobs] == ["MLB", "MLB"]
+        assert [job.source_url for job in jobs] == [
+            "https://amazon.com/dp/B000TEST01",
+            "https://amazon.com.mx/dp/B000TEST02",
+        ]
+
+
+def test_amazon_url_file_import_rejects_unsupported_files_without_writes():
+    client, testing_session = make_client()
+
+    response = client.post(
+        "/api/imports/amazon-url/jobs/file",
+        files={"file": ("products.txt", b"https://amazon.com/dp/B000TEST01", "text/plain")},
+        data={"target_site_id": "MLM"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "import_file_type_unsupported"
+    with testing_session() as db:
+        assert db.query(CollectionJob).count() == 0
+
+
+def test_amazon_url_file_import_rejects_oversized_request_before_parsing():
+    client, testing_session = make_client()
+
+    response = client.post(
+        "/api/imports/amazon-url/jobs/file",
+        files={"file": ("products.csv", b"x" * (6 * 1024 * 1024), "text/csv")},
+        data={"target_site_id": "MLM"},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "import_request_too_large"
+    with testing_session() as db:
+        assert db.query(CollectionJob).count() == 0
+
+
 def test_amazon_url_batch_skips_existing_unless_operator_allows_recollection():
     client, testing_session = make_client()
     payload = {

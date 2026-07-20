@@ -3,10 +3,11 @@ from datetime import UTC, datetime
 import re
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.db.session import get_db
 from app.core.config import get_settings
@@ -18,6 +19,7 @@ from app.services.amazon.collector import (
     validate_amazon_snapshot,
 )
 from app.services.amazon.normalizer import normalize_amazon_product
+from app.services.amazon.import_file import MAX_IMPORT_FILE_BYTES, parse_amazon_url_file
 from app.services.amazon.throttle import record_domain_outcome, reserve_domain_request
 from app.services.drafts import create_product_draft, to_draft_read
 from app.services.audit_events import create_audit_event
@@ -273,6 +275,37 @@ def create_amazon_url_collection_job(
 @router.post("/amazon-url/jobs/batch", response_model=CollectionBatchRead)
 def create_amazon_url_collection_jobs_batch(
     payload: AmazonUrlBatchImport, db: Session = Depends(get_db)
+) -> CollectionBatchRead:
+    return _create_amazon_url_collection_jobs_batch(payload, db)
+
+
+@router.post("/amazon-url/jobs/file", response_model=CollectionBatchRead)
+async def create_amazon_url_collection_jobs_file(
+    file: UploadFile = File(...),
+    target_site_id: str = Form(default="MLM"),
+    allow_existing: bool = Form(default=False),
+    db: Session = Depends(get_db),
+) -> CollectionBatchRead:
+    try:
+        source_urls = await run_in_threadpool(
+            parse_amazon_url_file,
+            file.filename or "",
+            await file.read(MAX_IMPORT_FILE_BYTES + 1),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _create_amazon_url_collection_jobs_batch(
+        AmazonUrlBatchImport(
+            source_urls=source_urls,
+            target_site_id=target_site_id,
+            allow_existing=allow_existing,
+        ),
+        db,
+    )
+
+
+def _create_amazon_url_collection_jobs_batch(
+    payload: AmazonUrlBatchImport, db: Session
 ) -> CollectionBatchRead:
     target_site_id = _target_site_or_422(payload.target_site_id)
     existing_by_url: dict[str, CollectionJob] = {}

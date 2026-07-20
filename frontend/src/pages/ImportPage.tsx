@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import {
   createCollectionJobsBatch,
+  createCollectionJobsFile,
   createSourceVariantCollectionJob,
   createSourceVariantCollectionJobs,
   createSourceVariantDraft,
@@ -147,6 +148,7 @@ export function ImportPage({
   const [persist, setPersist] = useState(true);
   const [snapshotJobId, setSnapshotJobId] = useState<number | null>(null);
   const [allowExisting, setAllowExisting] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
   const [batchResult, setBatchResult] = useState<CollectionBatchResult | null>(null);
   const [collectionJobs, setCollectionJobs] = useState<CollectionJobRecord[]>([]);
   const [busyAction, setBusyAction] = useState("");
@@ -263,6 +265,22 @@ export function ImportPage({
       await refreshCollectionJobs(false);
     } catch (jobError) {
       setError(jobError instanceof Error ? jobError.message : "Failed to create collection job");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function queueCollectionFile() {
+    if (!importFile) return;
+    setError("");
+    setBusyAction("file");
+    try {
+      const result = await createCollectionJobsFile(importFile, targetSiteId, allowExisting);
+      setBatchResult(result);
+      setImportFile(null);
+      await refreshCollectionJobs(false);
+    } catch (jobError) {
+      setError(jobError instanceof Error ? jobError.message : "Failed to import collection file");
     } finally {
       setBusyAction("");
     }
@@ -509,6 +527,29 @@ export function ImportPage({
               >
                 {busyAction === "queue" ? <LoaderCircle className="spin" size={17} /> : <ListPlus size={17} />}
                 {urlEntries.length > 1 ? `Add ${urlEntries.length} to queue` : "Add to queue"}
+              </button>
+              <label className={`secondary-button file-picker ${isBusy ? "disabled" : ""}`}>
+                <Upload size={17} />
+                {importFile?.name ?? "Choose CSV/XLSX"}
+                <input
+                  type="file"
+                  accept=".csv,.xlsx"
+                  aria-label="Choose CSV or XLSX file"
+                  disabled={isBusy}
+                  onChange={(event) => {
+                    setImportFile(event.target.files?.[0] ?? null);
+                    setBatchResult(null);
+                    event.target.value = "";
+                  }}
+                />
+              </label>
+              <button
+                className="secondary-button"
+                disabled={!importFile || isBusy}
+                onClick={queueCollectionFile}
+              >
+                {busyAction === "file" ? <LoaderCircle className="spin" size={17} /> : <FilePlus2 size={17} />}
+                Import file
               </button>
             </div>
             {batchResult && (

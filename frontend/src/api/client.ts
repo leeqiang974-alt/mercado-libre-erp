@@ -473,6 +473,23 @@ export async function createCollectionJobsBatch(
   return response.json() as Promise<CollectionBatchResult>;
 }
 
+export async function createCollectionJobsFile(
+  file: File,
+  targetSiteId: string,
+  allowExisting: boolean,
+) {
+  const body = new FormData();
+  body.append("file", file);
+  body.append("target_site_id", targetSiteId);
+  body.append("allow_existing", String(allowExisting));
+  const response = await fetch(`${API_BASE}/api/imports/amazon-url/jobs/file`, {
+    method: "POST",
+    body,
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<CollectionBatchResult>;
+}
+
 export async function listCollectionJobs(limit = 100, offset = 0) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   const response = await fetch(`${API_BASE}/api/imports/amazon-url/jobs?${params}`);

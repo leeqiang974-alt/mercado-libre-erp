@@ -16,6 +16,7 @@ from app.api.routes import (
     stores,
 )
 from app.core.config import get_settings
+from app.core.request_limits import RequestBodyLimitMiddleware
 from app.db.session import get_db
 from app.models.collection_job import CollectionJob
 from app.models.product_draft import ProductDraft
@@ -23,6 +24,7 @@ from app.models.publish_job import PublishJob
 from app.models.store import Store
 from app.models.registry import import_all_models
 from app.services.integration_credentials import integration_credential_status
+from app.services.amazon.import_file import MAX_IMPORT_REQUEST_BYTES
 
 
 settings = get_settings()
@@ -30,6 +32,10 @@ import_all_models()
 
 
 app = FastAPI(title=settings.app_name)
+app.add_middleware(
+    RequestBodyLimitMiddleware,
+    path_limits={"/api/imports/amazon-url/jobs/file": MAX_IMPORT_REQUEST_BYTES},
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
