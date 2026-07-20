@@ -8,8 +8,8 @@ from urllib.parse import urlencode
 import httpx
 from pydantic import BaseModel
 
+from app.services.meli.sites import authorization_base_url
 
-AUTHORIZATION_BASE_URL = "https://auth.mercadolibre.com/authorization"
 TOKEN_URL = "https://api.mercadolibre.com/oauth/token"
 
 
@@ -20,10 +20,12 @@ class MercadoLibreToken(BaseModel):
     user_id: int | str
 
 
-def create_state_token(secret: str = "local-dev-state-secret") -> str:
+def create_state_token(secret: str, site_id: str) -> str:
     timestamp = str(int(time.time()))
+    normalized_site_id = site_id.strip().upper()
+    authorization_base_url(normalized_site_id)
     nonce = secrets.token_urlsafe(24)
-    payload = f"{timestamp}.{nonce}"
+    payload = f"{timestamp}.{normalized_site_id}.{nonce}"
     signature = _sign_state(payload, secret)
     return f"{payload}.{signature}"
 
@@ -33,17 +35,29 @@ def verify_state_token(
     secret: str = "local-dev-state-secret",
     max_age_seconds: int = 600,
 ) -> bool:
+    return get_state_site_id(state, secret, max_age_seconds=max_age_seconds) is not None
+
+
+def get_state_site_id(
+    state: str,
+    secret: str,
+    max_age_seconds: int = 600,
+) -> str | None:
     try:
-        timestamp_text, nonce, signature = state.split(".", 2)
+        timestamp_text, site_id, nonce, signature = state.split(".", 3)
         timestamp = int(timestamp_text)
     except (AttributeError, TypeError, ValueError):
-        return False
-    payload = f"{timestamp_text}.{nonce}"
+        return None
+    try:
+        authorization_base_url(site_id)
+    except ValueError:
+        return None
+    payload = f"{timestamp_text}.{site_id}.{nonce}"
     expected_signature = _sign_state(payload, secret)
     if not hmac.compare_digest(signature, expected_signature):
-        return False
+        return None
     age = int(time.time()) - timestamp
-    return -60 <= age <= max_age_seconds
+    return site_id if -60 <= age <= max_age_seconds else None
 
 
 def _sign_state(payload: str, secret: str) -> str:
@@ -55,7 +69,12 @@ def _sign_state(payload: str, secret: str) -> str:
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
-def build_authorization_url(client_id: str, redirect_uri: str, state: str) -> str:
+def build_authorization_url(
+    client_id: str,
+    redirect_uri: str,
+    state: str,
+    site_id: str,
+) -> str:
     query = urlencode(
         {
             "response_type": "code",
@@ -64,7 +83,7 @@ def build_authorization_url(client_id: str, redirect_uri: str, state: str) -> st
             "state": state,
         }
     )
-    return f"{AUTHORIZATION_BASE_URL}?{query}"
+    return f"{authorization_base_url(site_id)}?{query}"
 
 
 class MercadoLibreOAuthClient:

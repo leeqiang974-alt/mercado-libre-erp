@@ -33,6 +33,7 @@ Implemented:
 - Claude Messages API review adapter that reports missing credentials or provider failures without local fallback.
 - NVIDIA NIM/OpenAI-compatible chat review adapter that reports missing credentials or provider failures without local fallback.
 - Mercado Libre OAuth authorization URL, callback, and token exchange skeleton.
+- OAuth authorization supports all 18 configured sites through their marketplace-specific authorization domains. The selected site is signed into `state`; callbacks reject a seller from a different site before any store token is persisted.
 - Persisted connected stores with token references instead of exposing raw tokens.
 - Encrypted Mercado Libre access/refresh token credential storage for connected stores.
 - Refresh-token rotation for Mercado Libre credentials before publish execution.
@@ -88,7 +89,7 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 314 passed, with 9 PostgreSQL-only tests skipped in the default run.
+- Backend suite: 320 passed, with 9 PostgreSQL-only tests skipped in the default run.
 - Isolated Docker PostgreSQL integration run: 8 passed, including serialized manual-snapshot recovery and refresh-token rotation, concurrent collection, publish-job, and source-variant draft deduplication, atomic draft-version invalidation, and a final publish-evidence row lock that blocks concurrent draft changes until publication completes.
 - PostgreSQL migrations through `20260721_0024` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, high-precision review execution costs, structured source snapshots, source-variant draft bindings, structured source measurements, provider usage/request telemetry, encrypted integration credentials, and a unique active price per provider/model.
 - The complete Alembic chain upgraded to head and downgraded to base successfully on a disposable D-drive SQLite database.

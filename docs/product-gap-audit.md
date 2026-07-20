@@ -21,6 +21,7 @@ The repository contains an operational local workflow for Amazon URL collection 
 - Explicit non-publishing diagnostics normalize Claude/NVIDIA credential and configured-model visibility plus Mercado Libre seller/site identity without returning secrets or provider bodies. An expiring Mercado Libre token may be refreshed as credential maintenance; model-list success is intentionally not treated as proof of paid inference quota.
 - Claude/NVIDIA model prices are operator-maintained append-only versions. Provider reviews retain the exact price row and estimated currency amount, while unknown usage or missing prices remain unpriced instead of being inferred.
 - Refresh-token rotation is serialized on the credential row and rechecks expiry after locking, preventing diagnostics and publishing paths from consuming the same Mercado Libre refresh token concurrently.
+- Store authorization uses the selected site's Mercado Libre/Mercado Livre domain across all 18 configured sites. Signed OAuth state binds the expected site and prevents a different-site seller callback from being persisted.
 - PostgreSQL and clean SQLite migrations, backend tests, frontend production build, and desktop/mobile browser smoke checks pass.
 
 ## Missing or Misleading Behavior

@@ -600,10 +600,12 @@ export async function reviewDraftWithBehavioralAudit(
   return response.json() as Promise<BehavioralAudit>;
 }
 
-export async function getMeliAuthorizationUrl() {
-  const response = await fetch(`${API_BASE}/api/stores/meli/authorization-url`);
+export async function getMeliAuthorizationUrl(siteId: string) {
+  const response = await fetch(
+    `${API_BASE}/api/stores/meli/authorization-url?site_id=${encodeURIComponent(siteId)}`,
+  );
   if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<{ authorization_url: string }>;
+  return response.json() as Promise<{ authorization_url: string; site_id: string }>;
 }
 
 export async function getIntegrationCredentialStatus() {

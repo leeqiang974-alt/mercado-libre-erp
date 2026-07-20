@@ -16,11 +16,13 @@ import {
   type ProviderModelPrice,
   type StoreRecord,
 } from "../api/client";
+import { MERCADO_LIBRE_SITES } from "../domain/sites";
 
 export function StoresPage() {
   const [status, setStatus] = useState("");
   const [stores, setStores] = useState<StoreRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [authorizationSiteId, setAuthorizationSiteId] = useState("MLM");
   const [credentialStatus, setCredentialStatus] = useState<IntegrationCredentialStatus | null>(null);
   const [credentials, setCredentials] = useState({
     meli_client_id: "",
@@ -54,7 +56,9 @@ export function StoresPage() {
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
     if (query.get("meli_auth") === "authorized") {
-      setStatus(`Store ${query.get("seller_id") ?? ""} connected successfully.`);
+      setStatus(
+        `Store ${query.get("seller_id") ?? ""} connected successfully for ${query.get("site_id") ?? ""}.`,
+      );
       window.history.replaceState({}, "", window.location.pathname);
     }
     void refreshStores();
@@ -126,7 +130,7 @@ export function StoresPage() {
   async function startAuthorization() {
     setStatus("Preparing authorization link");
     try {
-      const result = await getMeliAuthorizationUrl();
+      const result = await getMeliAuthorizationUrl(authorizationSiteId);
       window.location.assign(result.authorization_url);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Authorization failed");
@@ -210,6 +214,16 @@ export function StoresPage() {
           <p>Connect each Mercado Libre seller account before publishing.</p>
         </div>
         <div className="page-actions">
+          <label>Authorization site
+            <select
+              value={authorizationSiteId}
+              onChange={(event) => setAuthorizationSiteId(event.target.value)}
+            >
+              {MERCADO_LIBRE_SITES.map((site) => (
+                <option key={site.id} value={site.id}>{site.country} ({site.id})</option>
+              ))}
+            </select>
+          </label>
           <button className="secondary-button icon-text" onClick={() => void refreshStores()} disabled={loading}>
             <RefreshCw size={16} /> Refresh
           </button>

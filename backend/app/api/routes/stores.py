@@ -12,7 +12,7 @@ from app.services.meli.oauth import (
     MercadoLibreOAuthClient,
     build_authorization_url,
     create_state_token,
-    verify_state_token,
+    get_state_site_id,
 )
 from app.services.meli.token_vault import upsert_store_token
 from app.services.meli.shipping import list_non_full_shipping_options
@@ -41,20 +41,29 @@ def create_meli_client(access_token: str) -> MercadoLibreClient:
 
 
 @router.get("/meli/authorization-url")
-def get_meli_authorization_url(db: Session = Depends(get_db)) -> dict[str, str]:
+def get_meli_authorization_url(
+    site_id: str = Query(default=settings.default_site_id),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
     credentials = resolve_integration_credentials(db, settings)
     if not credentials.meli_client_id or not credentials.meli_client_secret:
         raise HTTPException(
             status_code=400,
             detail="Mercado Libre application credentials are not configured.",
         )
-    state = create_state_token(settings.token_encryption_key)
+    normalized_site_id = site_id.strip().upper()
+    try:
+        state = create_state_token(settings.token_encryption_key, normalized_site_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Unsupported Mercado Libre site.") from exc
     return {
         "authorization_url": build_authorization_url(
             client_id=credentials.meli_client_id,
             redirect_uri=settings.meli_redirect_uri,
             state=state,
+            site_id=normalized_site_id,
         ),
+        "site_id": normalized_site_id,
     }
 
 
@@ -62,7 +71,8 @@ def get_meli_authorization_url(db: Session = Depends(get_db)) -> dict[str, str]:
 async def meli_callback(
     code: str = Query(...), state: str = Query(...), db: Session = Depends(get_db)
 ) -> RedirectResponse:
-    if not verify_state_token(state, settings.token_encryption_key):
+    expected_site_id = get_state_site_id(state, settings.token_encryption_key)
+    if expected_site_id is None:
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state.")
     credentials = resolve_integration_credentials(db, settings)
     if not credentials.meli_client_id or not credentials.meli_client_secret:
@@ -84,6 +94,11 @@ async def meli_callback(
         raise HTTPException(
             status_code=502,
             detail="Mercado Libre seller profile did not include a site_id.",
+        )
+    if site_id != expected_site_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Authorized seller site does not match the requested site.",
         )
     existing = db.query(Store).filter(Store.seller_id == seller_id).one_or_none()
     if existing:
@@ -108,7 +123,10 @@ async def meli_callback(
     )
     db.commit()
     return RedirectResponse(
-        url=f"{settings.frontend_url.rstrip('/')}?meli_auth=authorized&seller_id={seller_id}",
+        url=(
+            f"{settings.frontend_url.rstrip('/')}?meli_auth=authorized"
+            f"&seller_id={seller_id}&site_id={site_id}"
+        ),
         status_code=303,
     )
 

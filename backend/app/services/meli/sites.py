@@ -19,6 +19,34 @@ SITE_CURRENCIES = {
     "MLV": "VES",
 }
 
+SITE_MARKETPLACE_DOMAINS = {
+    "MLA": "mercadolibre.com.ar",
+    "MBO": "mercadolibre.com.bo",
+    "MLB": "mercadolivre.com.br",
+    "MLC": "mercadolibre.cl",
+    "MCO": "mercadolibre.com.co",
+    "MCR": "mercadolibre.co.cr",
+    "MRD": "mercadolibre.com.do",
+    "MEC": "mercadolibre.com.ec",
+    "MSV": "mercadolibre.com.sv",
+    "MGT": "mercadolibre.com.gt",
+    "MHN": "mercadolibre.com.hn",
+    "MLM": "mercadolibre.com.mx",
+    "MNI": "mercadolibre.com.ni",
+    "MPA": "mercadolibre.com.pa",
+    "MPY": "mercadolibre.com.py",
+    "MPE": "mercadolibre.com.pe",
+    "MLU": "mercadolibre.com.uy",
+    "MLV": "mercadolibre.com.ve",
+}
+
 
 def expected_currency(site_id: str) -> str:
     return SITE_CURRENCIES.get(site_id.strip().upper(), "")
+
+
+def authorization_base_url(site_id: str) -> str:
+    domain = SITE_MARKETPLACE_DOMAINS.get(site_id.strip().upper())
+    if not domain:
+        raise ValueError("unsupported_mercado_libre_site")
+    return f"https://auth.{domain}/authorization"
