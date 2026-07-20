@@ -45,7 +45,9 @@ Implemented:
 - Alembic baseline migration for the current backend schema.
 - Persisted local, Claude, and NVIDIA review results for saved drafts.
 - Combined Claude + NVIDIA behavioral audit endpoint with strictest-result aggregation and orchestration audit events.
+- Review results persist provider model, versioned safety prompt identifier, execution duration, provider status, and creation time; provider failures are audited without being presented as successful reviews.
 - Review history API and frontend refresh control for saved draft audit trails.
+- Desktop and mobile review history expose Claude, NVIDIA, and aggregate model/prompt/duration metadata without exposing API keys or raw prompts.
 - API flow for URL/HTML import, persisted source products, persisted drafts, persisted stores, review, metadata, publish preview, and guarded publish execution.
 - React MVP shell for import, saved draft list, Claude/NVIDIA review buttons, publishing metadata lookup, publish job list, publishing readiness, connected store list, and store authorization link startup.
 - Docker Compose services for PostgreSQL, Redis, backend API, collection worker, and publish worker.
@@ -58,13 +60,13 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 168 passed, with 4 PostgreSQL-only tests skipped in the default run.
+- Backend suite: 170 passed, with 4 PostgreSQL-only tests skipped in the default run.
 - Docker PostgreSQL integration run: 4 passed, including concurrent collection and publish-job deduplication plus atomic draft-version invalidation under simultaneous edits.
-- PostgreSQL migrations through `20260720_0012` backfilled collection identities, indexed site/identity lookup, and added versioned store/shipping delivery fields.
+- PostgreSQL migrations through `20260720_0013` backfilled collection identities, indexed site/identity lookup, added versioned store/shipping delivery fields, and added review execution metadata.
 - The complete Alembic chain upgraded to head and downgraded to base successfully on a disposable D-drive SQLite database.
 - Frontend production build passed.
-- Desktop and mobile browser smoke passed for all 18 sites, Classic/Premium controls, two verified non-FULL shipping options, batch result rows, overflow, console errors, and failed responses.
+- Desktop and mobile browser smoke passed for all 18 sites, Classic/Premium controls, two verified non-FULL shipping options, provider review metadata rows, batch result rows, overflow, console errors, and failed responses.
 
 Next production phase:
 
-- Add provider prompt versioning and review-model version analytics.
+- Add provider usage/cost telemetry, rate-limit handling, and operator-controlled review retry policy.

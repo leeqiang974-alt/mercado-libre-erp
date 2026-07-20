@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -35,6 +36,62 @@ def mock_store_capabilities(page: Page) -> None:
             ),
         ),
     )
+    page.route(
+        "**/api/reviews/drafts/*",
+        fulfill_review_history,
+    )
+
+
+def fulfill_review_history(route) -> None:
+    draft_id = int(route.request.url.rstrip("/").rsplit("/", 1)[-1])
+    rows = [
+        {
+            "id": 3,
+            "product_draft_id": draft_id,
+            "provider": "claude+nvidia_behavioral_audit",
+            "model": "nvidia-test+claude-test",
+            "prompt_version": "meli-safety-v1+meli-safety-v1",
+            "duration_ms": 842,
+            "provider_status": "completed",
+            "decision": "pass",
+            "risk_level": "low",
+            "reason_codes": [],
+            "reasons": [],
+            "suggested_changes": {},
+            "created_at": "2026-07-20T12:00:00",
+        },
+        {
+            "id": 2,
+            "product_draft_id": draft_id,
+            "provider": "claude",
+            "model": "claude-test",
+            "prompt_version": "meli-safety-v1",
+            "duration_ms": 521,
+            "provider_status": "completed",
+            "decision": "pass",
+            "risk_level": "low",
+            "reason_codes": [],
+            "reasons": [],
+            "suggested_changes": {},
+            "created_at": "2026-07-20T12:00:00",
+        },
+        {
+            "id": 1,
+            "product_draft_id": draft_id,
+            "provider": "nvidia",
+            "model": "nvidia-test",
+            "prompt_version": "meli-safety-v1",
+            "duration_ms": 321,
+            "provider_status": "completed",
+            "decision": "pass",
+            "risk_level": "low",
+            "reason_codes": [],
+            "reasons": [],
+            "suggested_changes": {},
+            "created_at": "2026-07-20T12:00:00",
+        },
+    ]
+    route.fulfill(status=200, content_type="application/json", body=json.dumps(rows))
 
 
 def select_first_draft(page: Page) -> None:
@@ -45,6 +102,24 @@ def select_first_draft(page: Page) -> None:
     rows.nth(0).click()
     page.get_by_role("heading", name="Product draft", exact=True).wait_for()
     page.locator(".product-summary").wait_for(state="visible")
+
+
+def inspect_review_history(page: Page) -> dict[str, object]:
+    page.get_by_role("button", name="History", exact=True).click()
+    rows = page.locator(".review-history-row")
+    rows.nth(2).wait_for(state="visible")
+    assert rows.count() == 3, f"Expected 3 provider review history rows, got {rows.count()}"
+    text = rows.all_inner_texts()
+    assert any("claude-test" in row and "meli-safety-v1" in row for row in text)
+    assert any("nvidia-test" in row and "321 ms" in row for row in text)
+    assert all("pass" in row for row in text)
+    body = page.locator("body").inner_text()
+    assert "api-key" not in body.lower()
+    assert "Draft JSON" not in body
+    return {
+        "review_rows": rows.count(),
+        "horizontal_overflow": page.evaluate("document.documentElement.scrollWidth > innerWidth"),
+    }
 
 
 def inspect_import_workspace(page: Page) -> dict[str, object]:
@@ -154,6 +229,7 @@ def main() -> None:
         desktop_import = inspect_import_workspace(desktop)
         desktop.screenshot(path=ARTIFACTS / "import-desktop.png", full_page=True)
         select_first_draft(desktop)
+        desktop_reviews = inspect_review_history(desktop)
         desktop.screenshot(path=ARTIFACTS / "draft-desktop.png", full_page=True)
         desktop_result = inspect_publish_workspace(desktop)
         desktop.screenshot(path=ARTIFACTS / "publish-desktop.png", full_page=True)
@@ -178,6 +254,8 @@ def main() -> None:
         mobile_import = inspect_import_workspace(mobile)
         mobile.screenshot(path=ARTIFACTS / "import-mobile.png", full_page=True)
         select_first_draft(mobile)
+        mobile_reviews = inspect_review_history(mobile)
+        mobile.screenshot(path=ARTIFACTS / "draft-mobile.png", full_page=True)
         mobile_result = inspect_publish_workspace(mobile)
         mobile.screenshot(path=ARTIFACTS / "publish-mobile.png", full_page=True)
         mobile_stores = inspect_stores_workspace(mobile)
@@ -191,6 +269,8 @@ def main() -> None:
     assert not mobile_import["horizontal_overflow"], "Mobile import page overflows horizontally"
     assert not desktop_stores["horizontal_overflow"], "Desktop stores page overflows horizontally"
     assert not mobile_stores["horizontal_overflow"], "Mobile stores page overflows horizontally"
+    assert not desktop_reviews["horizontal_overflow"], "Desktop review history overflows horizontally"
+    assert not mobile_reviews["horizontal_overflow"], "Mobile review history overflows horizontally"
     assert not console_errors, f"Browser console errors: {console_errors}"
     assert not failed_responses, f"Failed browser responses: {failed_responses}"
     print(
@@ -201,6 +281,8 @@ def main() -> None:
             "mobile_import": mobile_import,
             "desktop_stores": desktop_stores,
             "mobile_stores": mobile_stores,
+            "desktop_reviews": desktop_reviews,
+            "mobile_reviews": mobile_reviews,
             "console_errors": console_errors,
             "failed_responses": failed_responses,
             "screenshots": str(ARTIFACTS),

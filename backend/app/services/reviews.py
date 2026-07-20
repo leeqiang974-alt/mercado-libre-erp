@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 from fastapi import HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -8,17 +10,45 @@ from app.schemas.reviews import ReviewResponse, ReviewResultRead
 from app.services.audit_events import create_audit_event
 
 
+@dataclass(frozen=True)
+class ReviewExecution:
+    response: ReviewResponse
+    model: str = ""
+    prompt_version: str = ""
+    duration_ms: int = 0
+    provider_status: str = "completed"
+
+
+@dataclass(frozen=True)
+class ReviewBatchAudit:
+    actor_type: str
+    actor_id: str
+    action: str
+    after: dict
+
+
 def persist_review_result(
     db: Session,
     product_draft_id: int,
     response: ReviewResponse,
     model: str = "",
+    prompt_version: str = "",
+    duration_ms: int = 0,
+    provider_status: str = "completed",
     expected_draft_version: int | None = None,
 ) -> ReviewResult:
     return persist_review_results(
         db,
         product_draft_id,
-        [(response, model)],
+        [
+            ReviewExecution(
+                response=response,
+                model=model,
+                prompt_version=prompt_version,
+                duration_ms=duration_ms,
+                provider_status=provider_status,
+            )
+        ],
         expected_draft_version=expected_draft_version,
     )[0]
 
@@ -26,8 +56,9 @@ def persist_review_result(
 def persist_review_results(
     db: Session,
     product_draft_id: int,
-    responses: list[tuple[ReviewResponse, str]],
+    executions: list[ReviewExecution],
     expected_draft_version: int | None = None,
+    batch_audit: ReviewBatchAudit | None = None,
 ) -> list[ReviewResult]:
     draft = db.get(ProductDraft, product_draft_id)
     if draft is None:
@@ -55,23 +86,26 @@ def persist_review_results(
     results = [
         ReviewResult(
             product_draft_id=product_draft_id,
-            provider=response.provider,
-            model=model,
-            risk_level=response.risk_level,
-            decision=ReviewDecision(response.decision),
+            provider=execution.response.provider,
+            model=execution.model,
+            prompt_version=execution.prompt_version,
+            duration_ms=max(0, execution.duration_ms),
+            provider_status=execution.provider_status,
+            risk_level=execution.response.risk_level,
+            decision=ReviewDecision(execution.response.decision),
             reasons_json={
-                "reason_codes": response.reason_codes,
-                "reasons": response.reasons,
+                "reason_codes": execution.response.reason_codes,
+                "reasons": execution.response.reasons,
             },
-            suggested_changes_json=response.suggested_changes,
+            suggested_changes_json=execution.response.suggested_changes,
             draft_version=draft_version,
         )
-        for response, model in responses
+        for execution in executions
     ]
     db.add_all(results)
-    db.commit()
-    for result, (response, _) in zip(results, responses, strict=True):
-        db.refresh(result)
+    db.flush()
+    for result, execution in zip(results, executions, strict=True):
+        response = execution.response
         create_audit_event(
             db=db,
             actor_type="ai_provider",
@@ -84,8 +118,30 @@ def persist_review_results(
                 "decision": response.decision,
                 "risk_level": response.risk_level,
                 "reason_codes": response.reason_codes,
+                "model": execution.model,
+                "prompt_version": execution.prompt_version,
+                "duration_ms": execution.duration_ms,
+                "provider_status": execution.provider_status,
             },
+            commit=False,
         )
+    if batch_audit is not None:
+        create_audit_event(
+            db=db,
+            actor_type=batch_audit.actor_type,
+            actor_id=batch_audit.actor_id,
+            action=batch_audit.action,
+            entity_type="product_draft",
+            entity_id=str(product_draft_id),
+            after={
+                **batch_audit.after,
+                "review_result_ids": [result.id for result in results],
+            },
+            commit=False,
+        )
+    db.commit()
+    for result in results:
+        db.refresh(result)
     return results
 
 
@@ -147,9 +203,13 @@ def to_review_result_read(result: ReviewResult) -> ReviewResultRead:
         product_draft_id=result.product_draft_id,
         provider=result.provider,
         model=result.model,
+        prompt_version=result.prompt_version,
+        duration_ms=result.duration_ms,
+        provider_status=result.provider_status,
         decision=result.decision.value,
         risk_level=result.risk_level,
         reason_codes=reasons.get("reason_codes", []),
         reasons=reasons.get("reasons", []),
         suggested_changes=result.suggested_changes_json or {},
+        created_at=result.created_at,
     )

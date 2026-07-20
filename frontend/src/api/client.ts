@@ -32,11 +32,15 @@ export type ReviewResult = {
   product_draft_id: number;
   provider: string;
   model: string;
+  prompt_version: string;
+  duration_ms: number;
+  provider_status: string;
   decision: string;
   risk_level: string;
   reason_codes: string[];
   reasons: string[];
   suggested_changes: Record<string, unknown>;
+  created_at: string;
 };
 
 export type BehavioralAudit = {

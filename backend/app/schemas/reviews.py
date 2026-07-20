@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -16,11 +18,15 @@ class ReviewResultRead(BaseModel):
     product_draft_id: int
     provider: str
     model: str = ""
+    prompt_version: str = ""
+    duration_ms: int = 0
+    provider_status: str = "completed"
     decision: str
     risk_level: str
     reason_codes: list[str]
     reasons: list[str]
     suggested_changes: dict = Field(default_factory=dict)
+    created_at: datetime
 
 
 class BehavioralAuditResponse(BaseModel):

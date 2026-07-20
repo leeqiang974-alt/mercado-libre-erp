@@ -1,5 +1,6 @@
 import asyncio
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -15,6 +16,8 @@ from app.models.registry import import_all_models
 from app.models.review_result import ReviewResult
 from app.models.audit_event import AuditEvent
 from app.schemas.reviews import ReviewResponse
+from app.services.ai.provider_utils import AIProviderError
+from app.services import reviews as review_service
 
 
 def make_client():
@@ -103,11 +106,19 @@ def test_review_history_can_be_listed_for_draft():
     body = response.json()
     assert body[0]["id"] == 1
     assert body[0]["provider"] == "local_policy"
+    assert body[0]["model"] == "local-policy"
+    assert body[0]["prompt_version"] == "local-policy-v1"
+    assert body[0]["provider_status"] == "completed"
+    assert body[0]["duration_ms"] >= 0
+    assert body[0]["created_at"]
     assert body[0]["decision"] == "pass"
 
 
 def test_claude_review_can_persist_result_for_draft(monkeypatch):
     class FakeClaudeClient:
+        model = "claude-test"
+        prompt_version = "meli-safety-test-v1"
+
         def __init__(self, api_key: str, model: str = ""):
             pass
 
@@ -130,6 +141,10 @@ def test_claude_review_can_persist_result_for_draft(monkeypatch):
     with testing_session() as db:
         row = db.query(ReviewResult).one()
         assert row.provider == "claude"
+        assert row.model == "claude-test"
+        assert row.prompt_version == "meli-safety-test-v1"
+        assert row.duration_ms >= 0
+        assert row.provider_status == "completed"
         assert row.decision.value == "needs_human_review"
 
 
@@ -163,6 +178,7 @@ def test_nvidia_review_can_persist_result_for_draft(monkeypatch):
 def test_behavioral_audit_persists_both_provider_results_and_orchestration_audit(monkeypatch):
     class FakeClaudeClient:
         model = "claude-test"
+        prompt_version = "claude-prompt-v2"
 
         def __init__(self, api_key: str, model: str = ""):
             pass
@@ -178,6 +194,7 @@ def test_behavioral_audit_persists_both_provider_results_and_orchestration_audit
 
     class FakeNvidiaClient:
         model = "nvidia-test"
+        prompt_version = "nvidia-prompt-v3"
 
         def __init__(self, api_key: str, model: str = ""):
             pass
@@ -211,9 +228,110 @@ def test_behavioral_audit_persists_both_provider_results_and_orchestration_audit
             ("claude", "claude-test"),
             ("claude+nvidia_behavioral_audit", "nvidia-test+claude-test"),
         ]
+        assert [row.prompt_version for row in rows] == [
+            "nvidia-prompt-v3",
+            "claude-prompt-v2",
+            "nvidia-prompt-v3+claude-prompt-v2",
+        ]
+        assert all(row.duration_ms >= 0 for row in rows)
+        assert all(row.provider_status == "completed" for row in rows)
         assert body["aggregate"]["review_result_id"] == 3
         audit = db.query(AuditEvent).filter(AuditEvent.action == "review.behavioral_audit.completed").one()
         assert audit.actor_id == "claude+nvidia"
+        assert audit.after_json["prompt_versions"] == [
+            "nvidia-prompt-v3",
+            "claude-prompt-v2",
+        ]
+
+
+def test_failed_provider_attempt_is_audited_without_success_result(monkeypatch):
+    class FailedClaudeClient:
+        model = "claude-failed-model"
+        prompt_version = "meli-safety-failed-v1"
+
+        def __init__(self, api_key: str, model: str = ""):
+            pass
+
+        async def review_draft(self, draft):
+            raise AIProviderError("claude", "request_failed")
+
+    monkeypatch.setattr(reviews, "ClaudeReviewClient", FailedClaudeClient)
+    client, testing_session = make_client()
+
+    response = client.post(
+        "/api/reviews/claude?product_draft_id=1",
+        json=draft_payload(),
+    )
+
+    assert response.status_code == 503
+    with testing_session() as db:
+        assert db.query(ReviewResult).count() == 0
+        event = db.query(AuditEvent).filter(AuditEvent.action == "review.failed").one()
+        assert event.actor_id == "claude"
+        assert event.after_json == {
+            "provider_status": "failed",
+            "error_code": "request_failed",
+            "model": "claude-failed-model",
+            "prompt_version": "meli-safety-failed-v1",
+            "duration_ms": event.after_json["duration_ms"],
+        }
+        assert event.after_json["duration_ms"] >= 0
+
+
+def test_behavioral_results_roll_back_when_batch_audit_fails(monkeypatch):
+    class FakeClaudeClient:
+        model = "claude-test"
+        prompt_version = "claude-prompt-v1"
+
+        def __init__(self, api_key: str, model: str = ""):
+            pass
+
+        async def review_draft(self, draft):
+            return ReviewResponse(
+                provider="claude",
+                decision="pass",
+                risk_level="low",
+                reason_codes=[],
+                reasons=[],
+            )
+
+    class FakeNvidiaClient:
+        model = "nvidia-test"
+        prompt_version = "nvidia-prompt-v1"
+
+        def __init__(self, api_key: str, model: str = ""):
+            pass
+
+        async def pre_screen_draft(self, draft):
+            return ReviewResponse(
+                provider="nvidia",
+                decision="pass",
+                risk_level="low",
+                reason_codes=[],
+                reasons=[],
+            )
+
+    original_create_audit_event = review_service.create_audit_event
+
+    def fail_batch_audit(*args, **kwargs):
+        if kwargs.get("action") == "review.behavioral_audit.completed":
+            raise RuntimeError("batch audit unavailable")
+        return original_create_audit_event(*args, **kwargs)
+
+    monkeypatch.setattr(reviews, "ClaudeReviewClient", FakeClaudeClient)
+    monkeypatch.setattr(reviews, "NvidiaReviewClient", FakeNvidiaClient)
+    monkeypatch.setattr(review_service, "create_audit_event", fail_batch_audit)
+    client, testing_session = make_client()
+
+    with pytest.raises(RuntimeError, match="batch audit unavailable"):
+        client.post(
+            "/api/reviews/behavioral-audit?product_draft_id=1",
+            json=draft_payload(),
+        )
+
+    with testing_session() as db:
+        assert db.query(ReviewResult).count() == 0
+        assert db.query(AuditEvent).count() == 0
 
 
 def test_claude_review_rejects_result_when_draft_changes_while_provider_waits(monkeypatch):

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Bot, Calculator, RefreshCw, ShieldCheck } from "lucide-react";
 import {
   getDraftPricing,
@@ -55,6 +55,10 @@ export function DraftsPage({
   const [listingConfigured, setListingConfigured] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const draftEpochRef = useRef(0);
+  const historyEpochRef = useRef(0);
+  const currentDraftIdRef = useRef(draftId);
+  currentDraftIdRef.current = draftId;
 
   useEffect(() => {
     Promise.all([listDrafts(), getSystemReadiness()])
@@ -68,7 +72,10 @@ export function DraftsPage({
   }, []);
 
   useEffect(() => {
+    draftEpochRef.current += 1;
+    historyEpochRef.current += 1;
     if (!draft) return;
+    setBusy("");
     setProviderReview(null);
     setReviewHistory([]);
     setPricingResult(null);
@@ -129,43 +136,86 @@ export function DraftsPage({
 
   async function runProviderReview(provider: "claude" | "nvidia") {
     if (!draft) return;
+    const requestedDraftId = draftId;
+    const requestEpoch = draftEpochRef.current;
     setBusy(provider);
     setError("");
     try {
       const nextReview = await reviewDraftWithProvider(draft, provider, draftId);
+      if (
+        draftEpochRef.current !== requestEpoch
+        || currentDraftIdRef.current !== requestedDraftId
+      ) return;
       setProviderReview(nextReview);
       onReviewChange(nextReview);
-      if (draftId) setReviewHistory(await listReviewHistory(draftId));
+      if (requestedDraftId) {
+        const history = await listReviewHistory(requestedDraftId);
+        if (
+          draftEpochRef.current === requestEpoch
+          && currentDraftIdRef.current === requestedDraftId
+          && history.every((item) => item.product_draft_id === requestedDraftId)
+        ) setReviewHistory(history);
+      }
     } catch (reviewError) {
-      setError(reviewError instanceof Error ? reviewError.message : "Provider review failed");
+      if (
+        draftEpochRef.current === requestEpoch
+        && currentDraftIdRef.current === requestedDraftId
+      ) setError(reviewError instanceof Error ? reviewError.message : "Provider review failed");
     } finally {
-      setBusy("");
+      if (draftEpochRef.current === requestEpoch) setBusy("");
     }
   }
 
   async function runBehavioralAudit() {
     if (!draft) return;
+    const requestedDraftId = draftId;
+    const requestEpoch = draftEpochRef.current;
     setBusy("combined");
     setError("");
     try {
       const result = await reviewDraftWithBehavioralAudit(draft, draftId);
+      if (
+        draftEpochRef.current !== requestEpoch
+        || currentDraftIdRef.current !== requestedDraftId
+      ) return;
       setProviderReview(result);
       onReviewChange(result.aggregate);
-      if (draftId) setReviewHistory(await listReviewHistory(draftId));
+      if (requestedDraftId) {
+        const history = await listReviewHistory(requestedDraftId);
+        if (
+          draftEpochRef.current === requestEpoch
+          && currentDraftIdRef.current === requestedDraftId
+          && history.every((item) => item.product_draft_id === requestedDraftId)
+        ) setReviewHistory(history);
+      }
     } catch (auditError) {
-      setError(auditError instanceof Error ? auditError.message : "Behavioral audit failed");
+      if (
+        draftEpochRef.current === requestEpoch
+        && currentDraftIdRef.current === requestedDraftId
+      ) setError(auditError instanceof Error ? auditError.message : "Behavioral audit failed");
     } finally {
-      setBusy("");
+      if (draftEpochRef.current === requestEpoch) setBusy("");
     }
   }
 
   async function refreshReviewHistory() {
     if (!draftId) return;
+    const requestedDraftId = draftId;
+    const requestEpoch = ++historyEpochRef.current;
     setError("");
     try {
-      setReviewHistory(await listReviewHistory(draftId));
+      const history = await listReviewHistory(requestedDraftId);
+      if (
+        historyEpochRef.current !== requestEpoch
+        || currentDraftIdRef.current !== requestedDraftId
+        || history.some((item) => item.product_draft_id !== requestedDraftId)
+      ) return;
+      setReviewHistory(history);
     } catch (historyError) {
-      setError(historyError instanceof Error ? historyError.message : "Failed to load review history");
+      if (
+        historyEpochRef.current === requestEpoch
+        && currentDraftIdRef.current === requestedDraftId
+      ) setError(historyError instanceof Error ? historyError.message : "Failed to load review history");
     }
   }
 
@@ -251,7 +301,20 @@ export function DraftsPage({
               {!pricingReady && <p className="inline-warning">Save pricing before running provider review.</p>}
               {pricingReady && !listingConfigured && <p className="inline-warning">Save the target category, Classic/Premium offer, and required attributes in Publish before running provider review.</p>}
               {providerReview && <ReviewSummary value={providerReview} />}
-              {reviewHistory.length > 0 && <p className="muted">{reviewHistory.length} saved review result(s).</p>}
+              {reviewHistory.length > 0 && (
+                <div className="review-history-list">
+                  {reviewHistory.map((result) => (
+                    <div className="review-history-row" key={result.id}>
+                      <span>
+                        <strong>{result.provider}</strong>
+                        <small>{result.model || "Unspecified model"} · {result.prompt_version || "legacy prompt"}</small>
+                      </span>
+                      <span>{result.duration_ms > 0 ? `${result.duration_ms} ms` : "Unavailable"}</span>
+                      <strong className={result.decision === "pass" ? "success-text" : ""}>{result.decision}</strong>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
           </div>
         </>

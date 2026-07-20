@@ -28,6 +28,7 @@
 - Treat operator-provided Amazon HTML as a manual source. Require the requested ASIN to match a strong page identity signal, and never label it as independently collected.
 - Live publishing requires PostgreSQL row locking. SQLite is allowed only while live publishing is disabled.
 - Every write that can invalidate review or approval must atomically increment the draft content version in the database. Verify shared write paths with a real PostgreSQL concurrent-session test so simultaneous pricing, listing, store, or shipping edits cannot preserve a stale review.
+- Every semantic change to the Claude/NVIDIA review prompt or required response contract must increment `REVIEW_PROMPT_VERSION` and update persistence/history tests. Store the version identifier, model, duration, and provider status; never persist API keys, authorization headers, or full provider prompts/responses in review metadata.
 
 ## Verification
 

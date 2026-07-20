@@ -2,10 +2,17 @@ import httpx
 
 from app.schemas.drafts import ProductDraftCreate
 from app.schemas.reviews import ReviewResponse
-from app.services.ai.provider_utils import AIProviderError, parse_review_json, review_prompt
+from app.services.ai.provider_utils import (
+    AIProviderError,
+    REVIEW_PROMPT_VERSION,
+    parse_review_json,
+    review_prompt,
+)
 
 
 class ClaudeReviewClient:
+    prompt_version = REVIEW_PROMPT_VERSION
+
     def __init__(
         self,
         api_key: str = "",

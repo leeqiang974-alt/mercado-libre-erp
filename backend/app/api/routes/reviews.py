@@ -1,3 +1,5 @@
+from time import perf_counter
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,7 +15,13 @@ from app.services.ai.provider_utils import AIProviderError
 from app.services.ai.review_policy import review_draft_locally
 from app.services.audit_events import create_audit_event
 from app.services.draft_listing_configs import build_configured_draft
-from app.services.reviews import list_review_results, persist_review_result, persist_review_results
+from app.services.reviews import (
+    ReviewBatchAudit,
+    ReviewExecution,
+    list_review_results,
+    persist_review_result,
+    persist_review_results,
+)
 
 router = APIRouter(prefix="/api/reviews", tags=["reviews"])
 settings = get_settings()
@@ -26,8 +34,17 @@ def review_local(
     db: Session = Depends(get_db),
 ) -> ReviewResponse:
     draft, draft_version = _canonical_review_draft(db, product_draft_id, draft)
+    started = perf_counter()
     response = review_draft_locally(draft)
-    return _persist_if_requested(db, response, product_draft_id, expected_draft_version=draft_version)
+    return _persist_if_requested(
+        db,
+        response,
+        product_draft_id,
+        model="local-policy",
+        prompt_version="local-policy-v1",
+        duration_ms=_elapsed_ms(started),
+        expected_draft_version=draft_version,
+    )
 
 
 @router.post("/claude", response_model=ReviewResponse)
@@ -38,15 +55,21 @@ async def review_claude(
 ) -> ReviewResponse:
     draft, draft_version = _canonical_review_draft(db, product_draft_id, draft)
     client = ClaudeReviewClient(api_key=settings.claude_api_key, model=settings.claude_model)
+    started = perf_counter()
     try:
         response = await client.review_draft(draft)
     except AIProviderError as exc:
+        _audit_provider_failure(
+            db, product_draft_id, exc, client, _elapsed_ms(started)
+        )
         raise _provider_http_error(exc) from exc
     return _persist_if_requested(
         db,
         response,
         product_draft_id,
         model=getattr(client, "model", ""),
+        prompt_version=getattr(client, "prompt_version", ""),
+        duration_ms=_elapsed_ms(started),
         expected_draft_version=draft_version,
     )
 
@@ -59,15 +82,21 @@ async def review_nvidia(
 ) -> ReviewResponse:
     draft, draft_version = _canonical_review_draft(db, product_draft_id, draft)
     client = NvidiaReviewClient(api_key=settings.nvidia_api_key, model=settings.nvidia_model)
+    started = perf_counter()
     try:
         response = await client.pre_screen_draft(draft)
     except AIProviderError as exc:
+        _audit_provider_failure(
+            db, product_draft_id, exc, client, _elapsed_ms(started)
+        )
         raise _provider_http_error(exc) from exc
     return _persist_if_requested(
         db,
         response,
         product_draft_id,
         model=getattr(client, "model", ""),
+        prompt_version=getattr(client, "prompt_version", ""),
+        duration_ms=_elapsed_ms(started),
         expected_draft_version=draft_version,
     )
 
@@ -86,47 +115,80 @@ async def behavioral_audit(
     claude_client = ClaudeReviewClient(
         api_key=settings.claude_api_key, model=settings.claude_model
     )
+    nvidia_started = perf_counter()
     try:
         nvidia = await nvidia_client.pre_screen_draft(draft)
+    except AIProviderError as exc:
+        _audit_provider_failure(
+            db, product_draft_id, exc, nvidia_client, _elapsed_ms(nvidia_started)
+        )
+        raise _provider_http_error(exc) from exc
+    nvidia_duration_ms = _elapsed_ms(nvidia_started)
+
+    claude_started = perf_counter()
+    try:
         claude = await claude_client.review_draft(draft)
     except AIProviderError as exc:
+        _audit_provider_failure(
+            db, product_draft_id, exc, claude_client, _elapsed_ms(claude_started)
+        )
         raise _provider_http_error(exc) from exc
+    claude_duration_ms = _elapsed_ms(claude_started)
     aggregate = _aggregate_reviews(nvidia, claude)
     if product_draft_id is not None:
         results = persist_review_results(
             db,
             product_draft_id,
             [
-                (nvidia, getattr(nvidia_client, "model", "")),
-                (claude, getattr(claude_client, "model", "")),
-                (
+                ReviewExecution(
+                    nvidia,
+                    model=getattr(nvidia_client, "model", ""),
+                    prompt_version=getattr(nvidia_client, "prompt_version", ""),
+                    duration_ms=nvidia_duration_ms,
+                ),
+                ReviewExecution(
+                    claude,
+                    model=getattr(claude_client, "model", ""),
+                    prompt_version=getattr(claude_client, "prompt_version", ""),
+                    duration_ms=claude_duration_ms,
+                ),
+                ReviewExecution(
                     aggregate,
-                    f"{getattr(nvidia_client, 'model', '')}+{getattr(claude_client, 'model', '')}",
+                    model=(
+                        f"{getattr(nvidia_client, 'model', '')}+"
+                        f"{getattr(claude_client, 'model', '')}"
+                    ),
+                    prompt_version=(
+                        f"{getattr(nvidia_client, 'prompt_version', '')}+"
+                        f"{getattr(claude_client, 'prompt_version', '')}"
+                    ),
+                    duration_ms=nvidia_duration_ms + claude_duration_ms,
                 ),
             ],
             expected_draft_version=draft_version,
+            batch_audit=ReviewBatchAudit(
+                actor_type="ai_orchestrator",
+                actor_id="claude+nvidia",
+                action="review.behavioral_audit.completed",
+                after={
+                    "decision": aggregate.decision,
+                    "risk_level": aggregate.risk_level,
+                    "providers": [nvidia.provider, claude.provider],
+                    "models": [
+                        getattr(nvidia_client, "model", ""),
+                        getattr(claude_client, "model", ""),
+                    ],
+                    "prompt_versions": [
+                        getattr(nvidia_client, "prompt_version", ""),
+                        getattr(claude_client, "prompt_version", ""),
+                    ],
+                    "duration_ms": nvidia_duration_ms + claude_duration_ms,
+                },
+            ),
         )
         nvidia = nvidia.model_copy(update={"review_result_id": results[0].id})
         claude = claude.model_copy(update={"review_result_id": results[1].id})
         aggregate = aggregate.model_copy(update={"review_result_id": results[2].id})
-        create_audit_event(
-            db=db,
-            actor_type="ai_orchestrator",
-            actor_id="claude+nvidia",
-            action="review.behavioral_audit.completed",
-            entity_type="product_draft",
-            entity_id=str(product_draft_id),
-            after={
-                "decision": aggregate.decision,
-                "risk_level": aggregate.risk_level,
-                "providers": [nvidia.provider, claude.provider],
-                "review_result_ids": [
-                    nvidia.review_result_id,
-                    claude.review_result_id,
-                    aggregate.review_result_id,
-                ],
-            },
-        )
     return BehavioralAuditResponse(nvidia=nvidia, claude=claude, aggregate=aggregate)
 
 
@@ -180,6 +242,8 @@ def _persist_if_requested(
     response: ReviewResponse,
     product_draft_id: int | None,
     model: str = "",
+    prompt_version: str = "",
+    duration_ms: int = 0,
     expected_draft_version: int | None = None,
 ) -> ReviewResponse:
     if product_draft_id is None:
@@ -189,6 +253,8 @@ def _persist_if_requested(
         product_draft_id,
         response,
         model=model,
+        prompt_version=prompt_version,
+        duration_ms=duration_ms,
         expected_draft_version=expected_draft_version,
     )
     return response.model_copy(update={"review_result_id": result.id})
@@ -238,4 +304,34 @@ def _provider_http_error(error: AIProviderError) -> HTTPException:
     return HTTPException(
         status_code=503,
         detail={"provider": error.provider, "code": error.code},
+    )
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, round((perf_counter() - started) * 1000))
+
+
+def _audit_provider_failure(
+    db: Session,
+    product_draft_id: int | None,
+    error: AIProviderError,
+    client,
+    duration_ms: int,
+) -> None:
+    if product_draft_id is None:
+        return
+    create_audit_event(
+        db=db,
+        actor_type="ai_provider",
+        actor_id=error.provider,
+        action="review.failed",
+        entity_type="product_draft",
+        entity_id=str(product_draft_id),
+        after={
+            "provider_status": "failed",
+            "error_code": error.code,
+            "model": getattr(client, "model", ""),
+            "prompt_version": getattr(client, "prompt_version", ""),
+            "duration_ms": duration_ms,
+        },
     )

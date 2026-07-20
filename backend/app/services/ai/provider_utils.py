@@ -2,6 +2,8 @@ import json
 
 from app.schemas.reviews import ReviewResponse
 
+REVIEW_PROMPT_VERSION = "meli-safety-v1"
+
 
 class AIProviderError(RuntimeError):
     def __init__(self, provider: str, code: str):
