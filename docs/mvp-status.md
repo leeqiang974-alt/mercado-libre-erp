@@ -63,6 +63,7 @@ Implemented:
 - Guarded publish execution from saved draft listing configuration.
 - Queued publish execution from saved draft listing configuration.
 - Batch publish intake accepts up to 50 saved drafts after an explicit publication acknowledgement. Each draft independently reuses the latest persisted review, human approval, authorized store/site, seller listing-type eligibility, category attributes, and current non-FULL shipping gates; exact jobs are idempotently reused, while ready job rows and their audit events commit atomically.
+- Batch publish preflight checks up to 50 selected drafts with the exact same evaluator used by queue intake, reports per-draft blockers before acknowledgement, and creates no publish jobs or publish audit events. Frontend results are bound to the selected draft set and ignore superseded responses so an old check cannot enable a changed selection.
 - Backend publish worker CLI for processing pending publish jobs in batches.
 - Persisted publish jobs for blocked, failed, and published execution attempts.
 - Publish job list API for reviewing status, errors, item IDs, and permalinks.
@@ -94,7 +95,7 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 320 passed, with 9 PostgreSQL-only tests skipped in the default run.
+- Backend suite: 369 passed, with 12 environment-specific tests skipped in the default run.
 - Isolated Docker PostgreSQL integration run: 8 passed, including serialized manual-snapshot recovery and refresh-token rotation, concurrent collection, publish-job, and source-variant draft deduplication, atomic draft-version invalidation, and a final publish-evidence row lock that blocks concurrent draft changes until publication completes.
 - PostgreSQL migrations through `20260721_0024` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, high-precision review execution costs, structured source snapshots, source-variant draft bindings, structured source measurements, provider usage/request telemetry, encrypted integration credentials, and a unique active price per provider/model.
 - The complete Alembic chain upgraded to head and downgraded to base successfully on a disposable D-drive SQLite database.

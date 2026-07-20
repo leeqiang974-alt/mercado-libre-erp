@@ -223,6 +223,17 @@ export type PublishBatchEnqueueResult = {
   }[];
 };
 
+export type PublishBatchPreflightResult = {
+  ready_count: number;
+  not_ready_count: number;
+  not_found_count: number;
+  items: {
+    draft_id: number;
+    outcome: "ready" | "not_ready" | "not_found";
+    errors: string[];
+  }[];
+};
+
 export type DraftListingConfig = {
   id: number;
   product_draft_id: number;
@@ -1017,6 +1028,16 @@ export async function enqueuePublishBatch(draftIds: number[]) {
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<PublishBatchEnqueueResult>;
+}
+
+export async function preflightPublishBatch(draftIds: number[]) {
+  const response = await fetch(`${API_BASE}/api/publishing/preflight-batch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ draft_ids: draftIds }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<PublishBatchPreflightResult>;
 }
 
 export async function listAuditEvents(limit = 100) {

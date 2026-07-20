@@ -28,6 +28,7 @@ import {
   listPublishJobs,
   listDrafts,
   listStores,
+  preflightPublishBatch,
   previewPublishFromDraft,
   refreshCategoryAttributes,
   refreshListingTypes,
@@ -39,6 +40,7 @@ import {
   type ProductDraft,
   type ProductDraftRead,
   type PublishBatchEnqueueResult,
+  type PublishBatchPreflightResult,
   type PublishExecutionResult,
   type PublishJobRecord,
   type PublishValidationResult,
@@ -132,6 +134,7 @@ export function PublishingPage({
   const [batchDrafts, setBatchDrafts] = useState<ProductDraftRead[]>([]);
   const [selectedBatchDraftIds, setSelectedBatchDraftIds] = useState<Set<number>>(new Set());
   const [batchPublishAcknowledged, setBatchPublishAcknowledged] = useState(false);
+  const [batchPreflightResult, setBatchPreflightResult] = useState<PublishBatchPreflightResult | null>(null);
   const [batchPublishResult, setBatchPublishResult] = useState<PublishBatchEnqueueResult | null>(null);
   const [readiness, setReadiness] = useState<SystemReadiness | null>(null);
   const [busy, setBusy] = useState("");
@@ -142,6 +145,7 @@ export function PublishingPage({
   const categoryPredictionEpochRef = useRef(0);
   const categorySelectionEpochRef = useRef(0);
   const categoryAttributesEpochRef = useRef(0);
+  const batchPreflightEpochRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -676,6 +680,7 @@ export function PublishingPage({
   }
 
   function toggleBatchDraft(draftIdToToggle: number) {
+    batchPreflightEpochRef.current += 1;
     setBatchPublishAcknowledged(false);
     setSelectedBatchDraftIds((current) => {
       const next = new Set(current);
@@ -685,11 +690,43 @@ export function PublishingPage({
       return next;
     });
     setBatchPublishResult(null);
+    setBatchPreflightResult(null);
+  }
+
+  async function checkBatchReadiness() {
+    const draftIds = [...selectedBatchDraftIds];
+    if (draftIds.length === 0) return;
+    const requestEpoch = ++batchPreflightEpochRef.current;
+    setBusy("batch-preflight");
+    setStatus("");
+    setBatchPublishAcknowledged(false);
+    setBatchPreflightResult(null);
+    setBatchPublishResult(null);
+    try {
+      const result = await preflightPublishBatch(draftIds);
+      if (batchPreflightEpochRef.current !== requestEpoch) return;
+      setBatchPreflightResult(result);
+      setStatus(`${result.ready_count} of ${result.items.length} selected drafts are ready`);
+    } catch (error) {
+      if (batchPreflightEpochRef.current !== requestEpoch) return;
+      setBatchPreflightResult(null);
+      setStatus(error instanceof Error ? error.message : "Failed to check publish readiness");
+    } finally {
+      setBusy("");
+    }
   }
 
   async function queuePublishBatch() {
     const draftIds = [...selectedBatchDraftIds];
-    if (!batchPublishAcknowledged || draftIds.length === 0) return;
+    if (
+      !batchPublishAcknowledged
+      || !batchPreflightResult
+      || busy === "batch-preflight"
+      || batchPreflightResult.ready_count === 0
+      || batchPreflightResult.items.length !== draftIds.length
+      || !batchPreflightResult.items.every((item) => selectedBatchDraftIds.has(item.draft_id))
+      || draftIds.length === 0
+    ) return;
     setBusy("batch-queue");
     setStatus("");
     try {
@@ -698,6 +735,8 @@ export function PublishingPage({
       setJobs(await listPublishJobs());
       setSelectedBatchDraftIds(new Set());
       setBatchPublishAcknowledged(false);
+      batchPreflightEpochRef.current += 1;
+      setBatchPreflightResult(null);
       setStatus(`${result.queued_count} publish jobs queued`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to queue publish batch");
@@ -705,6 +744,12 @@ export function PublishingPage({
       setBusy("");
     }
   }
+
+  const batchPreflightMatchesSelection = Boolean(
+    batchPreflightResult
+    && batchPreflightResult.items.length === selectedBatchDraftIds.size
+    && batchPreflightResult.items.every((item) => selectedBatchDraftIds.has(item.draft_id)),
+  );
 
   const batchPublishSection = (
     <section className="saved-section batch-publish-section">
@@ -718,6 +763,13 @@ export function PublishingPage({
           <div className="batch-review-controls">
             <div className="action-line">
               <span>{selectedBatchDraftIds.size} / {MAX_PUBLISH_BATCH_SIZE} selected</span>
+              <button
+                className="secondary-button"
+                disabled={selectedBatchDraftIds.size === 0 || busy === "batch-preflight"}
+                onClick={checkBatchReadiness}
+              >
+                <ListChecks size={16} /> Check readiness
+              </button>
               <label className="check-row">
                 <input
                   type="checkbox"
@@ -729,7 +781,10 @@ export function PublishingPage({
               <button
                 disabled={
                   selectedBatchDraftIds.size === 0
+                  || !batchPreflightMatchesSelection
+                  || batchPreflightResult?.ready_count === 0
                   || !batchPublishAcknowledged
+                  || busy === "batch-preflight"
                   || busy === "batch-queue"
                 }
                 onClick={queuePublishBatch}
@@ -737,6 +792,22 @@ export function PublishingPage({
                 <ListPlus size={16} /> Queue selected drafts
               </button>
             </div>
+            {batchPreflightResult && (
+              <div className="batch-result-summary" aria-live="polite">
+                <strong>{batchPreflightResult.ready_count} ready</strong>
+                <span>{batchPreflightResult.not_ready_count} blocked</span>
+                <span>{batchPreflightResult.not_found_count} missing</span>
+              </div>
+            )}
+            {batchPreflightResult?.items.some((item) => item.errors.length > 0) && (
+              <div className="batch-review-errors">
+                {batchPreflightResult.items.filter((item) => item.errors.length > 0).map((item) => (
+                  <span key={item.draft_id}>
+                    Draft #{item.draft_id}: {item.errors.map(readablePublishError).join(", ")}
+                  </span>
+                ))}
+              </div>
+            )}
             {batchPublishResult && (
               <div className="batch-result-summary" aria-live="polite">
                 <strong>{batchPublishResult.queued_count} queued</strong>
@@ -777,6 +848,15 @@ export function PublishingPage({
                   </span>
                   <span>{item.currency} {item.price ?? "not priced"}</span>
                   <span>{item.risk_status}</span>
+                  {batchPreflightResult && (() => {
+                    const checked = batchPreflightResult.items.find((result) => result.draft_id === item.id);
+                    if (!checked) return null;
+                    return (
+                      <span className={`state-pill ${checked.outcome === "ready" ? "ready" : "blocked"}`}>
+                        {checked.outcome === "ready" ? "Ready" : "Blocked"}
+                      </span>
+                    );
+                  })()}
                 </div>
               </div>
             ))}

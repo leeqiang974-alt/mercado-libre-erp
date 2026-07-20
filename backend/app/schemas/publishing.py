@@ -45,6 +45,23 @@ class PublishBatchEnqueueRequest(BaseModel):
     acknowledge_publish: bool = False
 
 
+class PublishBatchPreflightRequest(BaseModel):
+    draft_ids: list[int] = Field(min_length=1, max_length=50)
+
+
+class PublishBatchPreflightItem(BaseModel):
+    draft_id: int
+    outcome: Literal["ready", "not_ready", "not_found"]
+    errors: list[str] = Field(default_factory=list)
+
+
+class PublishBatchPreflightResult(BaseModel):
+    ready_count: int
+    not_ready_count: int
+    not_found_count: int
+    items: list[PublishBatchPreflightItem]
+
+
 class PublishBatchItem(BaseModel):
     draft_id: int
     outcome: Literal["queued", "existing", "not_ready", "not_found"]

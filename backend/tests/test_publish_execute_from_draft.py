@@ -249,6 +249,75 @@ def test_publish_batch_requires_acknowledgement():
         assert db.query(PublishJob).count() == 0
 
 
+def test_publish_batch_preflight_reports_ready_without_queueing(monkeypatch):
+    async def shipping_preferences(self, path):
+        assert self.access_token == "access-token"
+        assert path == "/users/seller-1/shipping_preferences"
+        return {
+            "modes": ["me2"],
+            "logistics": [{"mode": "me2", "types": [{"type": "drop_off"}]}],
+        }
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing.MercadoLibreClient, "get", shipping_preferences)
+    client, testing_session = make_client()
+    seed_publish_review(testing_session)
+    client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
+
+    response = client.post(
+        "/api/publishing/preflight-batch",
+        json={"draft_ids": [1, 1, 999]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ready_count": 1,
+        "not_ready_count": 0,
+        "not_found_count": 1,
+        "items": [
+            {"draft_id": 1, "outcome": "ready", "errors": []},
+            {
+                "draft_id": 999,
+                "outcome": "not_found",
+                "errors": ["product_draft_not_found"],
+            },
+        ],
+    }
+    with testing_session() as db:
+        assert db.query(PublishJob).count() == 0
+        assert db.query(AuditEvent).filter(AuditEvent.action.like("publish.%")).count() == 0
+
+
+def test_publish_batch_preflight_reports_same_approval_gate_without_shipping(monkeypatch):
+    async def unexpected_shipping_preferences(self, path):
+        raise AssertionError("shipping must not be fetched while an earlier gate is blocked")
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(
+        publishing.MercadoLibreClient,
+        "get",
+        unexpected_shipping_preferences,
+    )
+    client, testing_session = make_client()
+    seed_publish_review(testing_session)
+
+    response = client.post(
+        "/api/publishing/preflight-batch",
+        json={"draft_ids": [1]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ready_count"] == 0
+    assert response.json()["not_ready_count"] == 1
+    assert response.json()["items"][0] == {
+        "draft_id": 1,
+        "outcome": "not_ready",
+        "errors": ["human_approval_required"],
+    }
+    with testing_session() as db:
+        assert db.query(PublishJob).count() == 0
+
+
 def test_publish_batch_queues_ready_drafts_and_replays_exact_job(monkeypatch):
     async def shipping_preferences(self, path):
         assert self.access_token == "access-token"

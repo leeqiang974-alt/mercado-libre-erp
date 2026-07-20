@@ -65,3 +65,4 @@
 
 - Continue implementation through coding, verification, review, and commit. Do not stop after one subsystem while meaningful credential-independent product work remains.
 - Progress reports must distinguish long-lived services, currently executing commands, active review agents, and completed code. Never present container uptime as active development time.
+- Treat queue workers that report zero processed items as idle services, not running tasks, and close completed review agents promptly.

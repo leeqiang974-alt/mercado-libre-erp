@@ -148,7 +148,7 @@ main {
 .batch-review-controls .action-line { margin-top: 0; }
 .batch-review-errors { display: grid; gap: 4px; color: #8a1c13; font-size: 12px; margin-top: 10px; }
 .batch-publish-section { margin-top: 24px; }
-.batch-publish-row { align-items: center; background: white; border: 1px solid #dde3ea; border-radius: 6px; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) auto auto; min-height: 68px; padding: 10px 14px; }
+.batch-publish-row { align-items: center; background: white; border: 1px solid #dde3ea; border-radius: 6px; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) auto auto auto; min-height: 68px; padding: 10px 14px; }
 .batch-publish-row > span:first-child { display: grid; gap: 4px; min-width: 0; }
 .batch-publish-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .batch-publish-row small, .batch-publish-row > span:not(:first-child) { color: #697586; font-size: 12px; }
