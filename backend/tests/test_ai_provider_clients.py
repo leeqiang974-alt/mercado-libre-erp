@@ -4,9 +4,14 @@ import httpx
 import pytest
 
 from app.schemas.drafts import ProductDraftCreate
+from app.schemas.reviews import DraftReviewSubject, ReviewListingContext, ReviewPricingContext
 from app.services.ai.claude_client import ClaudeReviewClient
 from app.services.ai.nvidia_client import NvidiaReviewClient
-from app.services.ai.provider_utils import AIProviderError, REVIEW_PROMPT_VERSION
+from app.services.ai.provider_utils import (
+    AIProviderError,
+    REVIEW_PROMPT_VERSION,
+    review_subject_json,
+)
 
 
 def draft():
@@ -19,6 +24,45 @@ def draft():
         stock=1,
         image_urls=["https://example.com/a.jpg"],
     )
+
+
+def test_saved_review_subject_contains_publish_evidence_without_credentials():
+    subject = DraftReviewSubject(
+        draft=draft(),
+        pricing=ReviewPricingContext(
+            source_price=9.99,
+            source_currency="USD",
+            target_currency="MXN",
+            exchange_rate=18,
+            purchase_extra_cost=2,
+            shipping_cost=50,
+            platform_fee_rate=0.15,
+            tax_rate=0.05,
+            profit_margin_rate=0.2,
+            rounding_increment=10,
+            landed_cost=231.82,
+            target_price=390,
+        ),
+        listing=ReviewListingContext(
+            authorized_store_id=7,
+            site_id="MLM",
+            category_id="MLM123",
+            listing_type_id="gold_pro",
+            fulfillment="not_full",
+            shipping_mode="me2",
+            shipping_logistic_type="drop_off",
+            attributes=[{"id": "BRAND", "value_name": "Acme"}],
+        ),
+    )
+
+    serialized = review_subject_json(subject)
+    payload = json.loads(serialized)
+
+    assert payload["pricing"]["exchange_rate"] == 18
+    assert payload["listing"]["listing_type_id"] == "gold_pro"
+    assert payload["listing"]["shipping_logistic_type"] == "drop_off"
+    assert "access_token" not in serialized
+    assert "api_key" not in serialized
 
 
 @pytest.mark.asyncio
@@ -64,9 +108,13 @@ async def test_claude_client_posts_messages_request_and_parses_review_json():
     assert requests[0].headers["x-api-key"] == "claude-secret"
     assert requests[0].headers["anthropic-version"]
     request_body = json.loads(requests[0].content)
-    assert REVIEW_PROMPT_VERSION == "meli-safety-v2"
-    assert "Never invent product facts" in request_body["messages"][0]["content"]
-    assert "Use pass only" in request_body["messages"][0]["content"]
+    assert REVIEW_PROMPT_VERSION == "meli-safety-v4"
+    assert "Never invent product facts" in request_body["system"]
+    assert "untrusted marketplace data" in request_body["system"]
+    assert "<review_subject>" in request_body["messages"][0]["content"]
+    assert "Use pass only" in request_body["system"]
+    assert '"pricing":null' in request_body["messages"][0]["content"]
+    assert '"listing":null' in request_body["messages"][0]["content"]
 
 
 @pytest.mark.asyncio
@@ -116,6 +164,10 @@ async def test_nvidia_client_posts_chat_completion_and_parses_review_json():
     assert result.provider_request_id == "req_nvidia_123"
     assert requests[0].url == "https://integrate.api.nvidia.com/v1/chat/completions"
     assert requests[0].headers["authorization"] == "Bearer nvidia-secret"
+    request_body = json.loads(requests[0].content)
+    assert request_body["messages"][0]["role"] == "system"
+    assert "untrusted marketplace data" in request_body["messages"][0]["content"]
+    assert request_body["messages"][1]["role"] == "user"
 
 
 @pytest.mark.asyncio

@@ -117,7 +117,7 @@ def seed_publish_review(testing_session) -> int:
         row = ReviewResult(
             product_draft_id=1,
             provider="claude+nvidia_behavioral_audit",
-            prompt_version="meli-behavioral-audit-v2",
+            prompt_version="meli-behavioral-audit-v4",
             risk_level="low",
             decision=ReviewDecision.PASS,
             reasons_json={"reason_codes": [], "reasons": []},
@@ -357,7 +357,7 @@ def test_shipping_change_invalidates_existing_review_and_approval(monkeypatch):
     assert "review_for_stale_draft_version" in response.text
 
 
-def test_preview_blocks_store_disconnected_after_configuration(monkeypatch):
+def test_preview_invalidates_review_when_store_disconnects_after_configuration(monkeypatch):
     monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
     client, testing_session = make_client()
     review_result_id = seed_publish_review(testing_session)
@@ -377,9 +377,8 @@ def test_preview_blocks_store_disconnected_after_configuration(monkeypatch):
         },
     )
 
-    assert response.status_code == 200
-    assert response.json()["allowed"] is False
-    assert "store_not_connected" in response.json()["errors"]
+    assert response.status_code == 422
+    assert response.json()["detail"] == "latest_behavioral_review_required"
 
 
 def test_preview_blocks_shipping_selection_removed_from_store(monkeypatch):

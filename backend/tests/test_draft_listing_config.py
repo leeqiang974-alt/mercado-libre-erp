@@ -119,7 +119,7 @@ def seed_publish_review(testing_session) -> int:
         row = ReviewResult(
             product_draft_id=1,
             provider="claude+nvidia_behavioral_audit",
-            prompt_version="meli-behavioral-audit-v2",
+            prompt_version="meli-behavioral-audit-v4",
             risk_level="low",
             decision=ReviewDecision.PASS,
             reasons_json={"reason_codes": [], "reasons": []},
@@ -514,6 +514,18 @@ def test_listing_config_rejects_full_fulfillment():
 
     assert response.status_code == 422
     assert "FULL fulfillment is excluded" in response.text
+
+
+def test_listing_config_rejects_non_classic_premium_listing_type():
+    client, _ = make_client()
+
+    response = client.put(
+        "/api/drafts/1/listing-config",
+        json=config_payload() | {"listing_type_id": "gold_full"},
+    )
+
+    assert response.status_code == 422
+    assert "Only Mercado Libre Classic or Premium" in response.text
 
 
 def test_listing_config_rejects_full_or_incomplete_shipping_selection():

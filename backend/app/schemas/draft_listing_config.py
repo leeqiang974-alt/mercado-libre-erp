@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 SUPPORTED_SHIPPING_MODES = {"me2", "me1", "not_specified"}
+SUPPORTED_LISTING_TYPE_IDS = {"gold_special", "gold_pro"}
 SUPPORTED_NON_FULL_LOGISTIC_TYPES = {
     "drop_off",
     "cross_docking",
@@ -46,6 +47,14 @@ class DraftListingConfigUpsert(BaseModel):
     shipping_mode: str = ""
     shipping_logistic_type: str = ""
     attributes: list[ListingAttributeValue] = Field(default_factory=list)
+
+    @field_validator("listing_type_id")
+    @classmethod
+    def require_classic_or_premium(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in SUPPORTED_LISTING_TYPE_IDS:
+            raise ValueError("Only Mercado Libre Classic or Premium listing types are supported.")
+        return normalized
 
     @field_validator("fulfillment")
     @classmethod

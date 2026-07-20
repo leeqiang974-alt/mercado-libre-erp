@@ -66,7 +66,7 @@ Implemented:
 - Review history API and frontend refresh control for saved draft audit trails.
 - Desktop and mobile review history expose Claude, NVIDIA, and aggregate model/prompt/duration/token metadata and provider request IDs without exposing API keys or raw prompts.
 - Provider errors preserve HTTP status, retryability, `Retry-After`, and request ID. Rate-limited reviews return HTTP 429 and wait for an explicit operator retry; the application does not automatically resend paid review requests.
-- Claude/NVIDIA review output is validated against the versioned `meli-safety-v2` contract. Missing or extra fields, unknown decisions/risk levels, and mistyped values are provider failures rather than implicit low-risk passes; the prompt explicitly requires evidence-bounded review across restricted goods, claims, brand risk, contradictions, required listing evidence, personal data, and local-market uncertainty.
+- Claude/NVIDIA review output is validated against the versioned `meli-safety-v4` contract. Missing or extra fields, unknown decisions/risk levels, and mistyped values are provider failures rather than implicit low-risk passes; system-level instructions require evidence-bounded review across restricted goods, claims, brand risk, contradictions, required listing evidence, personal data, and local-market uncertainty while treating marketplace fields as untrusted data. Saved-draft reviews require and include the reconciled pricing formula plus authorized-store, site, category, Classic/Premium, attribute, and non-FULL shipping configuration without exposing store tokens or API keys.
 - Successful paid provider calls remain as `completed_stale` historical evidence when a concurrent draft edit invalidates them; they are visible in history but cannot satisfy the current-version combined publish gate.
 - Monetary AI cost is deliberately not inferred from token counts until a versioned provider/model price configuration is supplied.
 - API flow for URL/HTML import, persisted source products, persisted drafts, persisted stores, review, metadata, publish preview, and guarded publish execution.
@@ -83,7 +83,7 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 267 passed, with 6 PostgreSQL-only tests skipped in the default run.
+- Backend suite: 273 passed, with 6 PostgreSQL-only tests skipped in the default run.
 - Isolated Docker PostgreSQL integration run: 6 passed, including concurrent collection, publish-job, and source-variant draft deduplication, atomic draft-version invalidation, and a final publish-evidence row lock that blocks concurrent draft changes until publication completes.
 - PostgreSQL migrations through `20260720_0021` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, review execution metadata, structured source snapshots, source-variant draft bindings, structured source measurements, provider usage/request telemetry, and encrypted integration credentials.
 - The complete Alembic chain upgraded to head and downgraded to base successfully on a disposable D-drive SQLite database.

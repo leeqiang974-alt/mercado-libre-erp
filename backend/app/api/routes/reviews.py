@@ -8,14 +8,24 @@ from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.product_draft import ProductDraft
 from app.schemas.drafts import ProductDraftCreate
-from app.schemas.reviews import BehavioralAuditResponse, ReviewResponse, ReviewResultRead
+from app.schemas.reviews import (
+    BehavioralAuditResponse,
+    DraftReviewSubject,
+    ReviewListingContext,
+    ReviewPricingContext,
+    ReviewResponse,
+    ReviewResultRead,
+)
 from app.services.ai.claude_client import ClaudeReviewClient
 from app.services.ai.nvidia_client import NvidiaReviewClient
 from app.services.ai.provider_utils import AIProviderError, BEHAVIORAL_AUDIT_PROMPT_VERSION
 from app.services.ai.review_policy import review_draft_locally
 from app.services.audit_events import create_audit_event
-from app.services.draft_listing_configs import build_configured_draft
-from app.services.draft_pricing import require_current_draft_pricing
+from app.services.draft_listing_configs import (
+    build_configured_draft,
+    get_draft_listing_config,
+)
+from app.services.draft_pricing import get_draft_pricing, require_current_draft_pricing
 from app.services.integration_credentials import resolve_integration_credentials
 from app.services.reviews import (
     ReviewBatchAudit,
@@ -24,6 +34,7 @@ from app.services.reviews import (
     persist_review_result,
     persist_review_results,
     persist_stale_review_result,
+    provider_review_context_errors,
 )
 
 router = APIRouter(prefix="/api/reviews", tags=["reviews"])
@@ -57,11 +68,12 @@ async def review_claude(
     db: Session = Depends(get_db),
 ) -> ReviewResponse:
     draft, draft_version = _canonical_review_draft(db, product_draft_id, draft)
+    review_subject = _provider_review_subject(db, product_draft_id, draft)
     credentials = resolve_integration_credentials(db, settings)
     client = ClaudeReviewClient(api_key=credentials.claude_api_key, model=settings.claude_model)
     started = perf_counter()
     try:
-        response = await client.review_draft(draft)
+        response = await client.review_draft(review_subject)
     except AIProviderError as exc:
         _audit_provider_failure(
             db, product_draft_id, exc, client, _elapsed_ms(started)
@@ -85,11 +97,12 @@ async def review_nvidia(
     db: Session = Depends(get_db),
 ) -> ReviewResponse:
     draft, draft_version = _canonical_review_draft(db, product_draft_id, draft)
+    review_subject = _provider_review_subject(db, product_draft_id, draft)
     credentials = resolve_integration_credentials(db, settings)
     client = NvidiaReviewClient(api_key=credentials.nvidia_api_key, model=settings.nvidia_model)
     started = perf_counter()
     try:
-        response = await client.pre_screen_draft(draft)
+        response = await client.pre_screen_draft(review_subject)
     except AIProviderError as exc:
         _audit_provider_failure(
             db, product_draft_id, exc, client, _elapsed_ms(started)
@@ -114,6 +127,7 @@ async def behavioral_audit(
 ) -> BehavioralAuditResponse:
     """Run NVIDIA pre-screening and Claude deep review before publish approval."""
     draft, draft_version = _canonical_review_draft(db, product_draft_id, draft)
+    review_subject = _provider_review_subject(db, product_draft_id, draft)
     credentials = resolve_integration_credentials(db, settings)
     nvidia_client = NvidiaReviewClient(
         api_key=credentials.nvidia_api_key, model=settings.nvidia_model
@@ -123,7 +137,7 @@ async def behavioral_audit(
     )
     nvidia_started = perf_counter()
     try:
-        nvidia = await nvidia_client.pre_screen_draft(draft)
+        nvidia = await nvidia_client.pre_screen_draft(review_subject)
     except AIProviderError as exc:
         _audit_provider_failure(
             db, product_draft_id, exc, nvidia_client, _elapsed_ms(nvidia_started)
@@ -142,7 +156,7 @@ async def behavioral_audit(
 
     claude_started = perf_counter()
     try:
-        claude = await claude_client.review_draft(draft)
+        claude = await claude_client.review_draft(review_subject)
     except AIProviderError as exc:
         _audit_provider_failure(
             db, product_draft_id, exc, claude_client, _elapsed_ms(claude_started)
@@ -242,6 +256,51 @@ def _canonical_review_draft(
     draft_version = model.content_version
     db.commit()
     return canonical, draft_version
+
+
+def _provider_review_subject(
+    db: Session,
+    product_draft_id: int | None,
+    draft: ProductDraftCreate,
+) -> DraftReviewSubject:
+    if product_draft_id is None:
+        return DraftReviewSubject(draft=draft)
+    pricing = get_draft_pricing(db, product_draft_id)
+    listing = get_draft_listing_config(db, product_draft_id)
+    model = db.get(ProductDraft, product_draft_id)
+    listing_errors = provider_review_context_errors(db, model) if model else []
+    if listing_errors:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "review_listing_context_incomplete", "errors": listing_errors},
+        )
+    return DraftReviewSubject(
+        draft=draft,
+        pricing=ReviewPricingContext(
+            source_price=pricing.source_price,
+            source_currency=pricing.source_currency,
+            target_currency=pricing.target_currency,
+            exchange_rate=pricing.exchange_rate,
+            purchase_extra_cost=pricing.purchase_extra_cost,
+            shipping_cost=pricing.shipping_cost,
+            platform_fee_rate=pricing.platform_fee_rate,
+            tax_rate=pricing.tax_rate,
+            profit_margin_rate=pricing.profit_margin_rate,
+            rounding_increment=pricing.rounding_increment,
+            landed_cost=pricing.landed_cost,
+            target_price=pricing.target_price,
+        ),
+        listing=ReviewListingContext(
+            authorized_store_id=listing.store_id,
+            site_id=listing.site_id,
+            category_id=listing.category_id,
+            listing_type_id=listing.listing_type_id,
+            fulfillment=listing.fulfillment,
+            shipping_mode=listing.shipping_mode,
+            shipping_logistic_type=listing.shipping_logistic_type,
+            attributes=listing.attributes_json or [],
+        ),
+    )
 
 
 @router.get("/drafts/{product_draft_id}", response_model=list[ReviewResultRead])

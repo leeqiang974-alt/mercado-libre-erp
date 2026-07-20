@@ -15,6 +15,7 @@ The repository contains an operational local workflow for Amazon URL collection 
 - Publish outcomes that may have created an item but cannot be confirmed are quarantined for manual reconciliation and cannot be retried automatically.
 - Claude and NVIDIA failures are explicit. Only the latest persisted combined behavioral audit can satisfy approval and publishing gates.
 - Claude and NVIDIA output follows a versioned strict schema. Unknown decisions or risk levels, missing/extra fields, and wrong types fail closed instead of being aggregated as a pass.
+- Saved provider reviews carry reconciled pricing and complete listing context. Safety policy is isolated in a system message, marketplace content is delimited as untrusted user data, and connected-store/site/non-FULL logistics are revalidated under lock before review persistence and whenever an aggregate review is used.
 - PostgreSQL and clean SQLite migrations, backend tests, frontend production build, and desktop/mobile browser smoke checks pass.
 
 ## Missing or Misleading Behavior

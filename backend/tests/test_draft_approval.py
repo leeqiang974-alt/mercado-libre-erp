@@ -115,7 +115,7 @@ def seed_publish_review(testing_session) -> int:
         row = ReviewResult(
             product_draft_id=1,
             provider="claude+nvidia_behavioral_audit",
-            prompt_version="meli-behavioral-audit-v2",
+            prompt_version="meli-behavioral-audit-v4",
             risk_level="low",
             decision=ReviewDecision.PASS,
             reasons_json={"reason_codes": [], "reasons": []},
@@ -184,7 +184,7 @@ def test_draft_approval_rejects_pass_from_obsolete_review_contract():
             ReviewResult(
                 product_draft_id=1,
                 provider="claude+nvidia_behavioral_audit",
-                prompt_version="meli-safety-v1+meli-safety-v1",
+                prompt_version="meli-behavioral-audit-v2",
                 risk_level="low",
                 decision=ReviewDecision.PASS,
                 reasons_json={"reason_codes": [], "reasons": []},
@@ -209,7 +209,7 @@ def test_draft_approval_requires_latest_behavioral_review_to_pass():
             ReviewResult(
                 product_draft_id=1,
                 provider="claude+nvidia_behavioral_audit",
-                prompt_version="meli-behavioral-audit-v2",
+                prompt_version="meli-behavioral-audit-v4",
                 risk_level="high",
                 decision=ReviewDecision.BLOCK,
                 reasons_json={"reason_codes": ["restricted"], "reasons": ["blocked"]},
@@ -242,7 +242,7 @@ def test_newer_behavioral_review_invalidates_old_review_and_approval(monkeypatch
             ReviewResult(
                 product_draft_id=1,
                 provider="claude+nvidia_behavioral_audit",
-                prompt_version="meli-behavioral-audit-v2",
+                prompt_version="meli-behavioral-audit-v4",
                 risk_level="high",
                 decision=ReviewDecision.BLOCK,
                 reasons_json={"reason_codes": ["restricted"], "reasons": ["blocked"]},

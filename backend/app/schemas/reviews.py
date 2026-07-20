@@ -3,6 +3,40 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.drafts import ProductDraftCreate
+
+
+class ReviewPricingContext(BaseModel):
+    source_price: float
+    source_currency: str
+    target_currency: str
+    exchange_rate: float
+    purchase_extra_cost: float
+    shipping_cost: float
+    platform_fee_rate: float
+    tax_rate: float
+    profit_margin_rate: float
+    rounding_increment: float
+    landed_cost: float
+    target_price: float
+
+
+class ReviewListingContext(BaseModel):
+    authorized_store_id: int
+    site_id: str
+    category_id: str
+    listing_type_id: str
+    fulfillment: str
+    shipping_mode: str
+    shipping_logistic_type: str
+    attributes: list[dict] = Field(default_factory=list)
+
+
+class DraftReviewSubject(BaseModel):
+    draft: ProductDraftCreate
+    pricing: ReviewPricingContext | None = None
+    listing: ReviewListingContext | None = None
+
 
 class ReviewResponse(BaseModel):
     provider: str

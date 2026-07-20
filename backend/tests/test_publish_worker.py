@@ -97,7 +97,7 @@ def make_session():
                 id=1,
                 product_draft_id=1,
                 provider="claude+nvidia_behavioral_audit",
-                prompt_version="meli-behavioral-audit-v2",
+                prompt_version="meli-behavioral-audit-v4",
                 risk_level="low",
                 decision=ReviewDecision.PASS,
                 reasons_json={"reason_codes": [], "reasons": []},
@@ -236,7 +236,7 @@ async def test_worker_skips_job_claimed_by_another_worker(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_worker_rechecks_saved_listing_type_catalog_before_publisher():
+async def test_worker_invalidates_review_for_unsupported_saved_listing_type():
     testing_session = make_session()
     with testing_session() as db:
         config = db.query(DraftListingConfig).one()
@@ -270,7 +270,7 @@ async def test_worker_rechecks_saved_listing_type_catalog_before_publisher():
     with testing_session() as db:
         job = db.query(PublishJob).one()
         assert job.status == PublishJobStatus.BLOCKED
-        assert "listing_type_not_supported" in job.response_summary_json["errors"]
+        assert "latest_behavioral_review_required" in job.response_summary_json["errors"]
 
 
 @pytest.mark.asyncio

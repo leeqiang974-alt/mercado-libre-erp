@@ -100,6 +100,7 @@ python -m app.worker --queue publish --loop --interval 30 --limit 10
 - Run local, Claude, or NVIDIA review from the backend review API.
 - Run a combined behavioral audit that executes NVIDIA pre-screening and Claude deep review, aggregates the strictest decision, and feeds that result into the publish gate.
 - Validate Claude/NVIDIA output against the versioned strict review contract; incomplete, extra, mistyped, or unknown values fail closed and cannot satisfy publishing gates.
+- Send saved-draft reviews the reconciled pricing formula and final store/site/category/Classic-or-Premium/non-FULL configuration while keeping integration secrets out of provider prompts.
 - Persist local, Claude, and NVIDIA review results against saved product drafts.
 - Persist and list audit events for AI review and publish execution actions.
 - List review history for a saved product draft from the frontend.

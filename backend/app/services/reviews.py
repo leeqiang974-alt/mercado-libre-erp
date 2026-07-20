@@ -5,9 +5,16 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.product_draft import ProductDraft
+from app.models.draft_listing_config import DraftListingConfig
 from app.models.review_result import ReviewDecision, ReviewResult
+from app.models.store import Store
+from app.schemas.draft_listing_config import SUPPORTED_LISTING_TYPE_IDS
 from app.schemas.reviews import ReviewResponse, ReviewResultRead
 from app.services.ai.provider_utils import BEHAVIORAL_AUDIT_PROMPT_VERSION
+from app.services.meli.payload_builder import (
+    SUPPORTED_NON_FULL_LOGISTIC_TYPES,
+    SUPPORTED_SHIPPING_MODES,
+)
 from app.services.audit_events import create_audit_event
 
 
@@ -130,6 +137,12 @@ def persist_review_results(
             detail=f"Product draft {product_draft_id} not found.",
         )
 
+    if any(
+        execution.response.provider in {"claude", "nvidia", "claude+nvidia_behavioral_audit"}
+        for execution in executions
+    ):
+        require_current_provider_review_context(db, draft, lock_store=True)
+
     draft_version = draft.content_version if expected_draft_version is None else expected_draft_version
     locked = db.execute(
         update(ProductDraft)
@@ -250,6 +263,8 @@ def get_publish_review(
 
 
 def get_latest_behavioral_review(db: Session, draft: ProductDraft) -> ReviewResult | None:
+    if provider_review_context_errors(db, draft):
+        return None
     return db.scalar(
         select(ReviewResult)
         .where(
@@ -261,6 +276,56 @@ def get_latest_behavioral_review(db: Session, draft: ProductDraft) -> ReviewResu
         .order_by(ReviewResult.id.desc())
         .limit(1)
     )
+
+
+def provider_review_context_errors(
+    db: Session, draft: ProductDraft, *, lock_store: bool = False
+) -> list[str]:
+    config = db.scalar(
+        select(DraftListingConfig).where(
+            DraftListingConfig.product_draft_id == draft.id
+        )
+    )
+    if config is None:
+        return ["saved_listing_configuration_required"]
+    errors: list[str] = []
+    if config.store_id is None:
+        errors.append("authorized_store_selection_required")
+        store = None
+    else:
+        store_statement = select(Store).where(Store.id == config.store_id)
+        if lock_store:
+            store_statement = store_statement.with_for_update()
+        store = db.scalar(store_statement)
+        if store is None:
+            errors.append("authorized_store_not_found")
+        else:
+            if store.oauth_status != "connected":
+                errors.append("store_not_connected")
+            if store.site_id.strip().upper() != config.site_id.strip().upper():
+                errors.append("store_site_mismatch")
+    if config.site_id.strip().upper() != draft.target_site_id.strip().upper():
+        errors.append("listing_site_mismatch")
+    if config.listing_type_id not in SUPPORTED_LISTING_TYPE_IDS:
+        errors.append("listing_type_not_supported")
+    if config.fulfillment.strip().lower() == "full":
+        errors.append("full_fulfillment_excluded")
+    if config.shipping_mode not in SUPPORTED_SHIPPING_MODES:
+        errors.append("non_full_shipping_mode_invalid")
+    if config.shipping_logistic_type not in SUPPORTED_NON_FULL_LOGISTIC_TYPES:
+        errors.append("non_full_shipping_logistic_type_invalid")
+    return list(dict.fromkeys(errors))
+
+
+def require_current_provider_review_context(
+    db: Session, draft: ProductDraft, *, lock_store: bool = False
+) -> None:
+    errors = provider_review_context_errors(db, draft, lock_store=lock_store)
+    if errors:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "review_listing_context_not_current", "errors": errors},
+        )
 
 
 def list_review_results(db: Session, product_draft_id: int) -> list[ReviewResultRead]:

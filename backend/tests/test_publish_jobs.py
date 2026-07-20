@@ -103,7 +103,7 @@ def make_client(with_token: bool = True):
                     id=1,
                     product_draft_id=draft.id,
                     provider="claude+nvidia_behavioral_audit",
-                    prompt_version="meli-behavioral-audit-v2",
+                    prompt_version="meli-behavioral-audit-v4",
                     risk_level="low",
                     decision=ReviewDecision.PASS,
                     reasons_json={"reason_codes": [], "reasons": []},
@@ -264,7 +264,7 @@ def test_publish_execute_persists_blocked_job_when_store_token_is_missing(monkey
         assert audit.after_json["errors"] == ["store_access_token_required"]
 
 
-def test_publish_execute_blocks_when_draft_site_does_not_match_authorized_store(monkeypatch):
+def test_publish_execute_invalidates_review_when_store_site_no_longer_matches(monkeypatch):
     monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
     monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
 
@@ -289,11 +289,10 @@ def test_publish_execute_blocks_when_draft_site_does_not_match_authorized_store(
 
     response = client.post("/api/publishing/execute", json=body)
 
-    assert response.status_code == 200
-    assert response.json()["status"] == "blocked"
-    assert "store_site_mismatch" in response.json()["errors"]
+    assert response.status_code == 422
+    assert response.json()["detail"] == "latest_behavioral_review_required"
     with testing_session() as db:
-        assert db.query(PublishJob).one().status == PublishJobStatus.BLOCKED
+        assert db.query(PublishJob).count() == 0
 
 
 def test_publish_jobs_can_be_listed():

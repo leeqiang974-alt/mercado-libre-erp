@@ -2,6 +2,7 @@ import asyncio
 
 import httpx
 
+from app.schemas.draft_listing_config import SUPPORTED_LISTING_TYPE_IDS
 from app.schemas.drafts import ProductDraftCreate
 from app.schemas.publishing import ListingChoice, PublishExecutionResult, PublishValidationResult
 from app.schemas.reviews import ReviewResponse
@@ -16,9 +17,6 @@ from app.services.meli.shipping import (
     resolve_non_full_shipping,
 )
 from app.services.meli.sites import expected_currency
-
-SUPPORTED_LISTING_TYPE_IDS = {"gold_special", "gold_pro"}
-
 
 def validate_store_site_match(store_site_id: str, listing_site_id: str) -> list[str]:
     if store_site_id.strip().upper() == listing_site_id.strip().upper():

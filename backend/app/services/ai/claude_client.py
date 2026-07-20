@@ -1,14 +1,16 @@
 import httpx
 
 from app.schemas.drafts import ProductDraftCreate
-from app.schemas.reviews import ReviewResponse
+from app.schemas.reviews import DraftReviewSubject, ReviewResponse
 from app.services.ai.provider_utils import (
     AIProviderError,
     REVIEW_PROMPT_VERSION,
     parse_review_json,
     provider_request_error,
     provider_request_id,
-    review_prompt,
+    review_subject_message,
+    review_subject_json,
+    review_system_prompt,
     token_usage,
 )
 
@@ -26,16 +28,19 @@ class ClaudeReviewClient:
         self.model = model
         self.transport = transport
 
-    async def review_draft(self, draft: ProductDraftCreate) -> ReviewResponse:
+    async def review_draft(
+        self, draft: ProductDraftCreate | DraftReviewSubject
+    ) -> ReviewResponse:
         if not self.api_key:
             raise AIProviderError("claude", "api_key_required")
         payload = {
             "model": self.model,
             "max_tokens": 800,
+            "system": review_system_prompt(),
             "messages": [
                 {
                     "role": "user",
-                    "content": review_prompt(draft.model_dump_json()),
+                    "content": review_subject_message(review_subject_json(draft)),
                 }
             ],
         }

@@ -132,7 +132,7 @@ def make_client(with_store: bool = True, token_expires_in_seconds: int = 7200):
                     id=1,
                     product_draft_id=draft.id,
                     provider="claude+nvidia_behavioral_audit",
-                    prompt_version="meli-behavioral-audit-v2",
+                    prompt_version="meli-behavioral-audit-v4",
                     risk_level="low",
                     decision=ReviewDecision.PASS,
                     reasons_json={"reason_codes": [], "reasons": []},
@@ -233,10 +233,10 @@ def test_publish_execute_route_refreshes_expiring_store_token(monkeypatch):
     assert "new-refresh-token" not in response.text
 
 
-def test_publish_execute_route_blocks_unknown_store():
+def test_publish_execute_route_invalidates_review_for_unknown_store():
     client = make_client(with_store=False)
 
     response = client.post("/api/publishing/execute", json=payload())
 
-    assert response.status_code == 404
-    assert "Store not found" in response.text
+    assert response.status_code == 422
+    assert response.json()["detail"] == "latest_behavioral_review_required"

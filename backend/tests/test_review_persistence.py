@@ -15,6 +15,7 @@ from app.models.draft_listing_config import DraftListingConfig
 from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.registry import import_all_models
 from app.models.review_result import ReviewResult
+from app.models.store import Store
 from app.models.audit_event import AuditEvent
 from app.schemas.reviews import ReviewResponse
 from app.services.ai.provider_utils import AIProviderError
@@ -52,12 +53,24 @@ def make_client():
         db.flush()
         add_current_pricing(db, draft)
         db.add(
+            Store(
+                id=1,
+                site_id="MLM",
+                seller_id="seller-1",
+                display_name="Test Store",
+                oauth_status="connected",
+            )
+        )
+        db.add(
             DraftListingConfig(
                 product_draft_id=draft.id,
+                store_id=1,
                 site_id="MLM",
                 category_id="MLM123",
                 listing_type_id="gold_special",
                 fulfillment="not_full",
+                shipping_mode="me2",
+                shipping_logistic_type="drop_off",
                 attributes_json=[],
             )
         )
@@ -132,9 +145,16 @@ def test_claude_review_can_persist_result_for_draft(monkeypatch):
         def __init__(self, api_key: str, model: str = ""):
             pass
 
-        async def review_draft(self, draft):
-            assert draft.source_price == 9.99
-            assert draft.source_currency == "MXN"
+        async def review_draft(self, subject):
+            assert subject.draft.source_price == 9.99
+            assert subject.draft.source_currency == "MXN"
+            assert subject.pricing.source_price == 9.99
+            assert subject.pricing.target_currency == "MXN"
+            assert subject.listing.site_id == "MLM"
+            assert subject.listing.listing_type_id == "gold_special"
+            assert subject.listing.fulfillment == "not_full"
+            assert subject.listing.authorized_store_id == 1
+            assert subject.listing.shipping_logistic_type == "drop_off"
             return ReviewResponse(
                 provider="claude",
                 decision="needs_human_review",
@@ -166,6 +186,118 @@ def test_claude_review_can_persist_result_for_draft(monkeypatch):
         assert row.total_tokens == 150
         assert row.provider_request_id == "req_claude_persisted"
         assert row.decision.value == "needs_human_review"
+
+
+def test_provider_review_requires_store_and_non_full_shipping_context(monkeypatch):
+    class UnexpectedClaudeClient:
+        def __init__(self, api_key: str, model: str = ""):
+            pass
+
+        async def review_draft(self, subject):
+            raise AssertionError("incomplete listing context must block before provider call")
+
+    monkeypatch.setattr(reviews, "ClaudeReviewClient", UnexpectedClaudeClient)
+    client, testing_session = make_client()
+    with testing_session() as db:
+        listing = db.query(DraftListingConfig).one()
+        listing.store_id = None
+        listing.shipping_mode = ""
+        listing.shipping_logistic_type = ""
+        db.commit()
+
+    response = client.post("/api/reviews/claude?product_draft_id=1", json=draft_payload())
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "review_listing_context_incomplete",
+        "errors": [
+            "authorized_store_selection_required",
+            "non_full_shipping_mode_invalid",
+            "non_full_shipping_logistic_type_invalid",
+        ],
+    }
+    with testing_session() as db:
+        assert db.query(ReviewResult).count() == 0
+
+
+def test_provider_result_is_not_persisted_when_store_disconnects_during_review(monkeypatch):
+    class DisconnectingClaudeClient:
+        def __init__(self, api_key: str, model: str = ""):
+            pass
+
+        async def review_draft(self, subject):
+            with testing_session() as other_db:
+                store = other_db.get(Store, 1)
+                store.oauth_status = "disconnected"
+                other_db.commit()
+            return ReviewResponse(
+                provider="claude",
+                decision="pass",
+                risk_level="low",
+                reason_codes=[],
+                reasons=[],
+            )
+
+    monkeypatch.setattr(reviews, "ClaudeReviewClient", DisconnectingClaudeClient)
+    client, testing_session = make_client()
+
+    response = client.post("/api/reviews/claude?product_draft_id=1", json=draft_payload())
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "review_listing_context_not_current",
+        "errors": ["store_not_connected"],
+    }
+    with testing_session() as db:
+        assert db.query(ReviewResult).count() == 0
+
+
+def test_provider_review_rejects_full_logistic_type_before_provider_call(monkeypatch):
+    class UnexpectedNvidiaClient:
+        def __init__(self, api_key: str, model: str = ""):
+            pass
+
+        async def pre_screen_draft(self, subject):
+            raise AssertionError("FULL logistics must block before provider call")
+
+    monkeypatch.setattr(reviews, "NvidiaReviewClient", UnexpectedNvidiaClient)
+    client, testing_session = make_client()
+    with testing_session() as db:
+        listing = db.query(DraftListingConfig).one()
+        listing.shipping_logistic_type = "fulfillment"
+        db.commit()
+
+    response = client.post("/api/reviews/nvidia?product_draft_id=1", json=draft_payload())
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "review_listing_context_incomplete",
+        "errors": ["non_full_shipping_logistic_type_invalid"],
+    }
+
+
+def test_provider_review_rejects_non_classic_premium_listing_before_provider_call(monkeypatch):
+    class UnexpectedNvidiaClient:
+        def __init__(self, api_key: str, model: str = ""):
+            pass
+
+        async def pre_screen_draft(self, subject):
+            raise AssertionError("unsupported listing type must block before provider call")
+
+    monkeypatch.setattr(reviews, "NvidiaReviewClient", UnexpectedNvidiaClient)
+    client, testing_session = make_client()
+    with testing_session() as db:
+        listing = db.query(DraftListingConfig).one()
+        listing.listing_type_id = "gold_full"
+        db.commit()
+
+    response = client.post("/api/reviews/nvidia?product_draft_id=1", json=draft_payload())
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "review_listing_context_incomplete",
+        "errors": ["listing_type_not_supported"],
+    }
 
 
 def test_nvidia_review_can_persist_result_for_draft(monkeypatch):
@@ -251,7 +383,7 @@ def test_behavioral_audit_persists_both_provider_results_and_orchestration_audit
         assert [row.prompt_version for row in rows] == [
             "nvidia-prompt-v3",
             "claude-prompt-v2",
-            "meli-behavioral-audit-v2",
+            "meli-behavioral-audit-v4",
         ]
         assert all(row.duration_ms >= 0 for row in rows)
         assert all(row.provider_status == "completed" for row in rows)
