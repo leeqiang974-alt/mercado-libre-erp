@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -908,5 +908,9 @@ def _audit_publish_request(
 
 
 @router.get("/jobs", response_model=list[PublishJobRead])
-def get_publish_jobs(db: Session = Depends(get_db)) -> list[PublishJobRead]:
-    return list_publish_jobs(db)
+def get_publish_jobs(
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> list[PublishJobRead]:
+    return list_publish_jobs(db, limit=limit, offset=offset)

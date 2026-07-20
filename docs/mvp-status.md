@@ -67,6 +67,7 @@ Implemented:
 - Backend publish worker CLI for processing pending publish jobs in batches.
 - Persisted publish jobs for blocked, failed, and published execution attempts.
 - Publish job list API for reviewing status, errors, item IDs, and permalinks.
+- Publish job history is bounded and paginated, includes queued/started/completed timestamps, and the frontend polls only while pending or validating jobs exist. Terminal rows expose the Mercado Libre item id, permalink, normalized errors, manual refresh, and retry controls; polling stops when every visible job is terminal.
 - Publish job retry API and frontend retry control for blocked or failed jobs, preserving original job history and audit trail.
 - Audit event log for AI review and publish execution actions, with frontend audit page.
 - Alembic baseline migration for the current backend schema.
@@ -95,7 +96,7 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 369 passed, with 12 environment-specific tests skipped in the default run.
+- Backend suite: 370 passed, with 12 environment-specific tests skipped in the default run.
 - Isolated Docker PostgreSQL integration run: 8 passed, including serialized manual-snapshot recovery and refresh-token rotation, concurrent collection, publish-job, and source-variant draft deduplication, atomic draft-version invalidation, and a final publish-evidence row lock that blocks concurrent draft changes until publication completes.
 - PostgreSQL migrations through `20260721_0024` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, high-precision review execution costs, structured source snapshots, source-variant draft bindings, structured source measurements, provider usage/request telemetry, encrypted integration credentials, and a unique active price per provider/model.
 - The complete Alembic chain upgraded to head and downgraded to base successfully on a disposable D-drive SQLite database.

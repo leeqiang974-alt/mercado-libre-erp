@@ -325,3 +325,39 @@ def test_publish_jobs_can_be_listed():
     assert body[0]["id"] == 1
     assert body[0]["status"] == "blocked"
     assert body[0]["errors"] == ["live_publish_disabled"]
+    assert body[0]["created_at"]
+    assert body[0]["created_at"].endswith("Z")
+    assert body[0]["started_at"] is None
+    assert body[0]["completed_at"] is None
+
+
+def test_publish_jobs_list_is_bounded_and_paginated():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        db.add_all(
+            [
+                PublishJob(
+                    product_draft_id=1,
+                    store_id=1,
+                    requested_by="operator",
+                    status=PublishJobStatus.PENDING,
+                ),
+                PublishJob(
+                    product_draft_id=1,
+                    store_id=1,
+                    requested_by="operator",
+                    status=PublishJobStatus.BLOCKED,
+                ),
+            ]
+        )
+        db.commit()
+
+    first = client.get("/api/publishing/jobs?limit=1")
+    second = client.get("/api/publishing/jobs?limit=1&offset=1")
+    invalid = client.get("/api/publishing/jobs?limit=201")
+
+    assert first.status_code == 200
+    assert [item["id"] for item in first.json()] == [2]
+    assert second.status_code == 200
+    assert [item["id"] for item in second.json()] == [1]
+    assert invalid.status_code == 422

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   CheckCircle2,
+  ExternalLink,
   ListChecks,
   ListPlus,
   RefreshCw,
@@ -131,6 +132,7 @@ export function PublishingPage({
   const [availableQuantity, setAvailableQuantity] = useState("");
   const [shippingStatus, setShippingStatus] = useState("");
   const [jobs, setJobs] = useState<PublishJobRecord[]>([]);
+  const [jobsRefreshing, setJobsRefreshing] = useState(false);
   const [batchDrafts, setBatchDrafts] = useState<ProductDraftRead[]>([]);
   const [selectedBatchDraftIds, setSelectedBatchDraftIds] = useState<Set<number>>(new Set());
   const [batchPublishAcknowledged, setBatchPublishAcknowledged] = useState(false);
@@ -146,6 +148,33 @@ export function PublishingPage({
   const categorySelectionEpochRef = useRef(0);
   const categoryAttributesEpochRef = useRef(0);
   const batchPreflightEpochRef = useRef(0);
+  const publishJobsRequestEpochRef = useRef(0);
+  const publishJobsMountedRef = useRef(true);
+
+  const refreshPublishJobs = useCallback(async (showFeedback = false) => {
+    const requestEpoch = ++publishJobsRequestEpochRef.current;
+    if (showFeedback) setJobsRefreshing(true);
+    try {
+      const rows = await listPublishJobs();
+      if (
+        publishJobsMountedRef.current
+        && publishJobsRequestEpochRef.current === requestEpoch
+      ) {
+        setJobs(rows);
+        if (showFeedback) setStatus("Publish jobs refreshed");
+      }
+    } catch (error) {
+      if (
+        showFeedback
+        && publishJobsMountedRef.current
+        && publishJobsRequestEpochRef.current === requestEpoch
+      ) {
+        setStatus(error instanceof Error ? error.message : "Failed to refresh publish jobs");
+      }
+    } finally {
+      if (showFeedback && publishJobsMountedRef.current) setJobsRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -158,6 +187,30 @@ export function PublishingPage({
       });
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    publishJobsMountedRef.current = true;
+    void refreshPublishJobs(false);
+    return () => {
+      publishJobsMountedRef.current = false;
+      publishJobsRequestEpochRef.current += 1;
+    };
+  }, [refreshPublishJobs]);
+
+  useEffect(() => {
+    if (!jobs.some((job) => job.status === "pending" || job.status === "validating")) return;
+    let cancelled = false;
+    let timer = 0;
+    const poll = async () => {
+      await refreshPublishJobs(false);
+      if (!cancelled) timer = window.setTimeout(poll, 3000);
+    };
+    timer = window.setTimeout(poll, 3000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [jobs, refreshPublishJobs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -187,15 +240,13 @@ export function PublishingPage({
     Promise.all([
       getSystemReadiness(),
       listStores(),
-      listPublishJobs(),
       getListingTypes(nextSite),
       configRequest,
     ])
-      .then(([system, storeRows, jobRows, metadata, config]) => {
+      .then(([system, storeRows, metadata, config]) => {
         if (cancelled || initRequestEpochRef.current !== initEpoch) return;
         setReadiness(system);
         setStores(storeRows);
-        setJobs(jobRows);
         if (listingTypeRequestEpochRef.current === initialListingTypeEpoch) {
           setListingTypes(metadata.listing_type_ids);
           setListingTypesVerified(metadata.verified);
@@ -643,7 +694,7 @@ export function PublishingPage({
     try {
       const result = await executePublishFromDraft(draftId, Number(storeId), review, listingTypes, true);
       setExecution(result);
-      setJobs(await listPublishJobs());
+      await refreshPublishJobs(false);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to execute publish request");
     } finally {
@@ -658,7 +709,7 @@ export function PublishingPage({
     setBusy("queue");
     try {
       await enqueuePublishFromDraft(draftId, Number(storeId), review, listingTypes, true);
-      setJobs(await listPublishJobs());
+      await refreshPublishJobs(false);
       setStatus("Publish job queued");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to queue publish job");
@@ -671,7 +722,7 @@ export function PublishingPage({
     setBusy(`retry-${jobId}`);
     try {
       setExecution(await retryPublishJob(jobId));
-      setJobs(await listPublishJobs());
+      await refreshPublishJobs(false);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to retry publish job");
     } finally {
@@ -732,7 +783,7 @@ export function PublishingPage({
     try {
       const result = await enqueuePublishBatch(draftIds);
       setBatchPublishResult(result);
-      setJobs(await listPublishJobs());
+      await refreshPublishJobs(false);
       setSelectedBatchDraftIds(new Set());
       setBatchPublishAcknowledged(false);
       batchPreflightEpochRef.current += 1;
@@ -865,12 +916,23 @@ export function PublishingPage({
       )}
     </section>
   );
+  const publishJobsSection = (
+    <PublishJobHistory
+      jobs={jobs}
+      refreshing={jobsRefreshing}
+      busy={busy}
+      onRefresh={() => void refreshPublishJobs(true)}
+      onRetry={(jobId) => void retryJob(jobId)}
+    />
+  );
 
   if (!draft || !draftId) {
     return (
       <section className="workspace">
         <div className="empty-state">Select and prepare a saved draft before publishing.</div>
+        {status && <p className="status-line">{status}</p>}
         {batchPublishSection}
+        {publishJobsSection}
       </section>
     );
   }
@@ -1138,12 +1200,71 @@ export function PublishingPage({
 
       {status && <p className="status-line">{status}</p>}
       {batchPublishSection}
-      {jobs.length > 0 && <section className="saved-section"><div className="section-heading"><div><h3>Publish jobs</h3></div><span>{jobs.length}</span></div><div className="job-list">{jobs.map((job) => {
-        const canRetry = (job.status === "blocked" || job.status === "failed") && !job.errors.includes("publish_outcome_unknown_manual_reconciliation_required");
-        return <div className="job-row" key={job.id}><span>#{job.id} · draft #{job.product_draft_id} · store #{job.store_id}{job.shipping_mode ? ` · ${job.shipping_mode}` : ""}{job.shipping_logistic_type ? `/${job.shipping_logistic_type}` : ""}</span><strong>{job.status}</strong><button className="secondary-button" disabled={!canRetry || Boolean(job.item_id) || busy === `retry-${job.id}`} onClick={() => retryJob(job.id)}><RefreshCw size={16} /> Retry</button></div>;
-      })}</div></section>}
+      {publishJobsSection}
     </section>
   );
+}
+
+function PublishJobHistory({
+  jobs,
+  refreshing,
+  busy,
+  onRefresh,
+  onRetry,
+}: {
+  jobs: PublishJobRecord[];
+  refreshing: boolean;
+  busy: string;
+  onRefresh: () => void;
+  onRetry: (jobId: number) => void;
+}) {
+  return (
+    <section className="saved-section">
+      <div className="section-heading publish-job-heading">
+        <div><h3>Publish jobs</h3></div>
+        <div className="section-heading-actions">
+          <span>{jobs.length}</span>
+          <button className="icon-button" title="Refresh publish jobs" disabled={refreshing} onClick={onRefresh}>
+            <RefreshCw className={refreshing ? "spin" : ""} size={17} />
+          </button>
+        </div>
+      </div>
+      {jobs.length === 0 ? <p>No publish jobs yet.</p> : (
+        <div className="job-list">
+          {jobs.map((job) => {
+            const canRetry = (job.status === "blocked" || job.status === "failed")
+              && !job.errors.includes("publish_outcome_unknown_manual_reconciliation_required");
+            const stateClass = job.status === "published"
+              ? "ready"
+              : job.status === "blocked" || job.status === "failed" ? "blocked" : "";
+            return (
+              <div className="job-row" key={job.id}>
+                <span className="job-details">
+                  <strong>#{job.id} · draft #{job.product_draft_id}</strong>
+                  <small>Store #{job.store_id}{job.shipping_mode ? ` · ${job.shipping_mode}` : ""}{job.shipping_logistic_type ? `/${job.shipping_logistic_type}` : ""}</small>
+                  <small>Queued {formatJobTime(job.created_at)}</small>
+                  {job.started_at && <small>Started {formatJobTime(job.started_at)}</small>}
+                  {job.completed_at && <small>Completed {formatJobTime(job.completed_at)}</small>}
+                  {job.item_id && <small>Item {job.item_id}</small>}
+                  {job.errors.length > 0 && <small className="error">{job.errors.map(readablePublishError).join(", ")}</small>}
+                </span>
+                <span className={`state-pill ${stateClass}`}>{job.status}</span>
+                <span className="job-actions">
+                  {job.permalink && <a className="icon-text-button" href={job.permalink} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Open listing</a>}
+                  <button className="secondary-button" disabled={!canRetry || Boolean(job.item_id) || busy === `retry-${job.id}`} onClick={() => onRetry(job.id)}><RefreshCw size={16} /> Retry</button>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function formatJobTime(value: string) {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
 
 function ProgressItem({ label, ready }: { label: string; ready: boolean }) {

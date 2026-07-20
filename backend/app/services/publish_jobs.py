@@ -13,6 +13,14 @@ from app.schemas.publishing import ListingChoice, PublishExecutionResult, Publis
 from app.schemas.reviews import ReviewResponse
 
 
+def _utc_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 def create_publish_job(
     db: Session,
     product_draft_id: int,
@@ -205,11 +213,21 @@ def to_publish_job_read(job: PublishJob) -> PublishJobRead:
         shipping_mode=response_summary.get("shipping_mode", ""),
         shipping_logistic_type=response_summary.get("shipping_logistic_type", ""),
         errors=response_summary.get("errors", []),
+        created_at=_utc_datetime(job.created_at),
+        started_at=_utc_datetime(job.started_at),
+        completed_at=_utc_datetime(job.completed_at),
     )
 
 
-def list_publish_jobs(db: Session) -> list[PublishJobRead]:
-    return [to_publish_job_read(job) for job in db.query(PublishJob).order_by(PublishJob.id.desc()).all()]
+def list_publish_jobs(db: Session, *, limit: int = 100, offset: int = 0) -> list[PublishJobRead]:
+    jobs = (
+        db.query(PublishJob)
+        .order_by(PublishJob.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return [to_publish_job_read(job) for job in jobs]
 
 
 def get_publish_job_or_404(db: Session, job_id: int) -> PublishJob:

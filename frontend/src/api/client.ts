@@ -207,6 +207,9 @@ export type PublishJobRecord = {
   shipping_mode: string;
   shipping_logistic_type: string;
   errors: string[];
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
 };
 
 export type PublishBatchEnqueueResult = {
@@ -900,8 +903,9 @@ export async function refreshCategoryAttributes(categoryId: string) {
   }>;
 }
 
-export async function listPublishJobs() {
-  const response = await fetch(`${API_BASE}/api/publishing/jobs`);
+export async function listPublishJobs(limit = 100, offset = 0) {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  const response = await fetch(`${API_BASE}/api/publishing/jobs?${params}`);
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<PublishJobRecord[]>;
 }
