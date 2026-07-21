@@ -19,6 +19,7 @@ from app.services.meli.category_validation import (
     validate_category_attributes,
 )
 from app.services.meli.listing_type_validation import validate_store_category_listing_type
+from app.services.source_products import source_variant_evidence_error
 
 
 def upsert_draft_listing_config(
@@ -31,6 +32,11 @@ def upsert_draft_listing_config(
     )
     if draft is None:
         raise HTTPException(status_code=404, detail="Product draft not found.")
+    if source_error := source_variant_evidence_error(db, draft):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "source_evidence_stale", "errors": [source_error]},
+        )
     if payload.store_id is not None:
         store = db.get(Store, payload.store_id)
         if store is None:
@@ -163,6 +169,11 @@ def build_configured_draft(
     draft = db.scalar(statement)
     if draft is None:
         raise HTTPException(status_code=404, detail="Product draft not found.")
+    if source_error := source_variant_evidence_error(db, draft):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "source_evidence_stale", "errors": [source_error]},
+        )
     config = get_draft_listing_config(db, product_draft_id)
     require_current_draft_pricing(db, draft)
     category_errors = validate_category_attributes(

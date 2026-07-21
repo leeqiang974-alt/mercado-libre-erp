@@ -212,6 +212,13 @@ def test_source_variant_collection_job_persists_variant_page_evidence(monkeypatc
     assert executed.json()["status"] == "completed"
     assert executed.json()["source_product"]["asin"] == "B000TEST02"
     assert executed.json()["source_product"]["source_price"] == 31.5
+    resolved = client.post(
+        f"/api/imports/source-products/{source_id}/variants/B000TEST02/draft",
+        json={"target_site_id": "MLB"},
+    )
+    assert resolved.status_code == 200
+    assert resolved.json()["id"] == executed.json()["draft_id"]
+    assert resolved.json()["source_product_id"] == executed.json()["source_product_id"]
     with testing_session() as db:
         collected_source = db.get(SourceProduct, executed.json()["source_product_id"])
         assert collected_source.image_urls_json == ["https://example.com/blue-hires.jpg"]
@@ -712,24 +719,16 @@ def test_running_collection_job_persists_source_and_draft(monkeypatch):
         "/api/imports/source-products/1/variants/B000TEST02/draft",
         json={"target_site_id": "MLM"},
     )
-    assert variant_draft.status_code == 200
-    assert variant_draft.json()["id"] == 2
-    assert variant_draft.json()["source_product_id"] == 1
-    assert variant_draft.json()["source_variant_asin"] == "B000TEST02"
-    assert variant_draft.json()["source_variant_attributes"] == {"Color": "Blue"}
-    assert variant_draft.json()["image_urls"] == ["https://example.com/blue.jpg"]
-    assert variant_draft.json()["source_price"] is None
-    assert variant_draft.json()["source_currency"] == "USD"
-    assert "Amazon variant:\nColor: Blue" in variant_draft.json()["description"]
+    assert variant_draft.status_code == 409
+    assert variant_draft.json()["detail"] == "variant_page_collection_required"
 
     repeated = client.post(
         "/api/imports/source-products/1/variants/B000TEST02/draft",
         json={"target_site_id": "MLM"},
     )
-    assert repeated.status_code == 200
-    assert repeated.json()["id"] == 2
+    assert repeated.status_code == 409
     with testing_session() as db:
-        assert db.query(ProductDraft).count() == 2
+        assert db.query(ProductDraft).count() == 1
 
     missing_variant = client.post(
         "/api/imports/source-products/1/variants/B000TEST99/draft",

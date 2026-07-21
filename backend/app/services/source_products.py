@@ -14,6 +14,11 @@ from app.services.amazon.parser import extract_amazon_asin
 from app.services.amazon.normalizer import normalize_amazon_product
 from app.services.drafts import create_product_draft
 
+EXACT_PAGE_EVIDENCE_STATUSES = {
+    SourceProductStatus.COLLECTED,
+    SourceProductStatus.NEEDS_MANUAL_ACTION,
+}
+
 
 def create_source_product(
     db: Session,
@@ -137,6 +142,21 @@ def create_or_get_source_variant_draft(
 ) -> tuple[ProductDraft, bool]:
     normalized_asin = variant_asin.strip().upper()
     source_id = source.id
+    source_read = to_source_product_read(source)
+    snapshot = source_read.snapshot
+    if snapshot is None:
+        raise ValueError("source_snapshot_unavailable")
+    variant = next(
+        (item for item in snapshot.variants if item.asin == normalized_asin),
+        None,
+    )
+    if variant is None:
+        raise LookupError("source_variant_not_found")
+
+    selected_asin, _ = selected_source_variant(snapshot, source.asin)
+    if variant.asin != selected_asin:
+        raise ValueError("variant_page_collection_required")
+
     existing = (
         db.query(ProductDraft)
         .filter(
@@ -149,26 +169,9 @@ def create_or_get_source_variant_draft(
     if existing is not None:
         return existing, False
 
-    source_read = to_source_product_read(source)
-    snapshot = source_read.snapshot
-    if snapshot is None:
-        raise ValueError("source_snapshot_unavailable")
-    variant = next(
-        (item for item in snapshot.variants if item.asin == normalized_asin),
-        None,
-    )
-    if variant is None:
-        raise LookupError("source_variant_not_found")
-
     draft_snapshot = snapshot.model_dump()
     if variant.image_urls:
         draft_snapshot["images"] = variant.image_urls
-    selected_asin, _ = selected_source_variant(snapshot, source.asin)
-    if variant.asin != selected_asin:
-        draft_snapshot["price"] = {
-            "amount": None,
-            "currency": snapshot.price.currency,
-        }
     draft = normalize_amazon_product(draft_snapshot, target_site_id)
     if variant.attributes:
         variant_lines = "\n".join(
@@ -203,3 +206,19 @@ def create_or_get_source_variant_draft(
         return winner, False
     db.refresh(model)
     return model, True
+
+
+def source_variant_evidence_error(
+    db: Session, draft: ProductDraft
+) -> str | None:
+    variant_asin = (draft.source_variant_asin or "").strip().upper()
+    if draft.source_product_id is None or not variant_asin:
+        return None
+    source = db.get(SourceProduct, draft.source_product_id)
+    if (
+        source is not None
+        and source.raw_status in EXACT_PAGE_EVIDENCE_STATUSES
+        and source.asin.strip().upper() == variant_asin
+    ):
+        return None
+    return "variant_page_collection_required"

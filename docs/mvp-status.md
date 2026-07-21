@@ -20,8 +20,8 @@ Implemented:
 - Amazon `colorImages`/`colorToAsin` page data supplies high-resolution galleries before DOM thumbnails, including single-quoted JavaScript objects and maximum-area `main` image maps; displayed-ASIN validation prevents redirected pages from contaminating the requested product, and each discovered color ASIN receives only its own authoritative script gallery.
 - JSON5-style Amazon script objects with unquoted keys, comments, trailing commas, and JavaScript `undefined` values retain their variant dimensions and per-ASIN image galleries instead of being discarded.
 - Collection history exposes a lightweight source summary and a lazy-loaded review panel for the full image gallery and variant evidence on desktop and mobile.
-- Operators can create an idempotent, site-specific draft from any discovered Amazon variant; the draft retains its source ASIN/attributes and prefers variant-specific images.
-- Non-selected Amazon variants can be queued for an independent page collection from the source review. The API preserves the Amazon country domain, validates snapshot membership, reuses the canonical site/ASIN/Mercado Libre-site task, and lets the resulting source and draft retain that variant's own price, images, and measurements.
+- Operators can create an idempotent, site-specific draft from the Amazon variant actually displayed by the collected page; the draft retains its source ASIN/attributes and page evidence.
+- Non-selected Amazon variants must be queued for an independent page collection from the source review before they can become drafts. The API preserves the Amazon country domain, validates snapshot membership, reuses the canonical domain/ASIN/Mercado Libre-site task, and resolves only the draft bound to that completed variant page; parent-page titles, prices, descriptions, and measurements cannot be relabeled as sibling-ASIN evidence.
 - Source review can queue up to 100 missing variants in one locked batch, reporting created/reused/selected counts. Duplicate ASIN rows collapse with selected precedence, and ID-based status polling keeps batch tasks current even when they fall outside the latest-100 queue window.
 - Saved drafts expose their Amazon ASIN and variant attributes so operators can distinguish otherwise identical titles.
 - Saved drafts can edit title, description, brand, and up to 12 product image URLs without changing Amazon source-price evidence or bypassing listing configuration. Every real content change atomically advances `content_version`, invalidates old AI review/approval evidence, and uses optimistic concurrency so a stale browser cannot overwrite a newer edit.
@@ -30,6 +30,7 @@ Implemented:
 - Every numbered Amazon technical-specification table is scanned. Composite dimension rows can also supply an inline item/package weight, while a dedicated weight row always takes precedence regardless of HTML row order.
 - Structured measurements recognize conservative localized labels and units for Spanish, Brazilian Portuguese, German, French, Italian, Dutch, and Japanese Amazon detail tables. Latin diacritics are normalized without altering non-Latin scripts.
 - Selected-page measurements can suggest explicit Mercado Libre weight and dimension attributes only for the selected Amazon ASIN, preventing a sibling variant from inheriting unverified logistics data.
+- Existing drafts whose source ASIN and claimed variant ASIN do not match are rejected by listing-configuration and shared review/publish gates until the exact variant page is collected.
 - Verified Mercado Libre category metadata produces conservative Amazon-to-Mercado Libre attribute suggestions; exact enumerated matches preserve `value_id`, ambiguous list values require manual entry, and mapped optional attributes remain editable.
 - Listing configuration and publish validation enforce both `required` and `catalog_required` attributes, reject unknown category IDs and invalid enumerated value IDs when verified definitions are present, and translate common attribute failures into operator-facing messages.
 - Local AI review policy.
@@ -97,7 +98,7 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 374 passed, with 13 environment-specific tests skipped in the default run.
+- Backend suite: 375 passed, with 13 environment-specific tests skipped in the default run.
 - Isolated Docker PostgreSQL integration run: 8 passed, including serialized manual-snapshot recovery and refresh-token rotation, concurrent collection, publish-job, and source-variant draft deduplication, atomic draft-version invalidation, and a final publish-evidence row lock that blocks concurrent draft changes until publication completes.
 - A dedicated disposable PostgreSQL run verified that pending-job cancellation and worker claiming are mutually exclusive; its migrated database was dropped after the test and PostgreSQL reported zero matching temporary databases.
 - PostgreSQL migrations through `20260721_0028` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, high-precision review execution costs, structured source snapshots, source-variant draft bindings, structured source measurements, provider usage/request telemetry, encrypted integration credentials, unique active provider/model pricing, persistent Amazon throttling, explicit inventory confirmation, and queued combined reviews.

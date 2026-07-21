@@ -772,24 +772,30 @@ export function ImportPage({
                                           : "Collect variant"}
                                       </button>
                                     )}
-                                    <button
-                                      className="icon-text-button"
-                                      disabled={isBusy}
-                                      onClick={() => void useSourceVariant(
-                                        job.source_product!.id,
-                                        variant.asin,
-                                        job.target_site_id,
-                                      )}
-                                    >
-                                      {busyAction === `variant-${variantKey}` ? (
-                                        <LoaderCircle className="spin" size={14} />
-                                      ) : (
-                                        <FilePlus2 size={14} />
-                                      )}
-                                      {variantDraftIds[`${job.source_product!.id}:${variant.asin}:${job.target_site_id}`]
-                                        ? `Draft #${variantDraftIds[`${job.source_product!.id}:${variant.asin}:${job.target_site_id}`]}`
-                                        : `Create ${job.target_site_id} draft`}
-                                    </button>
+                                    {variant.selected && job.draft_id ? (
+                                      <span className="record-id">Draft #{job.draft_id}</span>
+                                    ) : variant.selected ? (
+                                      <button
+                                        className="icon-text-button"
+                                        disabled={isBusy}
+                                        onClick={() => void useSourceVariant(
+                                          job.source_product!.id,
+                                          variant.asin,
+                                          job.target_site_id,
+                                        )}
+                                      >
+                                        {busyAction === `variant-${variantKey}` ? (
+                                          <LoaderCircle className="spin" size={14} />
+                                        ) : (
+                                          <FilePlus2 size={14} />
+                                        )}
+                                        {variantDraftIds[`${job.source_product!.id}:${variant.asin}:${job.target_site_id}`]
+                                          ? `Draft #${variantDraftIds[`${job.source_product!.id}:${variant.asin}:${job.target_site_id}`]}`
+                                          : `Create ${job.target_site_id} draft`}
+                                      </button>
+                                    ) : variantJob?.status === "completed" && variantJob.draft_id ? (
+                                      <span className="record-id">Draft #{variantJob.draft_id}</span>
+                                    ) : null}
                                   </span>
                                   );
                                 })}

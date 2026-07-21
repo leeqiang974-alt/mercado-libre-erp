@@ -78,6 +78,7 @@ function readablePublishError(value: string) {
   if (value === "listing_types_not_verified") return "Refresh seller/category listing eligibility before publishing.";
   if (value === "listing_type_not_available") return "This listing type is not available for the selected seller and category.";
   if (value === "publish_cancelled_by_operator") return "Cancelled by the operator before worker claim.";
+  if (value === "variant_page_collection_required") return "Collect this exact Amazon variant page before review or publishing.";
   if (value === "category_attributes_not_verified") return "Refresh verified category attributes before publishing.";
   if (value.startsWith("required_category_attribute_missing:")) {
     return `${value.split(":", 2)[1]} is required.`;

@@ -201,6 +201,45 @@ def test_listing_config_can_be_saved_and_read_for_draft():
         assert draft.condition == "new"
 
 
+def test_parent_page_variant_evidence_cannot_enter_review_or_listing_config():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        source = SourceProduct(
+            source_url="https://amazon.com/dp/B000TEST01",
+            asin="B000TEST01",
+            raw_status=SourceProductStatus.COLLECTED,
+        )
+        db.add(source)
+        db.flush()
+        draft = db.get(ProductDraft, 1)
+        draft.source_product_id = source.id
+        draft.source_variant_asin = "B000TEST02"
+        db.commit()
+
+    saved = client.put("/api/drafts/1/listing-config", json=config_payload())
+    reviewed = client.post(
+        "/api/reviews/local?product_draft_id=1",
+        json={
+            "title": "Bottle",
+            "target_site_id": "MLM",
+            "target_category_id": "MLM123",
+            "price": 9.99,
+            "currency": "MXN",
+            "stock": 2,
+            "image_urls": ["https://example.com/a.jpg"],
+        },
+    )
+
+    expected = {
+        "code": "source_evidence_stale",
+        "errors": ["variant_page_collection_required"],
+    }
+    assert saved.status_code == 409
+    assert saved.json()["detail"] == expected
+    assert reviewed.status_code == 409
+    assert reviewed.json()["detail"] == expected
+
+
 def test_listing_config_requires_explicit_inventory_confirmation():
     client, _ = make_client()
     missing = config_payload()

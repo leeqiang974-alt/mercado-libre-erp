@@ -24,12 +24,14 @@ from app.services.amazon.throttle import record_domain_outcome, reserve_domain_r
 from app.services.drafts import create_product_draft, to_draft_read
 from app.services.audit_events import create_audit_event
 from app.services.source_products import (
+    EXACT_PAGE_EVIDENCE_STATUSES,
     create_or_get_source_variant_draft,
     create_source_product,
     selected_source_variant,
     to_source_product_read,
 )
 from app.models.source_product import SourceProduct, SourceProductStatus
+from app.models.product_draft import ProductDraft
 from app.services.collection_jobs import (
     create_collection_job,
     create_collection_jobs,
@@ -428,15 +430,68 @@ def create_source_variant_product_draft(
     if source is None:
         raise HTTPException(status_code=404, detail="Source product not found.")
     target_site_id = _target_site_or_422(payload.target_site_id)
+    normalized_asin = variant_asin.strip().upper()
+    source_read = to_source_product_read(source)
+    snapshot = source_read.snapshot
+    if snapshot is None:
+        raise HTTPException(status_code=409, detail="source_snapshot_unavailable")
+    variant = next(
+        (item for item in snapshot.variants if item.asin == normalized_asin),
+        None,
+    )
+    if variant is None:
+        raise HTTPException(status_code=404, detail="source_variant_not_found")
+    selected_asin, _ = selected_source_variant(snapshot, source.asin)
+    if normalized_asin != selected_asin:
+        exact_draft = _completed_variant_page_draft(
+            db,
+            source,
+            normalized_asin,
+            target_site_id,
+        )
+        if exact_draft is None:
+            raise HTTPException(
+                status_code=409,
+                detail="variant_page_collection_required",
+            )
+        return to_draft_read(exact_draft)
     try:
         draft, _ = create_or_get_source_variant_draft(
-            db, source, variant_asin, target_site_id
+            db, source, normalized_asin, target_site_id
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return to_draft_read(draft)
+
+
+def _completed_variant_page_draft(
+    db: Session,
+    parent_source: SourceProduct,
+    variant_asin: str,
+    target_site_id: str,
+) -> ProductDraft | None:
+    normalized_source_url = _normalized_amazon_url_or_422(parent_source.source_url)
+    source_parts = urlparse(normalized_source_url)
+    variant_url = f"{source_parts.scheme}://{source_parts.netloc}/dp/{variant_asin}"
+    return (
+        db.query(ProductDraft)
+        .join(CollectionJob, CollectionJob.draft_id == ProductDraft.id)
+        .join(SourceProduct, CollectionJob.source_product_id == SourceProduct.id)
+        .filter(
+            CollectionJob.source_identity == variant_url,
+            CollectionJob.target_site_id == target_site_id,
+            CollectionJob.status == CollectionJobStatus.COMPLETED,
+            SourceProduct.raw_status.in_(EXACT_PAGE_EVIDENCE_STATUSES),
+            func.upper(SourceProduct.asin) == variant_asin,
+            ProductDraft.source_product_id == SourceProduct.id,
+            func.upper(ProductDraft.source_variant_asin) == variant_asin,
+            ProductDraft.target_site_id == target_site_id,
+        )
+        .order_by(CollectionJob.id.desc(), ProductDraft.id.desc())
+        .first()
+    )
 
 
 @router.post(

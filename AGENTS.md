@@ -48,6 +48,7 @@
 - Mercado Libre OAuth authorization must use the marketplace domain for the selected site. Bind that site into the signed OAuth state and reject the callback before token persistence when `/users/me.site_id` differs from the requested site.
 - Every browser-based Amazon collection path must reserve a per-marketplace-domain request slot through persistent database coordination. CAPTCHA challenges require exponential backoff that survives worker restarts; never issue an immediate second page request inside one job. Reuse collected evidence only for the exact normalized Amazon domain and ASIN, and expose deferred execution time to the operator.
 - Amazon collection must not infer sale condition or available inventory. Require the operator to confirm inventory and choose the verified category-specific `ITEM_CONDITION` before AI review or publishing. Keep Amazon source price/currency separate from target price/currency; never backfill one from the other.
+- A discovered sibling ASIN is navigation evidence, not product evidence. Never create, review, or publish its draft from the parent ASIN snapshot; require a completed collection of that exact Amazon domain/ASIN/site and reuse the draft bound to the collected source page.
 
 ## Verification
 
