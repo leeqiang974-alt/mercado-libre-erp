@@ -3,6 +3,8 @@ services:
     image: mvp-skeleton-backend:latest
     build:
       context: ./backend
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
     command: ["true"]
     restart: "no"
 
@@ -118,7 +120,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: python:3.12-slim
+    image: ${PYTHON_RUNTIME_IMAGE:-python:3.12-slim}
     init: true
     depends_on:
       backend:
@@ -131,7 +133,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: postgres:16
+    image: ${POSTGRES_IMAGE:-postgres:16}
     environment:
       POSTGRES_USER: meli
       POSTGRES_PASSWORD: meli
@@ -146,7 +148,7 @@ services:
       timeout: 5s
       retries: 10
   redis:
-    image: redis:7
+    image: ${REDIS_IMAGE:-redis:7}
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
