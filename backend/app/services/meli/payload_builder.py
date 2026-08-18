@@ -19,6 +19,7 @@ def build_item_payload(
     listing_choice: ListingChoice,
     shipping_mode: str | None = None,
     shipping_logistic_type: str | None = None,
+    seller_custom_field: str = "",
 ) -> dict:
     if listing_choice.fulfillment.lower() == "full":
         raise ValueError("FULL fulfillment is excluded from this system.")
@@ -83,6 +84,8 @@ def build_item_payload(
         }
         if shipping_mode == "me2":
             payload["shipping"]["free_methods"] = []
+    if seller_custom_field:
+        payload["seller_custom_field"] = seller_custom_field
     return payload
 
 

@@ -180,6 +180,9 @@ async def run_pending_publish_job(
                     publisher=publisher,
                     allow_live_publish=allow_live_publish,
                     token_encryption_key=token_encryption_key,
+                    publish_reference=(job.request_summary_json or {}).get(
+                        "publish_reference", ""
+                    ),
                 )
     except HTTPException as exc:
         result = PublishExecutionResult(
@@ -208,8 +211,13 @@ async def _publish_job(
     publisher: Publisher | None,
     allow_live_publish: bool | None,
     token_encryption_key: str | None,
+    publish_reference: str,
 ) -> PublishExecutionResult:
     settings = get_settings()
+    if not publish_reference:
+        return PublishExecutionResult(
+            status="blocked", errors=["publish_reference_required"]
+        )
     access_token = await resolve_fresh_store_access_token(
         db=db,
         store=store,
@@ -281,6 +289,7 @@ async def _publish_job(
             allow_live_publish=(
                 settings.allow_live_publish if allow_live_publish is None else allow_live_publish
             ),
+            publish_reference=publish_reference,
         )
     except Exception:
         return PublishExecutionResult(

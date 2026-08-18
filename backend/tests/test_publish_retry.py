@@ -129,10 +129,14 @@ def teardown_function():
 
 def job_summary():
     return {
+        "publish_reference": "amp-0123456789abcdef0123456789abcdef",
         "title": "Persisted Bottle",
+        "description": "Leak proof.",
         "site_id": "MLM",
         "category_id": "MLM123",
         "listing_type_id": "gold_special",
+        "shipping_mode": "me2",
+        "shipping_logistic_type": "drop_off",
         "review_provider": "claude+nvidia_behavioral_audit",
         "review_result_id": 1,
         "review_decision": "pass",
@@ -141,6 +145,302 @@ def job_summary():
         "review_reasons": [],
         "review_suggested_changes": {},
     }
+
+
+def seed_unknown_publish_job(testing_session):
+    with testing_session() as db:
+        db.add(
+            PublishJob(
+                product_draft_id=1,
+                store_id=1,
+                requested_by="operator",
+                status=PublishJobStatus.BLOCKED,
+                request_summary_json=job_summary(),
+                response_summary_json={
+                    "status": "blocked",
+                    "errors": [
+                        "publish_outcome_unknown_manual_reconciliation_required"
+                    ],
+                },
+            )
+        )
+        db.commit()
+
+
+def reconciled_item(**updates):
+    return {
+        "id": "MLM999",
+        "seller_id": "seller-1",
+        "seller_custom_field": "amp-0123456789abcdef0123456789abcdef",
+        "site_id": "MLM",
+        "category_id": "MLM123",
+        "listing_type_id": "gold_special",
+        "status": "active",
+        "permalink": "https://example.com/MLM999",
+        "shipping": {"mode": "me2", "logistic_type": "drop_off"},
+    } | updates
+
+
+def test_unknown_publish_job_reconciles_one_exact_item(monkeypatch):
+    async def fake_get(self, path):
+        assert self.access_token == "access-token"
+        if path.startswith("/users/seller-1/items/search?sku="):
+            return {"results": ["MLM999"], "paging": {"total": 1}}
+        if path == "/items/MLM999":
+            return reconciled_item()
+        assert path == "/items/MLM999/description"
+        return {"plain_text": "Leak proof."}
+
+    async def fake_post(self, path, payload):
+        raise AssertionError("An already matching description must not be posted again.")
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing.MercadoLibreClient, "get", fake_get)
+    monkeypatch.setattr(publishing.MercadoLibreClient, "post", fake_post)
+    client, testing_session = make_client()
+    seed_unknown_publish_job(testing_session)
+
+    response = client.post("/api/publishing/jobs/1/reconcile")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "published"
+    assert response.json()["item_id"] == "MLM999"
+    with testing_session() as db:
+        job = db.get(PublishJob, 1)
+        assert job.status == PublishJobStatus.PUBLISHED
+        assert job.meli_item_id == "MLM999"
+        event = db.query(AuditEvent).filter(AuditEvent.action == "publish.reconciled").one()
+        assert event.after_json["match_count"] == 1
+
+
+def test_unknown_publish_reconciliation_keeps_zero_or_multiple_matches_blocked(
+    monkeypatch,
+):
+    results = []
+
+    async def fake_get(self, path):
+        assert path.startswith("/users/seller-1/items/search?sku=")
+        return {"results": results, "paging": {"total": len(results)}}
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing.MercadoLibreClient, "get", fake_get)
+    client, testing_session = make_client()
+    seed_unknown_publish_job(testing_session)
+
+    no_match = client.post("/api/publishing/jobs/1/reconcile")
+    results.extend(["MLM999", "MLM998"])
+    multiple = client.post("/api/publishing/jobs/1/reconcile")
+
+    assert no_match.status_code == 200
+    assert no_match.json()["errors"] == [
+        "publish_outcome_unknown_manual_reconciliation_required",
+        "publish_reconciliation_no_match",
+    ]
+    assert multiple.status_code == 200
+    assert multiple.json()["errors"] == [
+        "publish_outcome_unknown_manual_reconciliation_required",
+        "publish_reconciliation_multiple_matches",
+    ]
+    with testing_session() as db:
+        assert db.get(PublishJob, 1).status == PublishJobStatus.BLOCKED
+
+
+def test_unknown_publish_reconciliation_closes_mismatched_item(monkeypatch):
+    async def fake_get(self, path):
+        if path.startswith("/users/seller-1/items/search?sku="):
+            return {"results": ["MLM999"], "paging": {"total": 1}}
+        return reconciled_item(listing_type_id="gold_pro")
+
+    async def fake_put(self, path, payload):
+        assert path == "/items/MLM999"
+        assert payload == {"status": "closed"}
+        return {"status": "closed"}
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing.MercadoLibreClient, "get", fake_get)
+    monkeypatch.setattr(publishing.MercadoLibreClient, "put", fake_put)
+    client, testing_session = make_client()
+    seed_unknown_publish_job(testing_session)
+
+    response = client.post("/api/publishing/jobs/1/reconcile")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["item_id"] == "MLM999"
+    assert response.json()["errors"] == ["meli_publish_listing_type_mismatch"]
+
+
+def test_unknown_publish_reconciliation_closes_item_when_shipping_changed(monkeypatch):
+    async def fake_get(self, path):
+        if path.startswith("/users/seller-1/items/search?sku="):
+            return {"results": ["MLM999"], "paging": {"total": 1}}
+        return reconciled_item(
+            shipping={"mode": "me2", "logistic_type": "self_service"}
+        )
+
+    async def fake_put(self, path, payload):
+        assert path == "/items/MLM999"
+        assert payload == {"status": "closed"}
+        return {"status": "closed"}
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing.MercadoLibreClient, "get", fake_get)
+    monkeypatch.setattr(publishing.MercadoLibreClient, "put", fake_put)
+    client, testing_session = make_client()
+    seed_unknown_publish_job(testing_session)
+
+    response = client.post("/api/publishing/jobs/1/reconcile")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["errors"] == ["meli_publish_logistic_type_mismatch"]
+
+
+def test_unknown_publish_reconciliation_rejects_legacy_job_without_reference(monkeypatch):
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    client, testing_session = make_client()
+    seed_unknown_publish_job(testing_session)
+    with testing_session() as db:
+        job = db.get(PublishJob, 1)
+        job.request_summary_json = {"site_id": "MLM"}
+        db.commit()
+
+    response = client.post("/api/publishing/jobs/1/reconcile")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Publish job predates searchable reconciliation references."
+    )
+
+
+def test_unknown_publish_reconciliation_keeps_unknown_when_token_is_missing(
+    monkeypatch,
+):
+    async def no_token(**kwargs):
+        return ""
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing, "resolve_fresh_store_access_token", no_token)
+    client, testing_session = make_client()
+    seed_unknown_publish_job(testing_session)
+
+    response = client.post("/api/publishing/jobs/1/reconcile")
+    retry = client.post("/api/publishing/jobs/1/retry")
+
+    assert response.status_code == 200
+    assert response.json()["errors"] == [
+        "publish_outcome_unknown_manual_reconciliation_required",
+        "store_access_token_required",
+    ]
+    assert retry.status_code == 409
+
+
+def test_unknown_publish_reconciliation_uses_search_total_not_first_page(monkeypatch):
+    async def fake_get(self, path):
+        assert path.startswith("/users/seller-1/items/search?sku=")
+        return {"results": ["MLM999"], "paging": {"total": 2}}
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing.MercadoLibreClient, "get", fake_get)
+    client, testing_session = make_client()
+    seed_unknown_publish_job(testing_session)
+
+    response = client.post("/api/publishing/jobs/1/reconcile")
+
+    assert response.status_code == 200
+    assert response.json()["errors"] == [
+        "publish_outcome_unknown_manual_reconciliation_required",
+        "publish_reconciliation_multiple_matches",
+    ]
+
+
+def test_unknown_publish_reconciliation_never_closes_unconfirmed_identity(monkeypatch):
+    async def fake_get(self, path):
+        if path.startswith("/users/seller-1/items/search?sku="):
+            return {"results": ["MLM999"], "paging": {"total": 1}}
+        assert path == "/items/MLM999"
+        return reconciled_item(seller_custom_field="someone-elses-reference")
+
+    async def unexpected_put(self, path, payload):
+        raise AssertionError("An item with unconfirmed identity must never be closed.")
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing.MercadoLibreClient, "get", fake_get)
+    monkeypatch.setattr(publishing.MercadoLibreClient, "put", unexpected_put)
+    client, testing_session = make_client()
+    seed_unknown_publish_job(testing_session)
+
+    response = client.post("/api/publishing/jobs/1/reconcile")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "blocked"
+    assert response.json()["item_id"] == "MLM999"
+    assert response.json()["errors"] == [
+        "meli_publish_reference_mismatch",
+        "publish_outcome_unknown_manual_reconciliation_required",
+    ]
+
+
+def test_unknown_publish_reconciliation_rejects_mismatched_item_response_id(monkeypatch):
+    async def fake_get(self, path):
+        assert path == "/items/MLM999"
+        return reconciled_item(id="MLM998")
+
+    async def unexpected_put(self, path, payload):
+        raise AssertionError("A mismatched response item must never be closed.")
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing.MercadoLibreClient, "get", fake_get)
+    monkeypatch.setattr(publishing.MercadoLibreClient, "put", unexpected_put)
+    client, testing_session = make_client()
+    seed_unknown_publish_job(testing_session)
+    with testing_session() as db:
+        job = db.get(PublishJob, 1)
+        job.meli_item_id = "MLM999"
+        db.commit()
+
+    response = client.post("/api/publishing/jobs/1/reconcile")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "blocked"
+    assert response.json()["item_id"] == ""
+    assert response.json()["errors"] == [
+        "meli_publish_item_id_mismatch",
+        "publish_outcome_unknown_manual_reconciliation_required",
+    ]
+    with testing_session() as db:
+        assert db.get(PublishJob, 1).meli_item_id == ""
+
+
+def test_unknown_publish_reconciliation_rejects_superseded_lease(monkeypatch):
+    async def fake_get(self, path):
+        if path.startswith("/users/seller-1/items/search?sku="):
+            return {"results": ["MLM999"], "paging": {"total": 1}}
+        if path == "/items/MLM999":
+            with testing_session() as concurrent_db:
+                job = concurrent_db.get(PublishJob, 1)
+                job.response_summary_json = {
+                    "status": "validating",
+                    "errors": [
+                        "publish_outcome_unknown_manual_reconciliation_required"
+                    ],
+                    "reconciliation_lease": "newer-attempt",
+                }
+                concurrent_db.commit()
+            return reconciled_item()
+        return {"plain_text": "Leak proof."}
+
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing.MercadoLibreClient, "get", fake_get)
+    client, testing_session = make_client()
+    seed_unknown_publish_job(testing_session)
+
+    response = client.post("/api/publishing/jobs/1/reconcile")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Publish reconciliation was superseded by a newer attempt."
+    )
 
 
 def test_blocked_publish_job_can_be_retried_from_saved_draft_config(monkeypatch):

@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -38,6 +39,7 @@ from app.services.meli.oauth import MercadoLibreOAuthClient
 from app.services.meli.publisher import (
     SUPPORTED_LISTING_TYPE_IDS,
     execute_publish,
+    reconcile_existing_publish,
     validate_delivery_binding,
     validate_publish_request,
     validate_store_delivery,
@@ -773,22 +775,31 @@ async def _execute_with_payload(
             result=result,
         )
         return result.model_copy(update={"job_id": job.id})
-    try:
-        result = await execute_publish(
-            client=MercadoLibreClient(access_token=access_token),
-            seller_id=store.seller_id,
-            draft=draft,
-            review=review,
-            listing_choice=listing_choice,
-            valid_listing_type_ids=valid_listing_type_ids,
-            human_approved=human_approved,
-            allow_live_publish=settings.allow_live_publish,
-        )
-    except Exception:
+    publish_reference = str(
+        (job.request_summary_json or {}).get("publish_reference", "")
+    ).strip()
+    if not publish_reference:
         result = PublishExecutionResult(
-            status="blocked",
-            errors=["publish_outcome_unknown_manual_reconciliation_required"],
+            status="blocked", errors=["publish_reference_required"]
         )
+    else:
+        try:
+            result = await execute_publish(
+                client=MercadoLibreClient(access_token=access_token),
+                seller_id=store.seller_id,
+                draft=draft,
+                review=review,
+                listing_choice=listing_choice,
+                valid_listing_type_ids=valid_listing_type_ids,
+                human_approved=human_approved,
+                allow_live_publish=settings.allow_live_publish,
+                publish_reference=publish_reference,
+            )
+        except Exception:
+            result = PublishExecutionResult(
+                status="blocked",
+                errors=["publish_outcome_unknown_manual_reconciliation_required"],
+            )
     complete_publish_job(db, job, result)
     _audit_publish_execution(
         db=db,
@@ -810,6 +821,203 @@ def cancel_pending_publish_job(
     return to_publish_job_read(
         cancel_publish_job(db, job_id, cancelled_by="operator")
     )
+
+
+@router.post("/jobs/{job_id}/reconcile", response_model=PublishExecutionResult)
+async def reconcile_unknown_publish_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+) -> PublishExecutionResult:
+    job = db.scalar(
+        select(PublishJob)
+        .where(PublishJob.id == job_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if job is None:
+        raise HTTPException(status_code=404, detail="Publish job not found.")
+    summary = job.request_summary_json or {}
+    prior_errors = (job.response_summary_json or {}).get("errors", [])
+    if (
+        job.status != PublishJobStatus.BLOCKED
+        or "publish_outcome_unknown_manual_reconciliation_required" not in prior_errors
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Only an unresolved publish outcome can be reconciled.",
+        )
+    publish_reference = str(summary.get("publish_reference", "")).strip()
+    if not publish_reference:
+        raise HTTPException(
+            status_code=409,
+            detail="Publish job predates searchable reconciliation references.",
+        )
+    store = db.get(Store, job.store_id)
+    if store is None:
+        raise HTTPException(status_code=404, detail="Store not found.")
+    reconciliation_lease = uuid4().hex
+    job.status = PublishJobStatus.VALIDATING
+    job.started_at = datetime.now(UTC)
+    job.completed_at = None
+    job.response_summary_json = {
+        **(job.response_summary_json or {}),
+        "status": PublishJobStatus.VALIDATING.value,
+        "errors": ["publish_outcome_unknown_manual_reconciliation_required"],
+        "reconciliation_lease": reconciliation_lease,
+    }
+    db.commit()
+
+    result: PublishExecutionResult
+    match_count = 0
+    locked_job: PublishJob | None = None
+    try:
+        access_token = await resolve_fresh_store_access_token(
+            db=db,
+            store=store,
+            encryption_key=settings.token_encryption_key,
+            oauth_client=create_oauth_client(db),
+        )
+        if not access_token:
+            result = PublishExecutionResult(
+                status="blocked",
+                errors=[
+                    "publish_outcome_unknown_manual_reconciliation_required",
+                    "store_access_token_required",
+                ],
+            )
+        else:
+            client = MercadoLibreClient(access_token=access_token)
+            if job.meli_item_id:
+                matches = [job.meli_item_id]
+                match_count = 1
+            else:
+                search = await client.get(
+                    f"/users/{store.seller_id}/items/search?sku="
+                    f"{quote(publish_reference, safe='')}"
+                )
+                if not isinstance(search, dict):
+                    raise ValueError("Mercado Libre search response is not an object.")
+                raw_results = search.get("results")
+                paging = search.get("paging")
+                total = paging.get("total") if isinstance(paging, dict) else None
+                if (
+                    not isinstance(raw_results, list)
+                    or not isinstance(total, int)
+                    or total < 0
+                ):
+                    raise ValueError("Mercado Libre search total is unavailable.")
+                matches = [
+                    str(value).strip()
+                    for value in raw_results
+                    if str(value).strip()
+                ]
+                match_count = total
+                if total != len(matches) or len(set(matches)) != len(matches):
+                    if total > 1:
+                        matches = []
+                    else:
+                        raise ValueError("Mercado Libre search page is inconsistent.")
+            if match_count == 0:
+                result = PublishExecutionResult(
+                    status="blocked",
+                    errors=[
+                        "publish_outcome_unknown_manual_reconciliation_required",
+                        "publish_reconciliation_no_match",
+                    ],
+                )
+            elif match_count > 1:
+                result = PublishExecutionResult(
+                    status="blocked",
+                    errors=[
+                        "publish_outcome_unknown_manual_reconciliation_required",
+                        "publish_reconciliation_multiple_matches",
+                    ],
+                )
+            else:
+                item = await client.get(f"/items/{quote(matches[0], safe='')}")
+                if not isinstance(item, dict):
+                    raise httpx.ResponseError("Mercado Libre item response is not an object.")
+                locked_job = db.scalar(
+                    select(PublishJob)
+                    .where(PublishJob.id == job_id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+                if (
+                    locked_job is None
+                    or locked_job.status != PublishJobStatus.VALIDATING
+                    or (locked_job.response_summary_json or {}).get(
+                        "reconciliation_lease"
+                    )
+                    != reconciliation_lease
+                ):
+                    db.rollback()
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Publish reconciliation was superseded by a newer attempt.",
+                    )
+                result = await reconcile_existing_publish(
+                    client,
+                    item,
+                    seller_id=store.seller_id,
+                    publish_reference=publish_reference,
+                    site_id=str(summary.get("site_id", "")),
+                    category_id=str(summary.get("category_id", "")),
+                    listing_type_id=str(summary.get("listing_type_id", "")),
+                    expected_shipping_mode=str(summary.get("shipping_mode", "")),
+                    expected_shipping_logistic_type=str(
+                        summary.get("shipping_logistic_type", "")
+                    ),
+                    expected_item_id=matches[0],
+                    description=str(summary.get("description", "")),
+                )
+    except (httpx.HTTPError, ValueError):
+        result = PublishExecutionResult(
+            status="blocked",
+            errors=[
+                "publish_outcome_unknown_manual_reconciliation_required",
+                "publish_reconciliation_unavailable",
+            ],
+        )
+
+    current_job = locked_job or db.scalar(
+        select(PublishJob)
+        .where(PublishJob.id == job_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if (
+        current_job is None
+        or current_job.status != PublishJobStatus.VALIDATING
+        or (current_job.response_summary_json or {}).get("reconciliation_lease")
+        != reconciliation_lease
+    ):
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Publish reconciliation was superseded by a newer attempt.",
+        )
+    job = current_job
+    if "meli_publish_item_id_mismatch" in result.errors:
+        job.meli_item_id = ""
+        job.permalink = ""
+    complete_publish_job(db, job, result)
+    create_audit_event(
+        db=db,
+        actor_type="operator",
+        actor_id="operator",
+        action="publish.reconciled",
+        entity_type="publish_job",
+        entity_id=str(job.id),
+        before={"status": PublishJobStatus.BLOCKED.value},
+        after={
+            "status": result.status,
+            "item_id": result.item_id,
+            "match_count": match_count,
+            "errors": result.errors,
+        },
+    )
+    return result.model_copy(update={"job_id": job.id})
 
 
 def _with_category_attribute_validation(

@@ -7,6 +7,7 @@ import {
   ListChecks,
   ListPlus,
   RefreshCw,
+  SearchCheck,
   Rocket,
   Save,
   Search,
@@ -32,6 +33,7 @@ import {
   listDrafts,
   listStores,
   preflightPublishBatch,
+  reconcilePublishJob,
   previewPublishFromDraft,
   refreshCategoryAttributes,
   refreshListingTypes,
@@ -79,6 +81,15 @@ function readablePublishError(value: string) {
   if (value === "listing_type_not_available") return "This listing type is not available for the selected seller and category.";
   if (value === "publish_cancelled_by_operator") return "Cancelled by the operator before worker claim.";
   if (value === "variant_page_collection_required") return "Collect this exact Amazon variant page before review or publishing.";
+  if (value === "publish_reconciliation_no_match") return "No item with this publish reference is visible yet. Reconcile again after Mercado Libre search catches up.";
+  if (value === "publish_reconciliation_multiple_matches") return "Multiple items share this publish reference; manual investigation is required.";
+  if (value === "publish_reconciliation_unavailable") return "Mercado Libre reconciliation is temporarily unavailable.";
+  if (value === "meli_publish_reference_mismatch") return "The matched item does not carry this job's unique publish reference.";
+  if (value === "meli_publish_seller_mismatch") return "The matched item belongs to a different seller.";
+  if (value === "meli_publish_site_mismatch") return "The created item is on a different Mercado Libre site.";
+  if (value === "meli_publish_category_mismatch") return "The created item uses a different category.";
+  if (value === "meli_publish_listing_type_mismatch") return "The created item does not use the selected Classic/Premium listing type.";
+  if (value === "meli_publish_shipping_mode_mismatch" || value === "meli_publish_logistic_type_mismatch") return "The created item does not use the selected non-FULL shipping option.";
   if (value === "category_attributes_not_verified") return "Refresh verified category attributes before publishing.";
   if (value.startsWith("required_category_attribute_missing:")) {
     return `${value.split(":", 2)[1]} is required.`;
@@ -137,6 +148,7 @@ export function PublishingPage({
   const [shippingStatus, setShippingStatus] = useState("");
   const [jobs, setJobs] = useState<PublishJobRecord[]>([]);
   const [jobsRefreshing, setJobsRefreshing] = useState(false);
+  const [jobsHaveMore, setJobsHaveMore] = useState(true);
   const [cancelCandidateJobId, setCancelCandidateJobId] = useState<number | null>(null);
   const [batchDrafts, setBatchDrafts] = useState<ProductDraftRead[]>([]);
   const [selectedBatchDraftIds, setSelectedBatchDraftIds] = useState<Set<number>>(new Set());
@@ -165,7 +177,12 @@ export function PublishingPage({
         publishJobsMountedRef.current
         && publishJobsRequestEpochRef.current === requestEpoch
       ) {
-        setJobs(rows);
+        setJobs((current) => {
+          if (current.length <= 100) return rows;
+          const refreshedIds = new Set(rows.map((job) => job.id));
+          return [...rows, ...current.filter((job) => !refreshedIds.has(job.id))];
+        });
+        if (jobs.length <= 100) setJobsHaveMore(rows.length === 100);
         if (showFeedback) setStatus("Publish jobs refreshed");
       }
     } catch (error) {
@@ -179,7 +196,7 @@ export function PublishingPage({
     } finally {
       if (showFeedback && publishJobsMountedRef.current) setJobsRefreshing(false);
     }
-  }, []);
+  }, [jobs.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -753,6 +770,48 @@ export function PublishingPage({
     }
   }
 
+  async function reconcileJob(jobId: number) {
+    setBusy(`reconcile-${jobId}`);
+    setStatus("");
+    try {
+      const result = await reconcilePublishJob(jobId);
+      setExecution(result);
+      setJobs((current) => current.map((job) => job.id === jobId ? {
+        ...job,
+        status: result.status,
+        item_id: result.item_id,
+        permalink: result.permalink,
+        shipping_mode: result.shipping_mode,
+        shipping_logistic_type: result.shipping_logistic_type,
+        errors: result.errors,
+        completed_at: new Date().toISOString(),
+      } : job));
+      setStatus(`Publish job #${jobId} reconciliation finished`);
+      await refreshPublishJobs(false);
+    } catch (error) {
+      await refreshPublishJobs(false);
+      setStatus(error instanceof Error ? error.message : "Failed to reconcile publish job");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function loadOlderJobs() {
+    setBusy("older-publish-jobs");
+    try {
+      const rows = await listPublishJobs(100, jobs.length);
+      setJobs((current) => {
+        const existingIds = new Set(current.map((job) => job.id));
+        return [...current, ...rows.filter((job) => !existingIds.has(job.id))];
+      });
+      setJobsHaveMore(rows.length === 100);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to load older publish jobs");
+    } finally {
+      setBusy("");
+    }
+  }
+
   function toggleBatchDraft(draftIdToToggle: number) {
     batchPreflightEpochRef.current += 1;
     setBatchPublishAcknowledged(false);
@@ -950,6 +1009,9 @@ export function PublishingPage({
       onRequestCancel={setCancelCandidateJobId}
       onCancel={(jobId) => void cancelJob(jobId)}
       onKeep={() => setCancelCandidateJobId(null)}
+      onReconcile={(jobId) => void reconcileJob(jobId)}
+      hasMore={jobsHaveMore}
+      onLoadOlder={() => void loadOlderJobs()}
     />
   );
 
@@ -1242,6 +1304,9 @@ function PublishJobHistory({
   onRequestCancel,
   onCancel,
   onKeep,
+  onReconcile,
+  hasMore,
+  onLoadOlder,
 }: {
   jobs: PublishJobRecord[];
   refreshing: boolean;
@@ -1252,6 +1317,9 @@ function PublishJobHistory({
   onRequestCancel: (jobId: number) => void;
   onCancel: (jobId: number) => void;
   onKeep: () => void;
+  onReconcile: (jobId: number) => void;
+  hasMore: boolean;
+  onLoadOlder: () => void;
 }) {
   return (
     <section className="saved-section">
@@ -1269,6 +1337,8 @@ function PublishJobHistory({
           {jobs.map((job) => {
             const canRetry = (job.status === "blocked" || job.status === "failed")
               && !job.errors.includes("publish_outcome_unknown_manual_reconciliation_required");
+            const canReconcile = job.status === "blocked"
+              && job.errors.includes("publish_outcome_unknown_manual_reconciliation_required");
             const stateClass = job.status === "published"
               ? "ready"
               : job.status === "blocked" || job.status === "failed" ? "blocked" : "";
@@ -1286,6 +1356,9 @@ function PublishJobHistory({
                 <span className={`state-pill ${stateClass}`}>{job.status}</span>
                 <span className="job-actions">
                   {job.permalink && <a className="icon-text-button" href={job.permalink} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Open listing</a>}
+                  {canReconcile && (
+                    <button className="secondary-button" disabled={busy === `reconcile-${job.id}`} onClick={() => onReconcile(job.id)}><SearchCheck size={16} /> Reconcile</button>
+                  )}
                   {job.status === "pending" && cancelCandidateJobId !== job.id && (
                     <button className="secondary-button" onClick={() => onRequestCancel(job.id)}><CircleX size={16} /> Cancel</button>
                   )}
@@ -1300,6 +1373,11 @@ function PublishJobHistory({
               </div>
             );
           })}
+        </div>
+      )}
+      {jobs.length > 0 && hasMore && (
+        <div className="action-line">
+          <button className="secondary-button" disabled={busy === "older-publish-jobs"} onClick={onLoadOlder}>Load older jobs</button>
         </div>
       )}
     </section>

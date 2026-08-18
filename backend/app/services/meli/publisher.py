@@ -9,6 +9,7 @@ from app.schemas.reviews import ReviewResponse
 from app.services.meli.client import MercadoLibreClient, MercadoLibreResponseError
 from app.services.meli.payload_builder import (
     SUPPORTED_NON_FULL_LOGISTIC_TYPES,
+    SUPPORTED_SHIPPING_MODES,
     build_description_payload,
     build_item_payload,
 )
@@ -99,6 +100,7 @@ async def execute_publish(
     human_approved: bool,
     allow_live_publish: bool,
     seller_id: str = "",
+    publish_reference: str = "",
 ) -> PublishExecutionResult:
     validation = validate_publish_request(
         draft=draft,
@@ -145,6 +147,7 @@ async def execute_publish(
         listing_choice,
         shipping_mode=shipping.mode,
         shipping_logistic_type=shipping.logistic_type,
+        seller_custom_field=publish_reference,
     )
     try:
         response = await client.post("/items", payload)
@@ -156,7 +159,7 @@ async def execute_publish(
             errors=["publish_outcome_unknown_manual_reconciliation_required"],
         )
     except httpx.HTTPStatusError as exc:
-        if exc.response.status_code >= 500:
+        if exc.response.status_code >= 500 or exc.response.status_code == 408:
             return PublishExecutionResult(
                 status="blocked",
                 shipping_mode=shipping.mode,
@@ -184,33 +187,80 @@ async def execute_publish(
             errors=["meli_publish_unavailable"],
         )
     item_id = str(response.get("id", "")).strip()
+    authoritative_response = response
     permalink = str(response.get("permalink", "")).strip()
-    response_site_id = str(response.get("site_id", "")).strip().upper()
-    response_shipping = response.get("shipping") or {}
-    actual_mode = str(response_shipping.get("mode", "")).strip().lower()
-    actual_logistic_type = str(response_shipping.get("logistic_type", "")).strip().lower()
     verification_errors: list[str] = []
     if not item_id:
         return PublishExecutionResult(
             status="blocked",
             permalink=permalink,
-            shipping_mode=actual_mode or shipping.mode,
-            shipping_logistic_type=actual_logistic_type or shipping.logistic_type,
+            shipping_mode=shipping.mode,
+            shipping_logistic_type=shipping.logistic_type,
             errors=[
                 "publish_outcome_unknown_manual_reconciliation_required",
                 "meli_publish_response_missing_item_id",
             ],
         )
-    if response_site_id != draft.target_site_id.upper():
+    if publish_reference:
+        if not all(
+            key in response
+            for key in (
+                "seller_custom_field",
+                "seller_id",
+                "category_id",
+                "listing_type_id",
+                "shipping",
+                "status",
+            )
+        ):
+            try:
+                item_readback = await client.get(f"/items/{item_id}")
+            except httpx.HTTPError:
+                item_readback = None
+            if isinstance(item_readback, dict):
+                authoritative_response = item_readback
+        verification_errors.extend(
+            _verify_publish_identity(
+                authoritative_response,
+                seller_id=seller_id,
+                publish_reference=publish_reference,
+                site_id=draft.target_site_id,
+                category_id=draft.target_category_id,
+                listing_type_id=listing_choice.listing_type_id,
+            )
+        )
+    elif str(response.get("site_id", "")).strip().upper() != draft.target_site_id.upper():
         verification_errors.append("meli_publish_site_mismatch")
-    if actual_mode not in {"me2", "me1", "not_specified"}:
+    authoritative_shipping = authoritative_response.get("shipping") or {}
+    actual_mode = str(authoritative_shipping.get("mode", "")).strip().lower()
+    actual_logistic_type = str(
+        authoritative_shipping.get("logistic_type", "")
+    ).strip().lower()
+    permalink = str(authoritative_response.get("permalink", "")).strip() or permalink
+    if actual_mode not in SUPPORTED_SHIPPING_MODES:
         verification_errors.append("meli_publish_shipping_mode_unverified")
+    elif actual_mode != shipping.mode:
+        verification_errors.append("meli_publish_shipping_mode_mismatch")
     if actual_logistic_type == "fulfillment":
         verification_errors.append("full_fulfillment_detected")
     elif actual_logistic_type not in SUPPORTED_NON_FULL_LOGISTIC_TYPES:
         verification_errors.append("meli_publish_logistic_type_unverified")
+    elif actual_logistic_type != shipping.logistic_type:
+        verification_errors.append("meli_publish_logistic_type_mismatch")
+    identity_confirmed = not any(
+        error in {"meli_publish_reference_mismatch", "meli_publish_seller_mismatch"}
+        for error in verification_errors
+    )
+    item_status = str(authoritative_response.get("status", "")).strip().lower()
+    if publish_reference and item_status != "active":
+        verification_errors.append("meli_publish_item_status_unverified")
     if verification_errors:
-        verification_errors.extend(await _close_item(client, item_id))
+        if identity_confirmed and (item_status == "active" or not publish_reference):
+            verification_errors.extend(await _close_item(client, item_id))
+        else:
+            verification_errors.append(
+                "publish_outcome_unknown_manual_reconciliation_required"
+            )
         return PublishExecutionResult(
             status=(
                 "blocked"
@@ -260,6 +310,14 @@ async def _create_or_reconcile_description(
         return []
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code < 500 and exc.response.status_code != 408:
+            try:
+                description = await client.get(f"/items/{item_id}/description")
+            except httpx.HTTPError:
+                description = None
+            if isinstance(description, dict) and _normalized_description(
+                description.get("plain_text", "")
+            ) == _normalized_description(plain_text):
+                return []
             return [f"meli_description_failed:{exc.response.status_code}"]
     except httpx.HTTPError:
         pass
@@ -302,3 +360,157 @@ async def _close_item(client: MercadoLibreClient, item_id: str) -> list[str]:
 
 def _normalized_description(value: object) -> str:
     return str(value).replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _verify_publish_identity(
+    item: dict,
+    *,
+    seller_id: str,
+    publish_reference: str,
+    site_id: str,
+    category_id: str,
+    listing_type_id: str,
+) -> list[str]:
+    errors: list[str] = []
+    if str(item.get("seller_custom_field", "")).strip() != publish_reference:
+        errors.append("meli_publish_reference_mismatch")
+    if str(item.get("seller_id", "")).strip() != seller_id:
+        errors.append("meli_publish_seller_mismatch")
+    if str(item.get("site_id", "")).strip().upper() != site_id.strip().upper():
+        errors.append("meli_publish_site_mismatch")
+    if str(item.get("category_id", "")).strip().upper() != category_id.strip().upper():
+        errors.append("meli_publish_category_mismatch")
+    if str(item.get("listing_type_id", "")).strip() != listing_type_id:
+        errors.append("meli_publish_listing_type_mismatch")
+    return errors
+
+
+async def reconcile_existing_publish(
+    client: MercadoLibreClient,
+    item: dict,
+    *,
+    seller_id: str,
+    publish_reference: str,
+    site_id: str,
+    category_id: str,
+    listing_type_id: str,
+    expected_shipping_mode: str,
+    expected_shipping_logistic_type: str,
+    expected_item_id: str,
+    description: str,
+) -> PublishExecutionResult:
+    observed_item_id = str(item.get("id", "")).strip()
+    expected_item_id = expected_item_id.strip()
+    item_id = observed_item_id if observed_item_id == expected_item_id else ""
+    permalink = str(item.get("permalink", "")).strip()
+    shipping = item.get("shipping") or {}
+    shipping_mode = str(shipping.get("mode", "")).strip().lower()
+    logistic_type = str(shipping.get("logistic_type", "")).strip().lower()
+    errors = _verify_publish_identity(
+        item,
+        seller_id=seller_id,
+        publish_reference=publish_reference,
+        site_id=site_id,
+        category_id=category_id,
+        listing_type_id=listing_type_id,
+    )
+    if observed_item_id != expected_item_id:
+        errors.append("meli_publish_item_id_mismatch")
+    if shipping_mode not in SUPPORTED_SHIPPING_MODES:
+        errors.append("meli_publish_shipping_mode_unverified")
+    elif shipping_mode != expected_shipping_mode.strip().lower():
+        errors.append("meli_publish_shipping_mode_mismatch")
+    if logistic_type == "fulfillment":
+        errors.append("full_fulfillment_detected")
+    elif logistic_type not in SUPPORTED_NON_FULL_LOGISTIC_TYPES:
+        errors.append("meli_publish_logistic_type_unverified")
+    elif logistic_type != expected_shipping_logistic_type.strip().lower():
+        errors.append("meli_publish_logistic_type_mismatch")
+    identity_confirmed = not any(
+        error
+        in {
+            "meli_publish_reference_mismatch",
+            "meli_publish_seller_mismatch",
+            "meli_publish_item_id_mismatch",
+        }
+        for error in errors
+    )
+    item_status = str(item.get("status", "")).strip().lower()
+    if item_status != "active":
+        errors.append("meli_publish_item_status_unverified")
+    if errors:
+        if item_id and identity_confirmed and item_status == "active":
+            errors.extend(await _close_item(client, item_id))
+        elif not identity_confirmed or item_status != "active":
+            errors.append("publish_outcome_unknown_manual_reconciliation_required")
+        return PublishExecutionResult(
+            status=(
+                "blocked"
+                if "publish_outcome_unknown_manual_reconciliation_required" in errors
+                else "failed"
+            ),
+            item_id=item_id,
+            permalink=permalink,
+            shipping_mode=shipping_mode,
+            shipping_logistic_type=logistic_type,
+            errors=errors,
+        )
+    description_errors = await _reconcile_existing_description(
+        client, item_id, description
+    )
+    if description_errors:
+        if description_errors == ["meli_description_reconciliation_unavailable"]:
+            description_errors.append(
+                "publish_outcome_unknown_manual_reconciliation_required"
+            )
+            return PublishExecutionResult(
+                status="blocked",
+                item_id=item_id,
+                permalink=permalink,
+                shipping_mode=shipping_mode,
+                shipping_logistic_type=logistic_type,
+                errors=description_errors,
+            )
+        description_errors.extend(await _close_item(client, item_id))
+        return PublishExecutionResult(
+            status=(
+                "blocked"
+                if "publish_outcome_unknown_manual_reconciliation_required"
+                in description_errors
+                else "failed"
+            ),
+            item_id=item_id,
+            permalink=permalink,
+            shipping_mode=shipping_mode,
+            shipping_logistic_type=logistic_type,
+            errors=description_errors,
+        )
+    return PublishExecutionResult(
+        status="published",
+        item_id=item_id,
+        permalink=permalink,
+        shipping_mode=shipping_mode,
+        shipping_logistic_type=logistic_type,
+        errors=[],
+    )
+
+
+async def _reconcile_existing_description(
+    client: MercadoLibreClient, item_id: str, plain_text: str
+) -> list[str]:
+    try:
+        description = await client.get(f"/items/{item_id}/description")
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 404:
+            return ["meli_description_reconciliation_unavailable"]
+    except httpx.HTTPError:
+        return ["meli_description_reconciliation_unavailable"]
+    else:
+        if not isinstance(description, dict):
+            return ["meli_description_reconciliation_unavailable"]
+        if _normalized_description(
+            description.get("plain_text", "")
+        ) == _normalized_description(plain_text):
+            return []
+        return ["meli_description_mismatch"]
+    return await _create_or_reconcile_description(client, item_id, plain_text)

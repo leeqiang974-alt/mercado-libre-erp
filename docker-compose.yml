@@ -24,6 +24,7 @@ services:
 
   backend:
     image: mvp-skeleton-backend:latest
+    init: true
     environment:
       DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
       MELI_CLIENT_ID: ${MELI_CLIENT_ID:-}
@@ -60,6 +61,7 @@ services:
 
   collection_worker:
     image: mvp-skeleton-backend:latest
+    init: true
     environment:
       DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
@@ -77,6 +79,7 @@ services:
 
   publish_worker:
     image: mvp-skeleton-backend:latest
+    init: true
     environment:
       DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
       MELI_CLIENT_ID: ${MELI_CLIENT_ID:-}
@@ -96,6 +99,7 @@ services:
 
   review_worker:
     image: mvp-skeleton-backend:latest
+    init: true
     environment:
       DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
       CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
@@ -115,6 +119,7 @@ services:
 
   frontend:
     image: python:3.12-slim
+    init: true
     depends_on:
       backend:
         condition: service_healthy

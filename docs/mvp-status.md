@@ -58,6 +58,7 @@ Implemented:
 - Publishing validation gates for human approval, listing type availability, and FULL exclusion.
 - Guarded Mercado Libre publish execution adapter that posts to `/items` only when live publishing is explicitly enabled.
 - Local marketplace publishing follows Mercado Libre's two-stage contract: `/items` is created without a description, then plain text is sent to `/items/{item_id}/description`. Ambiguous description responses are read back; rejected or unverified descriptions close the new item and retain its id so item creation is never retried.
+- Every publish job freezes a unique searchable seller SKU plus its title, description, price, quantity, site, category, Classic/Premium type, attributes, and selected non-FULL shipping. A lost `/items` response exposes an operator reconciliation action that searches only the authorized seller by exact SKU. Zero or multiple matches remain blocked; one match is accepted only after all frozen identity, commercial, shipping, status, and description fields are verified. A mismatched item is closed and never triggers a replacement create request.
 - Guarded publish execution API now uses `store_id` rather than accepting access tokens from the frontend.
 - Guarded publish execution resolves encrypted store access tokens server-side.
 - OAuth callback resolves and persists the seller's real Mercado Libre `site_id`; enqueue, direct execution, and workers enforce store/site matching.
@@ -88,7 +89,7 @@ Implemented:
 - Operator integration settings for encrypted Mercado Libre App, Claude, and NVIDIA credentials. Secret inputs are write-only, status responses never return values, and store authorization remains disabled until both Mercado Libre App fields are configured.
 - API routes and the publish worker resolve database-backed credentials on each execution, with environment variables used only when no database override exists; updates do not require a service restart.
 - Operator-triggered connection diagnostics verify Claude/NVIDIA credential and configured-model visibility, identify missing/invalid/rate-limited provider access, and reconcile each connected Mercado Libre store against `/users/me`. The endpoint never publishes, never runs automatically on page load, and returns normalized status without secrets or raw provider bodies; NVIDIA model visibility is not presented as proof of inference quota.
-- Docker Compose services for PostgreSQL, Redis, backend API, collection worker, and publish worker, with PostgreSQL and Redis data bind-mounted under the D-drive project tree. The migration, API, collection, and publishing processes share one backend image rather than exporting four duplicate Playwright images.
+- Docker Compose services for PostgreSQL, Redis, backend API, collection worker, and publish worker, with PostgreSQL and Redis data bind-mounted under the D-drive project tree. Long-running Python and frontend containers use an init process to forward shutdown signals and reap child processes. The migration, API, collection, and publishing processes share one backend image rather than exporting four duplicate Playwright images.
 - Compose migration gate (`alembic upgrade head`) plus database/Redis/API health checks and restart policies.
 
 Not connected yet:
@@ -98,7 +99,7 @@ Not connected yet:
 
 Verification for this change:
 
-- Backend suite: 375 passed, with 13 environment-specific tests skipped in the default run.
+- Backend suite: 388 passed, with 13 environment-specific tests skipped in the default run.
 - Isolated Docker PostgreSQL integration run: 8 passed, including serialized manual-snapshot recovery and refresh-token rotation, concurrent collection, publish-job, and source-variant draft deduplication, atomic draft-version invalidation, and a final publish-evidence row lock that blocks concurrent draft changes until publication completes.
 - A dedicated disposable PostgreSQL run verified that pending-job cancellation and worker claiming are mutually exclusive; its migrated database was dropped after the test and PostgreSQL reported zero matching temporary databases.
 - PostgreSQL migrations through `20260721_0028` recovered legacy source ASINs from Amazon URLs, preserved duplicate unclassified legacy drafts with a partial identity index, backfilled collection identities and existing draft source ASINs, indexed site/identity lookup, added versioned store/shipping delivery fields, high-precision review execution costs, structured source snapshots, source-variant draft bindings, structured source measurements, provider usage/request telemetry, encrypted integration credentials, unique active provider/model pricing, persistent Amazon throttling, explicit inventory confirmation, and queued combined reviews.

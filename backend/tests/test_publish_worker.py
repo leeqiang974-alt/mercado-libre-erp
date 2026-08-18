@@ -123,6 +123,7 @@ def make_session():
 
 def job_summary(title: str = "Worker Bottle"):
     return {
+        "publish_reference": "amp-0123456789abcdef0123456789abcdef",
         "title": title,
         "site_id": "MLM",
         "category_id": "MLM123",
@@ -189,6 +190,41 @@ async def test_worker_publishes_pending_publish_jobs_up_to_limit():
             PublishJobStatus.PENDING,
         ]
         assert jobs[0].meli_item_id == "MLM-WORKER-1"
+
+
+@pytest.mark.asyncio
+async def test_worker_blocks_legacy_job_without_publish_reference():
+    testing_session = make_session()
+    summary_without_reference = job_summary()
+    summary_without_reference.pop("publish_reference")
+    with testing_session() as db:
+        db.add(
+            PublishJob(
+                product_draft_id=1,
+                store_id=1,
+                requested_by="operator",
+                status=PublishJobStatus.PENDING,
+                request_summary_json=summary_without_reference,
+            )
+        )
+        db.commit()
+
+    async def unexpected_publisher(**kwargs):
+        raise AssertionError("Legacy jobs must be blocked before /items.")
+
+    with testing_session() as db:
+        result = await run_pending_publish_jobs(
+            db,
+            limit=1,
+            publisher=unexpected_publisher,
+            allow_live_publish=True,
+            token_encryption_key="test-secret",
+        )
+
+    assert result["blocked"] == 1
+    with testing_session() as db:
+        job = db.query(PublishJob).one()
+        assert job.response_summary_json["errors"] == ["publish_reference_required"]
 
 
 @pytest.mark.asyncio

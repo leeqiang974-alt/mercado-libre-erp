@@ -41,11 +41,47 @@ def create_publish_job(
         review,
         listing_choice,
     )
+    publish_reference = f"amp-{idempotency_key[:32]}"
     if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_name))"),
+            {"lock_name": f"publish_subject:{product_draft_id}:{store_id}"},
+        )
         db.execute(
             text("SELECT pg_advisory_xact_lock(hashtext(:lock_name))"),
             {"lock_name": f"publish_job:{idempotency_key}"},
         )
+    subject_blocker = next(
+        (
+            candidate
+            for candidate in db.query(PublishJob)
+            .filter(
+                PublishJob.product_draft_id == product_draft_id,
+                PublishJob.store_id == store_id,
+                PublishJob.status.in_(
+                    [
+                        PublishJobStatus.PENDING,
+                        PublishJobStatus.VALIDATING,
+                        PublishJobStatus.BLOCKED,
+                    ]
+                ),
+            )
+            .order_by(PublishJob.id.desc())
+            .all()
+            if candidate.status
+            in {PublishJobStatus.PENDING, PublishJobStatus.VALIDATING}
+            or "publish_outcome_unknown_manual_reconciliation_required"
+            in (candidate.response_summary_json or {}).get("errors", [])
+        ),
+        None,
+    )
+    if subject_blocker is not None:
+        subject_blocker._idempotent_replay = True
+        subject_blocker._unresolved_publish_outcome = (
+            "publish_outcome_unknown_manual_reconciliation_required"
+            in (subject_blocker.response_summary_json or {}).get("errors", [])
+        )
+        return subject_blocker
     existing = (
         db.query(PublishJob)
         .filter(PublishJob.idempotency_key == idempotency_key)
@@ -62,7 +98,12 @@ def create_publish_job(
         status=initial_status,
         started_at=datetime.now(UTC) if initial_status == PublishJobStatus.VALIDATING else None,
         request_summary_json={
+            "publish_reference": publish_reference,
             "title": draft.title,
+            "description": draft.description,
+            "price": draft.price,
+            "currency": draft.currency,
+            "available_quantity": draft.stock,
             "site_id": draft.target_site_id,
             "store_id": listing_choice.store_id,
             "category_id": draft.target_category_id,
@@ -71,6 +112,7 @@ def create_publish_job(
             "fulfillment": listing_choice.fulfillment,
             "shipping_mode": listing_choice.shipping_mode,
             "shipping_logistic_type": listing_choice.shipping_logistic_type,
+            "attributes": listing_choice.attributes,
             "review_provider": review.provider,
             "review_result_id": review.review_result_id,
             "review_decision": review.decision,
@@ -239,15 +281,14 @@ def cancel_publish_job(db: Session, job_id: int, *, cancelled_by: str) -> Publis
 
 def recover_stale_publish_jobs(db: Session, stale_after_seconds: int) -> int:
     cutoff = datetime.now(UTC) - timedelta(seconds=stale_after_seconds)
-    jobs = (
-        db.query(PublishJob)
-        .filter(
+    query = db.query(PublishJob).filter(
             PublishJob.status == PublishJobStatus.VALIDATING,
             PublishJob.started_at.is_not(None),
             PublishJob.started_at < cutoff,
         )
-        .all()
-    )
+    if db.get_bind().dialect.name == "postgresql":
+        query = query.with_for_update(skip_locked=True)
+    jobs = query.all()
     for job in jobs:
         job.status = PublishJobStatus.BLOCKED
         job.response_summary_json = {

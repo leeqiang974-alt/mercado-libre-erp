@@ -1,4 +1,5 @@
-const API_BASE = "http://127.0.0.1:8000";
+// Production uses the same-origin reverse proxy; Vite proxies /api locally.
+const API_BASE = "";
 
 export type ProductDraft = {
   title: string;
@@ -924,6 +925,14 @@ export async function cancelPublishJob(jobId: number) {
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<PublishJobRecord>;
+}
+
+export async function reconcilePublishJob(jobId: number) {
+  const response = await fetch(`${API_BASE}/api/publishing/jobs/${jobId}/reconcile`, {
+    method: "POST",
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<PublishExecutionResult>;
 }
 
 export async function saveDraftListingConfig(

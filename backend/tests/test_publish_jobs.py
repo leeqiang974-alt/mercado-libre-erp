@@ -24,7 +24,11 @@ from app.schemas.publishing import ListingChoice, PublishExecutionResult
 from app.schemas.reviews import ReviewResponse
 from app.services.meli.token_vault import encrypt_token_value
 from app.services import publish_jobs as publish_jobs_service
-from app.services.publish_jobs import _publish_idempotency_key
+from app.services.publish_jobs import (
+    _publish_idempotency_key,
+    complete_publish_job,
+    create_publish_job,
+)
 from pricing_test_support import add_current_pricing
 
 
@@ -221,6 +225,10 @@ def test_publish_execute_persists_published_job(monkeypatch):
         assert job.meli_item_id == "MLM123"
         assert job.permalink == "https://example.com/MLM123"
         assert job.request_summary_json["store_id"] == 1
+        assert job.request_summary_json["publish_reference"] == (
+            f"amp-{job.idempotency_key[:32]}"
+        )
+        assert job.request_summary_json["description"] == "Leak proof."
         assert job.request_summary_json["shipping_mode"] == "me2"
         assert job.request_summary_json["shipping_logistic_type"] == "drop_off"
 
@@ -234,6 +242,78 @@ def test_shipping_selection_changes_publish_idempotency_key():
     assert _publish_idempotency_key(1, 1, draft, review, first) != _publish_idempotency_key(
         1, 1, draft, review, second
     )
+
+
+def test_unresolved_unknown_blocks_changed_job_for_same_draft_and_store():
+    _, testing_session = make_client()
+    draft = ProductDraftCreate(**payload()["draft"])
+    review = ReviewResponse(**payload()["review"])
+    choice = ListingChoice(**payload()["listing_choice"])
+    with testing_session() as db:
+        first = create_publish_job(
+            db,
+            product_draft_id=1,
+            store_id=1,
+            requested_by="operator",
+            draft=draft,
+            review=review,
+            listing_choice=choice,
+        )
+        complete_publish_job(
+            db,
+            first,
+            PublishExecutionResult(
+                status="blocked",
+                errors=["publish_outcome_unknown_manual_reconciliation_required"],
+            ),
+        )
+        second = create_publish_job(
+            db,
+            product_draft_id=1,
+            store_id=1,
+            requested_by="operator",
+            draft=draft.model_copy(update={"title": "Changed after unknown"}),
+            review=review,
+            listing_choice=choice,
+        )
+
+        assert second.id == first.id
+        assert second._unresolved_publish_outcome is True
+        assert db.query(PublishJob).count() == 1
+
+
+@pytest.mark.parametrize(
+    "active_status", [PublishJobStatus.PENDING, PublishJobStatus.VALIDATING]
+)
+def test_active_job_blocks_changed_job_for_same_draft_and_store(active_status):
+    _, testing_session = make_client()
+    draft = ProductDraftCreate(**payload()["draft"])
+    review = ReviewResponse(**payload()["review"])
+    choice = ListingChoice(**payload()["listing_choice"])
+    with testing_session() as db:
+        first = create_publish_job(
+            db,
+            product_draft_id=1,
+            store_id=1,
+            requested_by="operator",
+            draft=draft,
+            review=review,
+            listing_choice=choice,
+            initial_status=active_status,
+        )
+        second = create_publish_job(
+            db,
+            product_draft_id=1,
+            store_id=1,
+            requested_by="operator",
+            draft=draft.model_copy(update={"title": "Changed while active"}),
+            review=review,
+            listing_choice=choice,
+        )
+
+        assert second.id == first.id
+        assert second._idempotent_replay is True
+        assert db.query(PublishJob).count() == 1
 
 
 def test_publish_execute_quarantines_unexpected_adapter_exception(monkeypatch):

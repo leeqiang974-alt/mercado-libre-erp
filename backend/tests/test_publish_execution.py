@@ -108,6 +108,132 @@ async def test_execute_publish_posts_item_when_enabled():
 
 
 @pytest.mark.asyncio
+async def test_execute_publish_sends_and_reads_back_reconciliation_reference():
+    requests = []
+    reference = "amp-0123456789abcdef0123456789abcdef"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/shipping_preferences"):
+            return httpx.Response(
+                200,
+                json={
+                    "modes": ["me2"],
+                    "logistics": [{"mode": "me2", "types": ["drop_off"]}],
+                },
+            )
+        if request.method == "POST" and request.url.path == "/items":
+            assert request.content.find(reference.encode()) >= 0
+            return httpx.Response(
+                201,
+                json={
+                    "id": "MLM123456",
+                    "site_id": "MLM",
+                    "permalink": "https://example.com/MLM123456",
+                    "shipping": {"mode": "me2", "logistic_type": "drop_off"},
+                },
+            )
+        if request.method == "GET" and request.url.path == "/items/MLM123456":
+            return httpx.Response(
+                200,
+                json={
+                    "id": "MLM123456",
+                    "seller_id": "seller-1",
+                    "seller_custom_field": reference,
+                    "site_id": "MLM",
+                    "category_id": "MLM123",
+                    "listing_type_id": "gold_special",
+                    "status": "active",
+                    "shipping": {"mode": "me2", "logistic_type": "drop_off"},
+                },
+            )
+        if request.url.path.endswith("/description"):
+            return httpx.Response(201, content=b"")
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    draft = valid_draft()
+    result = await execute_publish(
+        client=MercadoLibreClient(
+            access_token="access-token",
+            transport=httpx.MockTransport(handler),
+        ),
+        draft=draft,
+        review=review_draft_locally(draft),
+        listing_choice=ListingChoice(site_id="MLM", listing_type_id="gold_special"),
+        valid_listing_type_ids=["gold_special"],
+        human_approved=True,
+        allow_live_publish=True,
+        seller_id="seller-1",
+        publish_reference=reference,
+    )
+
+    assert result.status == "published"
+    assert [request.url.path for request in requests] == [
+        "/users/seller-1/shipping_preferences",
+        "/items",
+        "/items/MLM123456",
+        "/items/MLM123456/description",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_execute_publish_closes_item_when_readback_shipping_differs():
+    requests = []
+    reference = "amp-0123456789abcdef0123456789abcdef"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/shipping_preferences"):
+            return httpx.Response(
+                200,
+                json={
+                    "modes": ["me2"],
+                    "logistics": [{"mode": "me2", "types": ["drop_off"]}],
+                },
+            )
+        if request.method == "POST" and request.url.path == "/items":
+            return httpx.Response(201, json={"id": "MLM123456"})
+        if request.method == "GET" and request.url.path == "/items/MLM123456":
+            return httpx.Response(
+                200,
+                json={
+                    "id": "MLM123456",
+                    "seller_id": "seller-1",
+                    "seller_custom_field": reference,
+                    "site_id": "MLM",
+                    "category_id": "MLM123",
+                    "listing_type_id": "gold_special",
+                    "status": "active",
+                    "shipping": {"mode": "me2", "logistic_type": "self_service"},
+                },
+            )
+        if request.method == "PUT" and request.url.path == "/items/MLM123456":
+            return httpx.Response(200, json={"status": "closed"})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    draft = valid_draft()
+    result = await execute_publish(
+        client=MercadoLibreClient(
+            access_token="access-token",
+            transport=httpx.MockTransport(handler),
+        ),
+        draft=draft,
+        review=review_draft_locally(draft),
+        listing_choice=ListingChoice(site_id="MLM", listing_type_id="gold_special"),
+        valid_listing_type_ids=["gold_special"],
+        human_approved=True,
+        allow_live_publish=True,
+        seller_id="seller-1",
+        publish_reference=reference,
+    )
+
+    assert result.status == "failed"
+    assert result.item_id == "MLM123456"
+    assert result.errors == ["meli_publish_logistic_type_mismatch"]
+    assert requests[-1].method == "PUT"
+
+
+@pytest.mark.asyncio
 async def test_execute_publish_closes_item_when_description_is_rejected():
     requests = []
 
@@ -538,6 +664,86 @@ async def test_execute_publish_quarantines_server_error_as_unknown_outcome():
 
     assert result.status == "blocked"
     assert result.errors == ["publish_outcome_unknown_manual_reconciliation_required"]
+
+
+@pytest.mark.asyncio
+async def test_execute_publish_quarantines_request_timeout_status_as_unknown():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "modes": ["me2"],
+                    "logistics": [{"mode": "me2", "types": ["drop_off"]}],
+                },
+            )
+        return httpx.Response(408, json={"message": "request timeout"})
+
+    draft = valid_draft()
+    result = await execute_publish(
+        client=MercadoLibreClient(
+            access_token="access-token",
+            transport=httpx.MockTransport(handler),
+        ),
+        draft=draft,
+        review=review_draft_locally(draft),
+        listing_choice=ListingChoice(site_id="MLM", listing_type_id="gold_special"),
+        valid_listing_type_ids=["gold_special"],
+        human_approved=True,
+        allow_live_publish=True,
+        seller_id="seller-1",
+    )
+
+    assert result.status == "blocked"
+    assert result.errors == ["publish_outcome_unknown_manual_reconciliation_required"]
+
+
+@pytest.mark.asyncio
+async def test_execute_publish_reads_description_after_create_conflict():
+    requests = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/shipping_preferences"):
+            return httpx.Response(
+                200,
+                json={
+                    "modes": ["me2"],
+                    "logistics": [{"mode": "me2", "types": ["drop_off"]}],
+                },
+            )
+        if request.url.path == "/items":
+            return httpx.Response(
+                201,
+                json={
+                    "id": "MLM-DESCRIPTION-RACE",
+                    "site_id": "MLM",
+                    "shipping": {"mode": "me2", "logistic_type": "drop_off"},
+                },
+            )
+        if request.method == "POST":
+            return httpx.Response(409, json={"message": "description exists"})
+        if request.method == "GET":
+            return httpx.Response(200, json={"plain_text": "Leak proof bottle."})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    draft = valid_draft()
+    result = await execute_publish(
+        client=MercadoLibreClient(
+            access_token="access-token",
+            transport=httpx.MockTransport(handler),
+        ),
+        draft=draft,
+        review=review_draft_locally(draft),
+        listing_choice=ListingChoice(site_id="MLM", listing_type_id="gold_special"),
+        valid_listing_type_ids=["gold_special"],
+        human_approved=True,
+        allow_live_publish=True,
+        seller_id="seller-1",
+    )
+
+    assert result.status == "published"
+    assert [request.method for request in requests] == ["GET", "POST", "POST", "GET"]
 
 
 @pytest.mark.asyncio
