@@ -18,6 +18,8 @@
 6. Run Claude planning/review and NVIDIA behavioral/compliance review with provider status visible; local fallback must be labeled as fallback.
 7. Approve, queue, publish, and inspect the returned item id, permalink, and error details.
 
+- The operator-facing entrypoint for pending products is the `上架库` editor. Dashboard pending-product shortcuts must open that editor first; the final publish configuration page is only the next step after content and category work is complete.
+
 ## Product Truthfulness
 
 - The UI must show integration readiness for Mercado Libre, Claude, NVIDIA, live publishing, database, and workers.

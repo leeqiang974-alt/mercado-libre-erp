@@ -38,8 +38,9 @@ export function DashboardPage({ onNavigate }: { onNavigate: (page: string) => vo
   const stats = [
     { label: "已授权店铺", value: overview?.total_stores || 0, icon: Store, color: "#ea580c", page: "stores" },
     { label: "商品草稿", value: overview?.total_drafts || 0, icon: FileText, color: "#2563eb", page: "drafts" },
-    { label: "待刊登", value: overview?.pending_publish || 0, icon: Rocket, color: "#d97706", page: "publishing" },
-    { label: "已刊登", value: overview?.published_count || 0, icon: Package, color: "#059669", page: "publishing" },
+    // 待处理商品先进入新版“上架库”编辑工作台，完成后再进入最终发布配置。
+    { label: "待上架", value: overview?.pending_publish || 0, icon: Rocket, color: "#d97706", page: "drafts" },
+    { label: "已上架", value: overview?.published_count || 0, icon: Package, color: "#059669", page: "products" },
   ];
 
   const orderStats = [

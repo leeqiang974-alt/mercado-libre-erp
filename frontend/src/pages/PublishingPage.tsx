@@ -57,8 +57,8 @@ import { currencyForSite, MERCADO_LIBRE_SITES } from "../domain/sites";
 import { CbtGlobalPublishingPanel } from "./CbtGlobalPublishingPanel";
 
 const COMMERCIAL_TYPES = [
-  { id: "gold_special", label: "Classic", note: "Lower fee, standard visibility" },
-  { id: "gold_pro", label: "Premium", note: "Installments and higher visibility" },
+  { id: "gold_special", label: "经典刊登", note: "标准曝光" },
+  { id: "gold_pro", label: "高级刊登", note: "支持分期，曝光更高" },
 ];
 
 const MAX_PUBLISH_BATCH_SIZE = 50;
@@ -70,7 +70,7 @@ const SHIPPING_LABELS: Record<string, string> = {
   "me2:self_service": "Mercado Envíos · self-service",
   "me2:turbo": "Mercado Envíos · turbo",
   "me1:default": "Mercado Envíos 1",
-  "not_specified:not_specified": "Seller-arranged shipping",
+  "not_specified:not_specified": "卖家自行安排物流",
 };
 
 function shippingKey(option: ShippingOption) {
@@ -78,34 +78,34 @@ function shippingKey(option: ShippingOption) {
 }
 
 function readablePublishError(value: string) {
-  if (value === "listing_types_not_verified") return "Refresh seller/category listing eligibility before publishing.";
-  if (value === "listing_type_not_available") return "This listing type is not available for the selected seller and category.";
-  if (value === "publish_cancelled_by_operator") return "Cancelled by the operator before worker claim.";
-  if (value === "variant_page_collection_required") return "Collect this exact Amazon variant page before review or publishing.";
-  if (value === "publish_reconciliation_no_match") return "No item with this publish reference is visible yet. Reconcile again after Mercado Libre search catches up.";
-  if (value === "publish_reconciliation_multiple_matches") return "Multiple items share this publish reference; manual investigation is required.";
-  if (value === "publish_reconciliation_unavailable") return "Mercado Libre reconciliation is temporarily unavailable.";
-  if (value === "meli_publish_reference_mismatch") return "The matched item does not carry this job's unique publish reference.";
-  if (value === "meli_publish_seller_mismatch") return "The matched item belongs to a different seller.";
-  if (value === "meli_publish_site_mismatch") return "The created item is on a different Mercado Libre site.";
-  if (value === "meli_publish_category_mismatch") return "The created item uses a different category.";
-  if (value === "meli_publish_listing_type_mismatch") return "The created item does not use the selected Classic/Premium listing type.";
-  if (value === "meli_publish_shipping_mode_mismatch" || value === "meli_publish_logistic_type_mismatch") return "The created item does not use the selected non-FULL shipping option.";
-  if (value === "category_attributes_not_verified") return "Refresh verified category attributes before publishing.";
+  if (value === "listing_types_not_verified") return "请刷新店铺与分类可用的刊登方式后再发布。";
+  if (value === "listing_type_not_available") return "当前店铺和分类不支持所选刊登方式。";
+  if (value === "publish_cancelled_by_operator") return "任务已在后台接手前由操作员取消。";
+  if (value === "variant_page_collection_required") return "请先采集这个 Amazon 具体变体页面，再审核或发布。";
+  if (value === "publish_reconciliation_no_match") return "暂时找不到对应发布记录，请等待美客多搜索同步后重试。";
+  if (value === "publish_reconciliation_multiple_matches") return "多个商品共用了同一发布标识，需要人工核对。";
+  if (value === "publish_reconciliation_unavailable") return "美客多发布核对服务暂时不可用。";
+  if (value === "meli_publish_reference_mismatch") return "匹配到的商品没有本次任务的唯一发布标识。";
+  if (value === "meli_publish_seller_mismatch") return "匹配到的商品属于其他卖家。";
+  if (value === "meli_publish_site_mismatch") return "创建的商品属于其他美客多站点。";
+  if (value === "meli_publish_category_mismatch") return "创建的商品分类与当前选择不一致。";
+  if (value === "meli_publish_listing_type_mismatch") return "创建的商品没有使用当前选择的刊登方式。";
+  if (value === "meli_publish_shipping_mode_mismatch" || value === "meli_publish_logistic_type_mismatch") return "创建的商品没有使用当前选择的非 FULL 物流。";
+  if (value === "category_attributes_not_verified") return "请刷新官方分类属性后再发布。";
   if (value.startsWith("required_category_attribute_missing:")) {
-    return `${value.split(":", 2)[1]} is required.`;
+    return `${value.split(":", 2)[1]} 为必填属性。`;
   }
   if (value.startsWith("category_attribute_value_id_invalid:")) {
-    return `${value.split(":", 2)[1]} has an invalid category value.`;
+    return `${value.split(":", 2)[1]} 的分类属性值无效。`;
   }
   if (value.startsWith("category_attribute_value_id_unverifiable:")) {
-    return `${value.split(":", 2)[1]} must be reselected from verified category values.`;
+    return `${value.split(":", 2)[1]} 必须从官方属性值中重新选择。`;
   }
   if (value.startsWith("category_attribute_unknown:")) {
-    return `${value.split(":", 2)[1]} is not available in this category.`;
+    return `${value.split(":", 2)[1]} 不属于当前分类。`;
   }
   if (value.includes("meli_metadata_unavailable")) {
-    return "Mercado Libre attribute metadata is temporarily unavailable.";
+    return "美客多分类属性数据暂时不可用。";
   }
   return value;
 }
@@ -189,7 +189,7 @@ export function PublishingPage({
           return [...rows, ...current.filter((job) => !refreshedIds.has(job.id))];
         });
         if (jobs.length <= 100) setJobsHaveMore(rows.length === 100);
-        if (showFeedback) setStatus("Publish jobs refreshed");
+        if (showFeedback) setStatus("发布任务已刷新");
       }
     } catch (error) {
       if (
@@ -197,7 +197,7 @@ export function PublishingPage({
         && publishJobsMountedRef.current
         && publishJobsRequestEpochRef.current === requestEpoch
       ) {
-        setStatus(error instanceof Error ? error.message : "Failed to refresh publish jobs");
+        setStatus(error instanceof Error ? error.message : "刷新发布任务失败");
       }
     } finally {
       if (showFeedback && publishJobsMountedRef.current) setJobsRefreshing(false);
@@ -211,7 +211,7 @@ export function PublishingPage({
         if (!cancelled) setBatchDrafts(rows);
       })
       .catch((error) => {
-        if (!cancelled) setStatus(error instanceof Error ? error.message : "Failed to load drafts");
+        if (!cancelled) setStatus(error instanceof Error ? error.message : "加载上架库失败");
       });
     return () => { cancelled = true; };
   }, []);
@@ -345,7 +345,7 @@ export function PublishingPage({
       setShippingStatus("");
       return () => { cancelled = true; };
     }
-    setShippingStatus("Loading verified non-FULL shipping options...");
+    setShippingStatus("正在读取已验证的非 FULL 物流选项...");
     getStoreShippingOptions(Number(storeId))
       .then((result) => {
         if (cancelled) return;
@@ -357,15 +357,15 @@ export function PublishingPage({
         );
         setShippingStatus(
           result.options.length
-            ? `${result.options.length} verified non-FULL option${result.options.length === 1 ? "" : "s"}`
-            : "This store exposes no supported non-FULL shipping option.",
+            ? `已验证 ${result.options.length} 个非 FULL 物流选项`
+            : "此店铺没有可用的非 FULL 物流选项。",
         );
       })
       .catch((error) => {
         if (cancelled) return;
         setShippingOptions([]);
         setSelectedShippingKey("");
-        setShippingStatus(error instanceof Error ? error.message : "Shipping options unavailable");
+        setShippingStatus(error instanceof Error ? error.message : "物流选项暂时不可用");
       });
     return () => { cancelled = true; };
   }, [storeId]);
@@ -596,7 +596,7 @@ export function PublishingPage({
       setCategoryAttributes(result.attributes);
       setCategoryAttributesVerified(result.verified);
       if (!result.verified) {
-        setAttributeError("Refresh verified category attributes before publishing.");
+        setAttributeError("请刷新官方分类属性后再发布。");
         setAttributeSuggestions([]);
         return;
       }
@@ -607,7 +607,7 @@ export function PublishingPage({
       }
     } catch (error) {
       if (categoryAttributesEpochRef.current === requestEpoch) {
-        const message = error instanceof Error ? error.message : "Failed to load attributes";
+        const message = error instanceof Error ? error.message : "加载分类属性失败";
         setAttributeError(readablePublishError(message));
       }
     } finally {
@@ -682,9 +682,9 @@ export function PublishingPage({
       setBatchDrafts((items) => items.map((item) => (
         item.id === config.draft.id ? config.draft : item
       )));
-      setStatus("Listing configuration saved");
+      setStatus("上架配置已保存");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Failed to save listing config");
+      setStatus(error instanceof Error ? error.message : "保存上架配置失败");
     } finally {
       setBusy("");
     }
@@ -694,10 +694,10 @@ export function PublishingPage({
     if (!draftId) return;
     setBusy("approval");
     try {
-      setApproval(await approveDraft(draftId, "operator", "Approved for non-FULL Mercado Libre publish"));
-      setStatus("Human approval recorded");
+      setApproval(await approveDraft(draftId, "operator", "已确认可以发布非 FULL 美客多商品"));
+      setStatus("人工确认已记录");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Failed to approve draft");
+      setStatus(error instanceof Error ? error.message : "人工确认失败");
     } finally {
       setBusy("");
     }
@@ -1347,15 +1347,15 @@ function PublishJobHistory({
   return (
     <section className="saved-section">
       <div className="section-heading publish-job-heading">
-        <div><h3>Publish jobs</h3></div>
+        <div><h3>发布任务</h3></div>
         <div className="section-heading-actions">
           <span>{jobs.length}</span>
-          <button className="icon-button" title="Refresh publish jobs" disabled={refreshing} onClick={onRefresh}>
+          <button className="icon-button" title="刷新发布任务" disabled={refreshing} onClick={onRefresh}>
             <RefreshCw className={refreshing ? "spin" : ""} size={17} />
           </button>
         </div>
       </div>
-      {jobs.length === 0 ? <p>No publish jobs yet.</p> : (
+      {jobs.length === 0 ? <p>暂无发布任务。</p> : (
         <div className="job-list">
           {jobs.map((job) => {
             const canRetry = (job.status === "blocked" || job.status === "failed")
@@ -1370,28 +1370,28 @@ function PublishJobHistory({
                 <span className="job-details">
                   <strong>#{job.id} · draft #{job.product_draft_id}</strong>
                   <small>Store #{job.store_id}{job.shipping_mode ? ` · ${job.shipping_mode}` : ""}{job.shipping_logistic_type ? `/${job.shipping_logistic_type}` : ""}</small>
-                  <small>Queued {formatJobTime(job.created_at)}</small>
-                  {job.started_at && <small>Started {formatJobTime(job.started_at)}</small>}
-                  {job.completed_at && <small>Completed {formatJobTime(job.completed_at)}</small>}
-                  {job.item_id && <small>Item {job.item_id}</small>}
+                  <small>排队时间：{formatJobTime(job.created_at)}</small>
+                  {job.started_at && <small>开始时间：{formatJobTime(job.started_at)}</small>}
+                  {job.completed_at && <small>完成时间：{formatJobTime(job.completed_at)}</small>}
+                  {job.item_id && <small>商品：{job.item_id}</small>}
                   {job.errors.length > 0 && <small className="error">{job.errors.map(readablePublishError).join(", ")}</small>}
                 </span>
                 <span className={`state-pill ${stateClass}`}>{job.status}</span>
                 <span className="job-actions">
-                  {job.permalink && <a className="icon-text-button" href={job.permalink} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Open listing</a>}
+                  {job.permalink && <a className="icon-text-button" href={job.permalink} target="_blank" rel="noreferrer"><ExternalLink size={15} /> 打开商品页面</a>}
                   {canReconcile && (
                     <button className="secondary-button" disabled={busy === `reconcile-${job.id}`} onClick={() => onReconcile(job.id)}><SearchCheck size={16} /> Reconcile</button>
                   )}
                   {job.status === "pending" && cancelCandidateJobId !== job.id && (
-                    <button className="secondary-button" onClick={() => onRequestCancel(job.id)}><CircleX size={16} /> Cancel</button>
+                    <button className="secondary-button" onClick={() => onRequestCancel(job.id)}><CircleX size={16} /> 取消任务</button>
                   )}
                   {job.status === "pending" && cancelCandidateJobId === job.id && (
                     <>
-                      <button className="danger-button" disabled={busy === `cancel-${job.id}`} onClick={() => onCancel(job.id)}><CircleX size={16} /> Confirm cancel</button>
-                      <button className="secondary-button" disabled={busy === `cancel-${job.id}`} onClick={onKeep}>Keep job</button>
+                      <button className="danger-button" disabled={busy === `cancel-${job.id}`} onClick={() => onCancel(job.id)}><CircleX size={16} /> 确认取消</button>
+                      <button className="secondary-button" disabled={busy === `cancel-${job.id}`} onClick={onKeep}>保留任务</button>
                     </>
                   )}
-                  <button className="secondary-button" disabled={!canRetry || Boolean(job.item_id) || busy === `retry-${job.id}`} onClick={() => onRetry(job.id)}><RefreshCw size={16} /> Retry</button>
+                  <button className="secondary-button" disabled={!canRetry || Boolean(job.item_id) || busy === `retry-${job.id}`} onClick={() => onRetry(job.id)}><RefreshCw size={16} /> 重试</button>
                 </span>
               </div>
             );
@@ -1400,7 +1400,7 @@ function PublishJobHistory({
       )}
       {jobs.length > 0 && hasMore && (
         <div className="action-line">
-          <button className="secondary-button" disabled={busy === "older-publish-jobs"} onClick={onLoadOlder}>Load older jobs</button>
+          <button className="secondary-button" disabled={busy === "older-publish-jobs"} onClick={onLoadOlder}>加载更早任务</button>
         </div>
       )}
     </section>
