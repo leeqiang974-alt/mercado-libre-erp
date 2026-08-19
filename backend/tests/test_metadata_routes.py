@@ -123,3 +123,23 @@ def test_metadata_routes_reject_malformed_category_attributes(monkeypatch):
         "code": "meli_metadata_unavailable",
         "operation": "category attributes",
     }
+
+
+def test_metadata_routes_verify_leaf_category(monkeypatch):
+    async def fake_details(client, category_id: str):
+        assert category_id == "MLM123"
+        return {
+            "id": "MLM123",
+            "name": "Muffin Pans",
+            "path_from_root": [{"id": "MLM1", "name": "Kitchen"}, {"id": "MLM123", "name": "Muffin Pans"}],
+            "leaf": True,
+        }
+
+    monkeypatch.setattr(metadata, "fetch_category_details", fake_details)
+    client = make_client()
+
+    response = client.get("/api/metadata/categories/MLM123")
+
+    assert response.status_code == 200
+    assert response.json()["leaf"] is True
+    assert response.json()["path_from_root"][-1]["name"] == "Muffin Pans"

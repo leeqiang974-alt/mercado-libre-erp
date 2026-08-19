@@ -1068,6 +1068,18 @@ export async function getCategoryAttributes(categoryId: string) {
   }>;
 }
 
+export async function getCategoryDetails(categoryId: string) {
+  const response = await fetch(`${API_BASE}/api/metadata/categories/${encodeURIComponent(categoryId)}`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<{
+    id: string;
+    name: string;
+    path_from_root: Array<{ id: string; name: string }>;
+    leaf: boolean;
+    verified: boolean;
+  }>;
+}
+
 export async function getDraftAttributeSuggestions(productDraftId: number, categoryId: string) {
   const params = new URLSearchParams({ category_id: categoryId });
   const response = await fetch(

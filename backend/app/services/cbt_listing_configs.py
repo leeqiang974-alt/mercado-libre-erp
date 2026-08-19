@@ -12,7 +12,8 @@ from app.schemas.cbt_listing_config import (
     CbtListingConfigUpsert,
 )
 from app.services.audit_events import create_audit_event
-from app.services.drafts import to_draft_read, update_draft_content
+from app.services.drafts import normalize_listing_title, sanitize_unbranded_description, to_draft_read, update_draft_content
+from app.models.source_product import SourceProduct
 from app.services.source_products import source_variant_evidence_error
 
 
@@ -28,6 +29,9 @@ def upsert_cbt_listing_config(
         raise HTTPException(status_code=404, detail="Product draft not found.")
     if source_error := source_variant_evidence_error(db, draft):
         raise HTTPException(status_code=409, detail={"code": "source_evidence_stale", "errors": [source_error]})
+    source = db.get(SourceProduct, draft.source_product_id) if draft.source_product_id else None
+    normalized_title = normalize_listing_title(payload.global_title, source.brand if source else "")
+    normalized_description = sanitize_unbranded_description(payload.description, source.brand if source else "")
     store = db.get(Store, payload.store_id)
     if store is None:
         raise HTTPException(status_code=404, detail="Store not found.")
@@ -47,8 +51,8 @@ def upsert_cbt_listing_config(
     config.store_id = store.id
     config.category_id = payload.category_id
     config.family_name = payload.family_name
-    config.global_title = payload.global_title
-    config.description = payload.description
+    config.global_title = normalized_title
+    config.description = normalized_description
     config.price_usd = payload.price_usd
     config.available_quantity = payload.available_quantity
     config.attributes_json = [item.model_dump(exclude_none=True) for item in payload.attributes]
@@ -63,8 +67,8 @@ def upsert_cbt_listing_config(
         product_draft_id,
         target_site_id="CBT",
         target_category_id=payload.category_id,
-        title=payload.global_title,
-        description=payload.description,
+        title=normalized_title,
+        description=normalized_description,
         price=payload.price_usd,
         currency="USD",
         stock=payload.available_quantity,

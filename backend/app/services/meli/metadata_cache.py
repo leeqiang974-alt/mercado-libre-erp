@@ -17,6 +17,10 @@ def category_attributes_key(category_id: str) -> str:
     return f"category_attributes:{category_id}"
 
 
+def category_details_key(category_id: str) -> str:
+    return f"category_details:{category_id.strip().upper()}"
+
+
 def get_cached_metadata(db: Session, cache_key: str) -> dict | None:
     row = db.query(MeliMetadataCache).filter(MeliMetadataCache.cache_key == cache_key).one_or_none()
     return row.payload_json if row else None

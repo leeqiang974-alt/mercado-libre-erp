@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import {
   getCategoryAttributes,
+  getCategoryDetails,
   getCategoryPredictions,
   getCbtListingConfig,
   getCbtPublishingProfile,
@@ -48,6 +49,19 @@ const MARKET_NAMES: Record<string, string> = {
 
 type Offer = CbtListingConfig["sites_to_sell"][number];
 
+function normalizeCbtTitle(value: string) {
+  return value.replace(/\s+/g, " ").trim().slice(0, 60);
+}
+
+function sanitizeCbtDescription(value: string) {
+  return value
+    .split("\n")
+    .filter((line) => !/^\s*(brand|brand name|marca)\s*[:\-]/i.test(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export function CbtGlobalPublishingPanel({
   draft,
   draftId,
@@ -66,10 +80,12 @@ export function CbtGlobalPublishingPanel({
   const [profile, setProfile] = useState<CbtPublishingProfile | null>(null);
   const [profileReloadKey, setProfileReloadKey] = useState(0);
   const [categoryId, setCategoryId] = useState("");
+  const [categoryLeafVerified, setCategoryLeafVerified] = useState(false);
+  const [categoryPath, setCategoryPath] = useState("");
   const [predictions, setPredictions] = useState<Record<string, unknown>[]>([]);
-  const [globalTitle, setGlobalTitle] = useState(draft.title);
+  const [globalTitle, setGlobalTitle] = useState(normalizeCbtTitle(draft.title));
   const [familyName, setFamilyName] = useState("");
-  const [description, setDescription] = useState(draft.description);
+  const [description, setDescription] = useState(sanitizeCbtDescription(draft.description));
   const [priceUsd, setPriceUsd] = useState(draft.currency === "USD" && draft.price ? String(draft.price) : "");
   const [quantity, setQuantity] = useState(draft.stock > 0 ? String(draft.stock) : "");
   const [attributes, setAttributes] = useState<Record<string, string>>({});
@@ -106,7 +122,7 @@ export function CbtGlobalPublishingPanel({
     ? Number(priceUsd) - unitCostUsd
     : null;
   const canSave = Boolean(
-    storeId && categoryId && familyName.trim() && globalTitle.trim() && description.trim()
+    storeId && categoryId && categoryLeafVerified && familyName.trim() && globalTitle.trim() && description.trim()
     && Number(priceUsd) > 0 && Number.isInteger(Number(quantity)) && Number(quantity) > 0
     && pricing?.target_currency === "USD" && offers.length > 0 && missing.length === 0,
   );
@@ -131,9 +147,17 @@ export function CbtGlobalPublishingPanel({
         if (!config) return;
         setSaved(config);
         setCategoryId(config.category_id);
+        getCategoryDetails(config.category_id)
+          .then((details) => {
+            if (!cancelled) {
+              setCategoryLeafVerified(details.verified && details.leaf);
+              setCategoryPath(details.path_from_root.map((item) => item.name).filter(Boolean).join(" > "));
+            }
+          })
+          .catch(() => !cancelled && setCategoryLeafVerified(false));
         setFamilyName(config.family_name);
-        setGlobalTitle(config.global_title);
-        setDescription(config.description);
+        setGlobalTitle(normalizeCbtTitle(config.global_title));
+        setDescription(sanitizeCbtDescription(config.description));
         setPriceUsd(String(config.price_usd));
         setQuantity(String(config.available_quantity));
         setAttributes(Object.fromEntries(config.attributes.map((item) => [item.id, item.value_name])));
@@ -169,6 +193,13 @@ export function CbtGlobalPublishingPanel({
     if (!categoryId) return;
     setBusy("attributes"); setStatus("");
     try {
+      const details = await getCategoryDetails(categoryId);
+      if (!details.verified || !details.leaf) {
+        setCategoryLeafVerified(false);
+        throw new Error("请确认最底层叶子分类，父分类不能直接上架。");
+      }
+      setCategoryLeafVerified(true);
+      setCategoryPath(details.path_from_root.map((item) => item.name).filter(Boolean).join(" > "));
       const result = await getCategoryAttributes(categoryId);
       setAttributeDefinitions(result.attributes);
       setStatus(result.verified ? "已读取美客多官方类目属性" : "属性尚未验证");
@@ -192,7 +223,7 @@ export function CbtGlobalPublishingPanel({
 
   function updateOffer(siteId: string, key: "title" | "listing_type_id", value: string) {
     setOffers((current) => current.map((offer) => offer.site_id === siteId
-      ? { ...offer, [key]: value } as Offer : offer));
+      ? { ...offer, [key]: key === "title" ? normalizeCbtTitle(value) : value } as Offer : offer));
     setSaved(null); setPreview(null); setApproved(false); setPublishConfirmed(false); setExecution(null);
   }
 
@@ -221,7 +252,7 @@ export function CbtGlobalPublishingPanel({
       setPricing(savedPricing);
       const config = await saveCbtListingConfig(draftId, {
         store_id: Number(storeId), category_id: categoryId, family_name: familyName,
-        global_title: globalTitle, description, price_usd: Number(priceUsd),
+        global_title: normalizeCbtTitle(globalTitle), description: sanitizeCbtDescription(description), price_usd: Number(priceUsd),
         available_quantity: Number(quantity),
         attributes: Object.entries(attributes).filter(([, value]) => value.trim()).map(([id, value_name]) => ({ id, value_name })),
         sale_terms: warranty.trim() ? [{ id: "WARRANTY_TYPE", value_name: warranty.trim() }] : [],
@@ -293,14 +324,15 @@ export function CbtGlobalPublishingPanel({
         <label>产品族名称 family_name *<input value={familyName} placeholder="例如 Silicone Mold Collection" onChange={(event) => { setFamilyName(event.target.value); setSaved(null); setPreview(null); }} /></label>
         <label>可售库存 *<input type="number" min="1" step="1" value={quantity} onChange={(event) => { setQuantity(event.target.value); setSaved(null); setPreview(null); }} /></label>
       </div>
-      <label>英文商品描述 *<textarea rows={7} value={description} onChange={(event) => { setDescription(event.target.value); setSaved(null); setPreview(null); }} /></label>
+      <label>英文商品描述（不得包含品牌） *<textarea rows={7} value={description} onChange={(event) => { setDescription(sanitizeCbtDescription(event.target.value)); setSaved(null); setPreview(null); }} /></label>
       <p className="cbt-image-note"><Image size={16} /> 将使用商品来源中已保存的 {draft.image_urls.length} 张图片，并写入每一个目标市场的 `sites_to_sell`。</p>
     </section>
 
     <section className="surface publish-section">
       <div className="section-heading"><div><span className="step-number">3</span><h3>CBT 类目、属性与质保</h3></div></div>
-      <div className="category-controls"><label>CBT 类目 ID *<input value={categoryId} placeholder="CBT..." onChange={(event) => { setCategoryId(event.target.value.toUpperCase()); setSaved(null); setPreview(null); }} /></label><button onClick={predictCategory} disabled={!globalTitle.trim() || busy === "category"}><Search size={16} /> 官方类目预测</button><button className="secondary-button" onClick={loadAttributes} disabled={!categoryId.startsWith("CBT") || busy === "attributes"}><ListChecks size={16} /> 读取类目属性</button></div>
-      {predictions.length > 0 && <div className="prediction-list">{predictions.map((item) => { const id = String(item.category_id ?? ""); return <button key={id} onClick={() => { setCategoryId(id); setAttributeDefinitions([]); setPreview(null); }}>{String(item.category_name ?? item.domain_name ?? id)}<small>{id}</small></button>; })}</div>}
+      <div className="category-controls"><label>CBT 最终类目 ID *<input value={categoryId} placeholder="CBT..." onChange={(event) => { setCategoryId(event.target.value.toUpperCase()); setCategoryLeafVerified(false); setCategoryPath(""); setSaved(null); setPreview(null); }} /></label><button onClick={predictCategory} disabled={!globalTitle.trim() || busy === "category"}><Search size={16} /> 官方类目预测</button><button className="secondary-button" onClick={loadAttributes} disabled={!categoryId.startsWith("CBT") || busy === "attributes"}><ListChecks size={16} /> 验证叶子类目并读取属性</button></div>
+      {categoryPath && <p className="category-path-label">{categoryPath} · {categoryLeafVerified ? "叶子类目已验证" : "待验证"}</p>}
+      {predictions.length > 0 && <div className="prediction-list">{predictions.map((item) => { const id = String(item.category_id ?? ""); return <button key={id} onClick={() => { setCategoryId(id); setCategoryLeafVerified(false); setCategoryPath(""); setAttributeDefinitions([]); setPreview(null); }}>{String(item.category_name ?? item.domain_name ?? id)}<small>{id}</small></button>; })}</div>}
       <div className="form-grid two-col cbt-attributes">{requiredIds.map((id) => {
         const definition = attributeDefinitions.find((item) => String(item.id).toUpperCase() === id);
         return <label key={id}>{String(definition?.name ?? id)} *<input value={attributes[id] ?? ""} placeholder={id === "ITEM_CONDITION" ? "New" : id === "SELLER_SKU" ? "内部 SKU" : "例如 10 cm / 250 g"} onChange={(event) => setAttribute(id, event.target.value)} /></label>;
@@ -321,7 +353,7 @@ export function CbtGlobalPublishingPanel({
               <td><input type="number" min="0.01" step="0.01" value={priceUsd} onChange={(event) => { setPriceUsd(event.target.value); setSaved(null); setPreview(null); setApproved(false); setPublishConfirmed(false); }} /></td>
               <td><strong>{estimatedProfitUsd === null ? "请先完成成本定价" : estimatedProfitUsd.toFixed(2)}</strong></td>
               <td><span className="cbt-derived-value">按国家设置</span></td>
-              <td><div className="cbt-title-input"><input maxLength={60} value={globalTitle} onChange={(event) => { setGlobalTitle(event.target.value); setSaved(null); setPreview(null); }} /><small>{globalTitle.length}/60</small></div></td>
+              <td><div className="cbt-title-input"><input maxLength={60} value={globalTitle} onChange={(event) => { setGlobalTitle(normalizeCbtTitle(event.target.value)); setSaved(null); setPreview(null); }} /><small>{globalTitle.length}/60</small></div></td>
             </tr>
             {remoteMarkets.map((market) => {
               const offer = offers.find((item) => item.site_id === market.site_id);

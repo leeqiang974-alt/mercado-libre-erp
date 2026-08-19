@@ -711,6 +711,24 @@
   font-size: 12px;
 }
 
+.category-confirmed-row .category-confirmed-copy {
+  display: grid;
+  gap: 3px;
+  margin-left: 0;
+  color: #166534;
+}
+
+.category-confirmed-copy small,
+.category-path-label,
+.field-note {
+  color: #697586;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.field-note { display: block; margin-top: 5px; }
+.limit-reached { color: #b42318; font-weight: 700; }
+
 .category-prediction-list {
   display: grid;
   gap: 8px;
@@ -834,6 +852,15 @@
   object-fit: cover;
   border-radius: 4px;
   background: #f8fafc;
+}
+
+.media-dimensions {
+  display: block;
+  min-height: 16px;
+  margin-top: 4px;
+  color: #697586;
+  font-size: 11px;
+  text-align: center;
 }
 
 .media-tile input {

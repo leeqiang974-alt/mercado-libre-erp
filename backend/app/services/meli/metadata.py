@@ -93,3 +93,21 @@ async def fetch_category_attributes(client: MercadoLibreClient, category_id: str
             ):
                 raise ValueError("invalid_category_attribute_value_definition")
     return data
+
+
+async def fetch_category_details(client: MercadoLibreClient, category_id: str) -> dict:
+    data = await client.get(f"/categories/{category_id.strip().upper()}")
+    if not isinstance(data, dict):
+        raise ValueError("invalid_category_details_response")
+    response_id = str(data.get("id") or "").strip().upper()
+    if response_id != category_id.strip().upper():
+        raise ValueError("category_details_id_mismatch")
+    children = data.get("children_categories")
+    if children is not None and not isinstance(children, list):
+        raise ValueError("invalid_category_children_response")
+    return {
+        "id": response_id,
+        "name": str(data.get("name") or "").strip(),
+        "path_from_root": data.get("path_from_root") if isinstance(data.get("path_from_root"), list) else [],
+        "leaf": not bool(children),
+    }

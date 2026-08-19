@@ -1,3 +1,5 @@
+import re
+
 from fastapi import HTTPException
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -5,6 +7,34 @@ from sqlalchemy.orm import Session
 from app.models.product_draft import ProductDraft
 from app.schemas.drafts import UNBRANDED, ProductDraftContentUpdate, ProductDraftCreate, ProductDraftRead
 from app.services.audit_events import create_audit_event
+
+
+_BRAND_LABEL_PATTERN = re.compile(r"^\s*(?:brand|brand name|marca)\s*[:\-].*$", re.IGNORECASE)
+
+
+def sanitize_unbranded_description(description: str, source_brand: str = "") -> str:
+    """Remove marketplace brand fields from copy while retaining source evidence separately."""
+    clean_lines = [line for line in description.strip().splitlines() if not _BRAND_LABEL_PATTERN.match(line)]
+    cleaned = "\n".join(clean_lines)
+    brand = source_brand.strip()
+    if brand:
+        cleaned = re.sub(
+            rf"(?<![A-Za-z0-9]){re.escape(brand)}(?![A-Za-z0-9])",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+
+def normalize_listing_title(title: str, source_brand: str = "") -> str:
+    normalized = " ".join(title.split())
+    if len(normalized) > 60:
+        raise HTTPException(status_code=422, detail="title must be 60 characters or fewer")
+    if source_brand.strip() and source_brand.casefold() in normalized.casefold():
+        raise HTTPException(status_code=422, detail="title must not contain the source brand")
+    return normalized
 
 
 def update_draft_content(
@@ -47,9 +77,17 @@ def save_product_draft_content(
     if draft.content_version != payload.expected_content_version:
         raise HTTPException(status_code=409, detail="draft_content_version_conflict")
 
+    source_brand = ""
+    if draft.source_product_id:
+        from app.models.source_product import SourceProduct
+
+        source = db.get(SourceProduct, draft.source_product_id)
+        source_brand = source.brand if source else ""
+    normalized_title = normalize_listing_title(payload.title, source_brand)
+    normalized_description = sanitize_unbranded_description(payload.description, source_brand)
     values = {
-        "title": payload.title,
-        "description": payload.description,
+        "title": normalized_title,
+        "description": normalized_description,
         "brand": UNBRANDED,
         "image_urls_json": payload.image_urls,
         "video_urls_json": payload.video_urls,
@@ -92,7 +130,7 @@ def save_product_draft_content(
             "changed_fields": changed_fields,
             "title": payload.title,
             "brand": payload.brand,
-            "description_length": len(payload.description),
+            "description_length": len(normalized_description),
             "image_count": len(payload.image_urls),
             "video_count": len(payload.video_urls),
         },
@@ -118,7 +156,7 @@ def create_product_draft(
         target_site_id=draft.target_site_id,
         target_category_id=draft.target_category_id,
         title=draft.title,
-        description=draft.description,
+        description=sanitize_unbranded_description(draft.description, draft.brand),
         brand=UNBRANDED,
         condition=draft.condition,
         source_price=draft.source_price,

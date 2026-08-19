@@ -11,7 +11,7 @@ MARKETING_TERMS = (
 
 
 class ProductDraftCreate(BaseModel):
-    title: str = Field(default="", max_length=200)
+    title: str = Field(default="", max_length=60)
     description: str = ""
     brand: str = ""
     target_site_id: str = "MLM"

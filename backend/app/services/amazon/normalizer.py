@@ -1,4 +1,5 @@
 from app.schemas.drafts import ProductDraftCreate
+from app.services.drafts import sanitize_unbranded_description
 from app.services.meli.sites import expected_currency
 
 
@@ -13,9 +14,10 @@ def normalize_amazon_product(parsed: dict, target_site_id: str) -> ProductDraftC
             "\n".join(f"{key}: {value}" for key, value in parsed["technical_details"].items())
         )
     price = parsed.get("price", {})
+    source_brand = str(parsed.get("brand") or "").strip()
     return ProductDraftCreate(
-        title=parsed.get("title", "")[:200],
-        description="\n\n".join(description_parts),
+        title=" ".join(str(parsed.get("title", "")).split())[:60].rstrip(),
+        description=sanitize_unbranded_description("\n\n".join(description_parts), source_brand),
         brand=parsed.get("brand", "")[:120],
         target_site_id=target_site_id,
         source_price=price.get("amount"),

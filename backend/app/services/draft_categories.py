@@ -8,7 +8,11 @@ from app.models.product_draft import ProductDraft
 from app.schemas.draft_category import DraftCategoryUpdate
 from app.services.audit_events import create_audit_event
 from app.services.drafts import to_draft_read, update_draft_content
-from app.services.meli.metadata_cache import category_attributes_key, get_cached_metadata
+from app.services.meli.metadata_cache import (
+    category_attributes_key,
+    category_details_key,
+    get_cached_metadata,
+)
 
 
 def confirm_draft_category(
@@ -23,6 +27,9 @@ def confirm_draft_category(
     category_id = payload.category_id.strip().upper()
     if not category_id.startswith(site_id):
         raise HTTPException(status_code=422, detail="category_site_mismatch")
+    category_details = get_cached_metadata(db, category_details_key(category_id)) or {}
+    if category_details.get("verified") is not True or category_details.get("leaf") is not True:
+        raise HTTPException(status_code=409, detail="category_leaf_not_verified")
     if draft.content_version != payload.expected_content_version:
         raise HTTPException(status_code=409, detail="draft_content_version_conflict")
     if draft.target_category_id.strip().upper() == category_id and draft.target_site_id == site_id:

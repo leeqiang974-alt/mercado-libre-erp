@@ -9,11 +9,13 @@ from app.db.session import get_db
 from app.services.meli.client import MercadoLibreClient
 from app.services.meli.metadata import (
     fetch_category_attributes,
+    fetch_category_details,
     fetch_listing_type_ids,
     predict_category,
 )
 from app.services.meli.metadata_cache import (
     category_attributes_key,
+    category_details_key,
     get_cached_metadata,
     listing_types_key,
     upsert_cached_metadata,
@@ -109,6 +111,25 @@ async def get_category_attributes(
         raise _metadata_unavailable("category attributes", exc) from exc
     payload = {"attributes": attributes, "verified": True}
     upsert_cached_metadata(db, category_attributes_key(category_id), payload)
+    return payload
+
+
+@router.get("/categories/{category_id}")
+async def get_category_details(
+    category_id: str, db: Session = Depends(get_db)
+) -> dict[str, object]:
+    normalized_category_id = category_id.strip().upper()
+    cached = get_cached_metadata(db, category_details_key(normalized_category_id))
+    if cached:
+        return cached
+    try:
+        details = await asyncio.wait_for(
+            fetch_category_details(create_metadata_client(), normalized_category_id), timeout=3.5
+        )
+    except (httpx.HTTPError, TimeoutError, ValueError) as exc:
+        raise _metadata_unavailable("category details", exc) from exc
+    payload = {**details, "verified": True}
+    upsert_cached_metadata(db, category_details_key(normalized_category_id), payload)
     return payload
 
 

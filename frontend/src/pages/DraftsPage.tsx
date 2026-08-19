@@ -20,6 +20,7 @@ import {
   getDraftPricing,
   getDraftListingConfig,
   getCategoryAttributes,
+  getCategoryDetails,
   getCategoryPredictions,
   confirmDraftCategory,
   generateDraftContent,
@@ -55,6 +56,28 @@ const EMPTY_PRICING: DraftPricingInput = {
 };
 
 const MAX_REVIEW_BATCH_SIZE = 50;
+const UNBRANDED = "Unbranded";
+
+function normalizeListingTitle(value: string) {
+  return value.replace(/\s+/g, " ").trim().slice(0, 60);
+}
+
+function sanitizeUnbrandedDescription(value: string) {
+  return value
+    .split("\n")
+    .filter((line) => !/^\s*(brand|brand name|marca)\s*[:\-]/i.test(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function categoryPathLabel(value: unknown) {
+  if (!Array.isArray(value)) return "官方候选分类";
+  return value
+    .map((item) => (item && typeof item === "object" ? String((item as Record<string, unknown>).name ?? "") : String(item)))
+    .filter(Boolean)
+    .join(" > ") || "官方候选分类";
+}
 
 function ProductImage({ src, alt }: { src?: string; alt: string }) {
   const [failed, setFailed] = useState(false);
@@ -70,6 +93,22 @@ function ProductImage({ src, alt }: { src?: string; alt: string }) {
   }
 
   return <img className="product-image" src={src} alt={alt} onError={() => setFailed(true)} />;
+}
+
+function MediaImage({ src, alt }: { src: string; alt: string }) {
+  const [dimensions, setDimensions] = useState("");
+  if (!src) return <ProductImage src={src} alt={alt} />;
+  return (
+    <>
+      <img
+        className="product-image"
+        src={src}
+        alt={alt}
+        onLoad={(event) => setDimensions(`${event.currentTarget.naturalWidth} × ${event.currentTarget.naturalHeight}`)}
+      />
+      <small className="media-dimensions">{dimensions || "读取图片尺寸中"}</small>
+    </>
+  );
 }
 
 export function DraftsPage({
@@ -107,6 +146,9 @@ export function DraftsPage({
   const [categoryPredictions, setCategoryPredictions] = useState<Record<string, unknown>[]>([]);
   const [categoryAttributes, setCategoryAttributes] = useState<Record<string, unknown>[]>([]);
   const [categoryVerified, setCategoryVerified] = useState(false);
+  const [categoryLeafVerified, setCategoryLeafVerified] = useState(false);
+  const [categoryLabel, setCategoryLabel] = useState("");
+  const [categoryPath, setCategoryPath] = useState<string[]>([]);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const draftEpochRef = useRef(0);
@@ -165,9 +207,9 @@ export function DraftsPage({
     }
     setContentForm({
       expected_content_version: draft.content_version,
-      title: draft.title,
-      description: draft.description,
-      brand: draft.brand,
+      title: normalizeListingTitle(draft.title),
+      description: sanitizeUnbrandedDescription(draft.description),
+      brand: UNBRANDED,
       image_urls: draft.image_urls.length > 0 ? draft.image_urls : [""],
       video_urls: draft.video_urls ?? [],
     });
@@ -185,6 +227,9 @@ export function DraftsPage({
     setCategoryQuery(draft.title);
     setCategoryAttributes([]);
     setCategoryVerified(false);
+    setCategoryLeafVerified(false);
+    setCategoryLabel("");
+    setCategoryPath([]);
     setPricing({
       ...EMPTY_PRICING,
       source_price: draft.source_price ?? 0,
@@ -193,6 +238,13 @@ export function DraftsPage({
     });
     if (!draftId) return;
     if (draft.target_category_id) {
+      getCategoryDetails(draft.target_category_id)
+        .then((result) => {
+          setCategoryLeafVerified(result.verified && result.leaf);
+          setCategoryLabel(result.name);
+          setCategoryPath(result.path_from_root.map((item) => item.name).filter(Boolean));
+        })
+        .catch(() => setCategoryLeafVerified(false));
       getCategoryAttributes(draft.target_category_id)
         .then((result) => {
           setCategoryAttributes(result.attributes);
@@ -238,7 +290,11 @@ export function DraftsPage({
   }
 
   function updateContentField(name: "title" | "description" | "brand", value: string) {
-    setContentForm((current) => (current ? { ...current, [name]: value } : current));
+    setContentForm((current) => {
+      if (!current) return current;
+      if (name === "brand") return { ...current, brand: UNBRANDED };
+      return { ...current, [name]: name === "title" ? normalizeListingTitle(value) : value };
+    });
   }
 
   function updateContentImage(index: number, value: string) {
@@ -305,6 +361,10 @@ export function DraftsPage({
     setBusy("category-confirm");
     setError("");
     try {
+      const details = await getCategoryDetails(categoryId);
+      if (!details.verified || !details.leaf) {
+        throw new Error("该分类还有下级分类，请选择最底层分类后再确认。 ");
+      }
       const result = await confirmDraftCategory(draftId, {
         expected_content_version: draft.content_version,
         target_site_id: draft.target_site_id,
@@ -320,6 +380,9 @@ export function DraftsPage({
       }
       setCategoryAttributes(attributes);
       setCategoryVerified(verified);
+      setCategoryLeafVerified(true);
+      setCategoryLabel(details.name);
+      setCategoryPath(details.path_from_root.map((item) => item.name).filter(Boolean));
       setCategoryPredictions([]);
       setListingConfigured(false);
       onReviewChange(null);
@@ -364,15 +427,18 @@ export function DraftsPage({
       const updated = await saveDraftContent(draftId, {
         ...contentForm,
         expected_content_version: draft.content_version,
+        title: normalizeListingTitle(contentForm.title),
+        brand: UNBRANDED,
         image_urls: contentForm.image_urls.map((url) => url.trim()).filter(Boolean),
+        description: sanitizeUnbrandedDescription(contentForm.description),
         video_urls: (contentForm.video_urls ?? []).map((url) => url.trim()).filter(Boolean),
       });
       onDraftChange(updated);
       setContentForm({
         expected_content_version: updated.content_version,
-        title: updated.title,
-        description: updated.description,
-        brand: updated.brand,
+        title: normalizeListingTitle(updated.title),
+        description: sanitizeUnbrandedDescription(updated.description),
+        brand: UNBRANDED,
         image_urls: updated.image_urls.length > 0 ? updated.image_urls : [""],
         video_urls: updated.video_urls ?? [],
       });
@@ -488,7 +554,8 @@ export function DraftsPage({
   const decision = typeof review?.decision === "string" ? review.decision : "not reviewed";
   const normalizedContentImages = contentForm?.image_urls.map((url) => url.trim()).filter(Boolean) ?? [];
   const normalizedContentVideos = contentForm?.video_urls?.map((url) => url.trim()).filter(Boolean) ?? [];
-  const categoryConfirmed = Boolean(draft?.target_category_id && categoryVerified);
+  const categoryConfirmed = Boolean(draft?.target_category_id && categoryVerified && categoryLeafVerified);
+  const titleValid = Boolean(contentForm?.title.trim() && contentForm.title.length <= 60);
   const contentDirty = Boolean(
     draft
     && contentForm
@@ -553,12 +620,12 @@ export function DraftsPage({
 
           <section className="surface category-first-card">
             <div className="section-heading">
-              <div><span className="step-number">1</span><h3>先确认 Mercado Libre 分类</h3></div>
+              <div><span className="step-number">1</span><h3>先确认 Mercado Libre 最终分类</h3></div>
               <span className={`state-pill ${categoryConfirmed ? "ready" : "blocked"}`}>
                 {categoryConfirmed ? "分类已确认" : "必须先完成"}
               </span>
             </div>
-            <p className="section-note">分类确认后，系统才读取官方必填属性、可选值和变体属性；更换分类会清空旧的刊登配置。</p>
+            <p className="section-note">先从官方候选中选择最底层分类。只有叶子分类确认后，系统才读取该分类的必填属性、可选值和变体属性；更换分类会清空旧的刊登配置。</p>
             <div className="category-search-line">
               <input
                 value={categoryQuery}
@@ -570,11 +637,11 @@ export function DraftsPage({
               </button>
             </div>
             {draft.target_category_id && (
-              <div className="category-confirmed-row">
-                <CheckCircle2 size={17} />
-                <strong>{draft.target_category_id}</strong>
-                <span>{categoryVerified ? `已读取 ${categoryAttributes.length} 项官方属性` : "尚未读取官方属性"}</span>
-              </div>
+                <div className="category-confirmed-row">
+                  <CheckCircle2 size={17} />
+                  <span className="category-confirmed-copy"><strong>{categoryLabel || "已确认最终分类"}</strong><small>{categoryPath.length > 0 ? categoryPath.join(" > ") : draft.target_category_id} · {draft.target_category_id}</small></span>
+                  <span>{categoryConfirmed ? `叶子分类 · 已读取 ${categoryAttributes.length} 项官方属性` : "正在验证叶子分类和官方属性"}</span>
+                </div>
             )}
             {categoryPredictions.length > 0 && (
               <div className="category-prediction-list">
@@ -583,8 +650,8 @@ export function DraftsPage({
                   const categoryName = String(prediction.category_name ?? prediction.name ?? categoryId);
                   return (
                     <button className="category-prediction-item" key={`${categoryId}-${index}`} disabled={!categoryId || busy === "category-confirm"} onClick={() => confirmCategory(categoryId)}>
-                      <span><strong>{categoryName}</strong><small>{categoryId}</small></span>
-                      <span>{busy === "category-confirm" ? "确认中" : "确认此分类"}</span>
+                      <span><strong>{categoryName}</strong><small>{categoryPathLabel(prediction.path_from_root)} · {categoryId}</small></span>
+                      <span>{busy === "category-confirm" ? "验证中" : "验证并确认"}</span>
                     </button>
                   );
                 })}
@@ -611,24 +678,23 @@ export function DraftsPage({
                 </span>
               </div>
               <div className="form-grid two-col">
-                <label className="full-span">英文标题 <span className="field-hint">{contentForm.title.length}/60</span><input
-                    maxLength={60}
+                 <label className="full-span">英文标题 <span className={`field-hint ${contentForm.title.length >= 60 ? "limit-reached" : ""}`}>{contentForm.title.length}/60</span><input
+                     maxLength={60}
                     value={contentForm.title}
                     onChange={(event) => updateContentField("title", event.target.value)}
                   />
                 </label>
-                <label>品牌<input
-                    maxLength={120}
-                    value={contentForm.brand}
-                    readOnly
-                  />
-                </label>
-                <label className="full-span">商品描述<textarea
+                 <label>品牌（固定无品牌）<input
+                     value={UNBRANDED}
+                     readOnly
+                   /><small className="field-note">Amazon 来源品牌仅用于采集证据，不会写入 Mercado Libre。</small>
+                 </label>
+                 <label className="full-span">商品描述<textarea
                     maxLength={50000}
                     rows={6}
                     value={contentForm.description}
-                    onChange={(event) => updateContentField("description", event.target.value)}
-                  />
+                   onChange={(event) => updateContentField("description", event.target.value)}
+                   /><small className="field-note">描述不得出现 Amazon 品牌；保存时系统会再次清理并校验。</small>
                 </label>
               </div>
               <div className="ai-content-bar">
@@ -638,14 +704,14 @@ export function DraftsPage({
                 </button>
               </div>
               <div className="image-url-editor">
-                <div className="section-heading compact">
-                  <div><h4>图片素材库</h4></div>
+                 <div className="section-heading compact">
+                   <div><h4>图片素材库</h4><p className="section-note">这里保存的是原图地址；大、中、小只是页面预览尺寸，不是三套要分别上传的图片。发布 API 使用原图地址。</p></div>
                   <span>{contentForm.image_urls.filter(Boolean).length} / 12</span>
                 </div>
                 <div className="media-library-grid">
                   {contentForm.image_urls.map((url, index) => (
-                    <div className={`media-tile ${index === 0 ? "is-cover" : ""}`} key={`${index}-${contentForm.expected_content_version}`}>
-                      <ProductImage src={url} alt={`商品图片 ${index + 1}`} />
+                   <div className={`media-tile ${index === 0 ? "is-cover" : ""}`} key={`${index}-${contentForm.expected_content_version}`}>
+                      <MediaImage src={url} alt={`商品图片 ${index + 1}`} />
                       {index === 0 && <span className="cover-label">主图</span>}
                       <input aria-label={`商品图片链接 ${index + 1}`} placeholder="粘贴图片地址" value={url} onChange={(event) => updateContentImage(index, event.target.value)} />
                       <div className="media-tile-actions">
@@ -678,7 +744,7 @@ export function DraftsPage({
               </div>
               <div className="action-line">
                 <button
-                  disabled={!contentForm.title.trim() || !contentDirty || busy === "content"}
+                   disabled={!titleValid || !contentForm.title.trim() || !contentDirty || busy === "content"}
                   onClick={saveContent}
                 >
                   <Save size={16} /> {busy === "content" ? "保存中" : "保存内容"}
@@ -688,9 +754,9 @@ export function DraftsPage({
                   disabled={!contentDirty || busy === "content"}
                   onClick={() => setContentForm({
                     expected_content_version: draft.content_version ?? 1,
-                    title: draft.title,
-                    description: draft.description,
-                    brand: draft.brand,
+                    title: normalizeListingTitle(draft.title),
+                    description: sanitizeUnbrandedDescription(draft.description),
+                    brand: UNBRANDED,
                     image_urls: draft.image_urls.length > 0 ? draft.image_urls : [""],
                     video_urls: draft.video_urls ?? [],
                   })}
@@ -930,6 +996,7 @@ function readableDraftError(error: unknown, fallback: string) {
     const messages: Record<string, string> = {
       category_confirmation_required: "请先确认 Mercado Libre 分类。",
       category_attributes_not_verified: "官方分类属性尚未读取成功，请刷新分类属性后再试。",
+      category_leaf_not_verified: "请先确认最底层叶子分类，父分类不能直接上架。",
       category_site_mismatch: "分类与目标站点不匹配。",
       volcengine_api_key_required: "请先在店铺管理中配置火山 AI API Key。",
       volcengine_unreachable: "火山 AI 暂时无法连接，请稍后重试。",
