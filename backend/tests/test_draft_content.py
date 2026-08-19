@@ -40,7 +40,7 @@ def seed_reviewed_draft(testing_session) -> None:
         draft = ProductDraft(
             title="Original bottle",
             description="Original description",
-            brand="Original brand",
+            brand="Unbranded",
             source_price=9.99,
             source_currency="USD",
             image_urls_json=["https://example.com/original.jpg"],
@@ -96,7 +96,7 @@ def test_draft_content_update_versions_and_invalidates_old_review():
     body = response.json()
     assert body["title"] == "Updated bottle"
     assert body["description"] == "Updated description"
-    assert body["brand"] == "Updated brand"
+    assert body["brand"] == "Unbranded"
     assert body["image_urls"] == ["https://example.com/new.jpg"]
     assert body["content_version"] == 2
     assert body["risk_status"] == "unreviewed"
@@ -116,7 +116,6 @@ def test_draft_content_update_versions_and_invalidates_old_review():
         assert event.after_json["changed_fields"] == [
             "title",
             "description",
-            "brand",
             "image_urls_json",
         ]
 
@@ -128,7 +127,7 @@ def test_draft_content_update_rejects_stale_version_and_noop_does_not_increment(
         "expected_content_version": 1,
         "title": "Original bottle",
         "description": "Original description",
-        "brand": "Original brand",
+        "brand": "Unbranded",
         "image_urls": ["https://example.com/original.jpg"],
     }
 

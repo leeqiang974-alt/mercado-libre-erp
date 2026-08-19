@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     claude_model: str = "claude-sonnet-4-6"
     nvidia_api_key: str = ""
     nvidia_model: str = "meta/llama-3.1-70b-instruct"
+    volcengine_api_key: str = ""
+    volcengine_base_url: str = "https://ark.cn-beijing.volces.com/api/coding/v3"
+    volcengine_model: str = "doubao-seed-2.1-turbo"
     default_site_id: str = "MLM"
     allow_live_publish: bool = False
     token_encryption_key: str = "local-dev-token-key-change-me"

@@ -9,6 +9,7 @@ class IntegrationCredentialsUpdate(BaseModel):
     meli_client_secret: SecretStr | None = None
     claude_api_key: SecretStr | None = None
     nvidia_api_key: SecretStr | None = None
+    volcengine_api_key: SecretStr | None = None
 
 
 class IntegrationCredentialStatus(BaseModel):
@@ -16,8 +17,10 @@ class IntegrationCredentialStatus(BaseModel):
     meli_client_secret_configured: bool
     claude_api_key_configured: bool
     nvidia_api_key_configured: bool
+    volcengine_api_key_configured: bool
     claude_model: str
     nvidia_model: str
+    volcengine_model: str
     meli_redirect_uri: str
 
 

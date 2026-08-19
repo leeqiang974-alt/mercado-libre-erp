@@ -15,6 +15,7 @@ export type ProductDraft = {
   stock: number;
   listing_type_id: string;
   image_urls: string[];
+  video_urls?: string[];
   source_product_id?: number | null;
   source_variant_asin?: string;
   source_variant_attributes?: Record<string, string>;
@@ -37,6 +38,28 @@ export type DraftContentUpdate = {
   description: string;
   brand: string;
   image_urls: string[];
+  video_urls: string[];
+};
+
+export type DraftCategoryResult = {
+  draft: ProductDraftRead;
+  category_id: string;
+  attributes_verified: boolean;
+  attributes: Record<string, unknown>[];
+};
+
+export type GeneratedDraftContent = {
+  draft: ProductDraftRead;
+  title: string;
+  description: string;
+  brand: string;
+  validation: {
+    title_length: number;
+    title_valid: boolean;
+    description_valid: boolean;
+    warranty_included: boolean;
+  };
+  model: string;
 };
 
 export type PersistedDraftResponse = {
@@ -195,8 +218,10 @@ export type IntegrationCredentialStatus = {
   meli_client_secret_configured: boolean;
   claude_api_key_configured: boolean;
   nvidia_api_key_configured: boolean;
+  volcengine_api_key_configured: boolean;
   claude_model: string;
   nvidia_model: string;
+  volcengine_model: string;
   meli_redirect_uri: string;
 };
 
@@ -205,6 +230,7 @@ export type IntegrationCredentialsUpdate = Partial<{
   meli_client_secret: string;
   claude_api_key: string;
   nvidia_api_key: string;
+  volcengine_api_key: string;
 }>;
 
 export type IntegrationDiagnosticResult = {
@@ -375,6 +401,7 @@ export type SystemReadiness = {
   ai: {
     claude_configured: boolean;
     nvidia_configured: boolean;
+    volcengine_configured: boolean;
   };
   counts: {
     drafts: number;
@@ -876,6 +903,29 @@ export async function saveDraftContent(productDraftId: number, payload: DraftCon
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<ProductDraftRead>;
+}
+
+export async function confirmDraftCategory(
+  productDraftId: number,
+  payload: { expected_content_version: number; target_site_id: string; category_id: string },
+) {
+  const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/category`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<DraftCategoryResult>;
+}
+
+export async function generateDraftContent(productDraftId: number, categoryId: string) {
+  const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/generate-content`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ category_id: categoryId, language: "en" }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<GeneratedDraftContent>;
 }
 
 export async function listReviewHistory(productDraftId: number) {

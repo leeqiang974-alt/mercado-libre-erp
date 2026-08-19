@@ -103,6 +103,9 @@ def system_readiness(db: Session = Depends(get_db)) -> dict[str, object]:
             "nvidia_configured": bool(
                 credential_status and credential_status.nvidia_api_key_configured
             ),
+            "volcengine_configured": bool(
+                credential_status and credential_status.volcengine_api_key_configured
+            ),
         },
         "counts": {
             "drafts": counts["drafts"],

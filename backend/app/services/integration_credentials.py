@@ -15,6 +15,7 @@ CREDENTIAL_KEYS = (
     "meli_client_secret",
     "claude_api_key",
     "nvidia_api_key",
+    "volcengine_api_key",
 )
 
 
@@ -24,6 +25,7 @@ class ResolvedIntegrationCredentials:
     meli_client_secret: str
     claude_api_key: str
     nvidia_api_key: str
+    volcengine_api_key: str = ""
 
 
 def resolve_integration_credentials(
@@ -54,8 +56,10 @@ def integration_credential_status(
         meli_client_secret_configured=bool(resolved.meli_client_secret),
         claude_api_key_configured=bool(resolved.claude_api_key),
         nvidia_api_key_configured=bool(resolved.nvidia_api_key),
+        volcengine_api_key_configured=bool(resolved.volcengine_api_key),
         claude_model=settings.claude_model,
         nvidia_model=settings.nvidia_model,
+        volcengine_model=settings.volcengine_model,
         meli_redirect_uri=settings.meli_redirect_uri,
     )
 

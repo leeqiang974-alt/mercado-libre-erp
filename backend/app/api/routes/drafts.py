@@ -7,6 +7,8 @@ from app.schemas.draft_approvals import DraftApprovalCreate, DraftApprovalRead
 from app.schemas.draft_listing_config import DraftListingConfigRead, DraftListingConfigUpsert
 from app.schemas.cbt_listing_config import CbtListingConfigRead, CbtListingConfigUpsert
 from app.schemas.drafts import ProductDraftContentUpdate, ProductDraftRead
+from app.schemas.draft_category import DraftCategoryRead, DraftCategoryUpdate
+from app.schemas.content_generation import DraftContentGenerationRequest, DraftContentGenerationResponse
 from app.schemas.attribute_mapping import AttributeSuggestionRead
 from app.schemas.pricing import DraftPricingRead, DraftPricingUpsert
 from app.services.draft_approvals import approve_product_draft, to_approval_read
@@ -28,6 +30,9 @@ from app.services.draft_pricing import (
     upsert_draft_pricing,
 )
 from app.services.meli.attribute_mapping import suggest_draft_category_attributes
+from app.services.draft_categories import confirm_draft_category, to_category_read
+from app.services.ai_content_generation import generate_and_save_draft_content
+from app.core.config import get_settings
 
 router = APIRouter(prefix="/api/drafts", tags=["drafts"])
 
@@ -55,6 +60,40 @@ def save_draft_content(
     db: Session = Depends(get_db),
 ) -> ProductDraftRead:
     return to_draft_read(save_product_draft_content(db, product_draft_id, payload))
+
+
+@router.put("/{product_draft_id}/category", response_model=DraftCategoryRead)
+def confirm_category(
+    product_draft_id: int,
+    payload: DraftCategoryUpdate,
+    db: Session = Depends(get_db),
+) -> DraftCategoryRead:
+    draft, attributes, verified = confirm_draft_category(db, product_draft_id, payload)
+    return to_category_read(draft, attributes, verified)
+
+
+@router.post("/{product_draft_id}/generate-content", response_model=DraftContentGenerationResponse)
+async def generate_content(
+    product_draft_id: int,
+    payload: DraftContentGenerationRequest,
+    db: Session = Depends(get_db),
+) -> DraftContentGenerationResponse:
+    draft, content, model = await generate_and_save_draft_content(
+        db, get_settings(), product_draft_id, payload.category_id
+    )
+    return DraftContentGenerationResponse(
+        draft=to_draft_read(draft),
+        title=content.title,
+        description=content.description,
+        brand=content.brand,
+        validation={
+            "title_length": len(content.title),
+            "title_valid": True,
+            "description_valid": True,
+            "warranty_included": True,
+        },
+        model=model,
+    )
 
 
 @router.put("/{product_draft_id}/pricing", response_model=DraftPricingRead)

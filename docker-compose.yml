@@ -37,6 +37,9 @@ services:
       CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-4-6}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
       NVIDIA_MODEL: ${NVIDIA_MODEL:-meta/llama-3.1-70b-instruct}
+      VOLCENGINE_API_KEY: ${VOLCENGINE_API_KEY:-}
+      VOLCENGINE_BASE_URL: ${VOLCENGINE_BASE_URL:-https://ark.cn-beijing.volces.com/api/coding/v3}
+      VOLCENGINE_MODEL: ${VOLCENGINE_MODEL:-doubao-seed-2.1-turbo}
       ALLOW_LIVE_PUBLISH: ${ALLOW_LIVE_PUBLISH:-false}
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
       AMAZON_BROWSER_PROFILE_DIR: /data/amazon-browser/backend

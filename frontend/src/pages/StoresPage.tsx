@@ -29,6 +29,7 @@ export function StoresPage() {
     meli_client_secret: "",
     claude_api_key: "",
     nvidia_api_key: "",
+    volcengine_api_key: "",
   });
   const [savingCredentials, setSavingCredentials] = useState(false);
   const [diagnosing, setDiagnosing] = useState(false);
@@ -104,6 +105,7 @@ export function StoresPage() {
         meli_client_secret: "",
         claude_api_key: "",
         nvidia_api_key: "",
+        volcengine_api_key: "",
       });
       setStatus("集成凭证已更新。");
     } catch (error) {
@@ -284,6 +286,16 @@ export function StoresPage() {
             onClear={() => clearCredentials({ nvidia_api_key: "" })}
             clearDisabled={savingCredentials || !credentialStatus?.nvidia_api_key_configured}
           />
+          <CredentialRow
+            icon={<KeyRound size={18} />}
+            name="火山 AI"
+            state={credentialStatus?.volcengine_api_key_configured ? credentialStatus.volcengine_model : "未配置"}
+            fields={[["API Key", "volcengine_api_key"]]}
+            values={credentials}
+            onChange={(key, value) => setCredentials((current) => ({ ...current, [key]: value }))}
+            onClear={() => clearCredentials({ volcengine_api_key: "" })}
+            clearDisabled={savingCredentials || !credentialStatus?.volcengine_api_key_configured}
+          />
         </div>
         {diagnostics && (
           <>
@@ -417,7 +429,7 @@ function diagnosticMessage(result: IntegrationDiagnosticResult) {
   return messages[result.code] ?? result.code;
 }
 
-type CredentialKey = "meli_client_id" | "meli_client_secret" | "claude_api_key" | "nvidia_api_key";
+type CredentialKey = "meli_client_id" | "meli_client_secret" | "claude_api_key" | "nvidia_api_key" | "volcengine_api_key";
 
 function CredentialRow({
   icon,

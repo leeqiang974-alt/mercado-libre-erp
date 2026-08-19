@@ -3,7 +3,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.product_draft import ProductDraft
-from app.schemas.drafts import ProductDraftContentUpdate, ProductDraftCreate, ProductDraftRead
+from app.schemas.drafts import UNBRANDED, ProductDraftContentUpdate, ProductDraftCreate, ProductDraftRead
 from app.services.audit_events import create_audit_event
 
 
@@ -50,14 +50,16 @@ def save_product_draft_content(
     values = {
         "title": payload.title,
         "description": payload.description,
-        "brand": payload.brand,
+        "brand": UNBRANDED,
         "image_urls_json": payload.image_urls,
+        "video_urls_json": payload.video_urls,
     }
     before_values = {
         "title": draft.title,
         "description": draft.description,
         "brand": draft.brand,
         "image_urls_json": draft.image_urls_json or [],
+        "video_urls_json": draft.video_urls_json or [],
     }
     changed_fields = [name for name, value in values.items() if before_values[name] != value]
     if not changed_fields:
@@ -83,6 +85,7 @@ def save_product_draft_content(
             "brand": draft.brand,
             "description_length": len(draft.description),
             "image_count": len(draft.image_urls_json or []),
+            "video_count": len(draft.video_urls_json or []),
         },
         after={
             "content_version": previous_version + 1,
@@ -91,6 +94,7 @@ def save_product_draft_content(
             "brand": payload.brand,
             "description_length": len(payload.description),
             "image_count": len(payload.image_urls),
+            "video_count": len(payload.video_urls),
         },
         commit=False,
     )
@@ -115,7 +119,7 @@ def create_product_draft(
         target_category_id=draft.target_category_id,
         title=draft.title,
         description=draft.description,
-        brand=draft.brand,
+        brand=UNBRANDED,
         condition=draft.condition,
         source_price=draft.source_price,
         source_currency=draft.source_currency,
@@ -124,6 +128,7 @@ def create_product_draft(
         stock=draft.stock,
         listing_type_id=draft.listing_type_id,
         image_urls_json=draft.image_urls,
+        video_urls_json=draft.video_urls,
     )
     db.add(model)
     if commit:
@@ -142,7 +147,7 @@ def to_draft_read(model: ProductDraft) -> ProductDraftRead:
         source_variant_attributes=model.source_variant_attributes_json or {},
         title=model.title,
         description=model.description,
-        brand=model.brand,
+        brand=UNBRANDED,
         target_site_id=model.target_site_id,
         target_category_id=model.target_category_id,
         condition=model.condition,
@@ -153,6 +158,7 @@ def to_draft_read(model: ProductDraft) -> ProductDraftRead:
         stock=model.stock,
         listing_type_id=model.listing_type_id,
         image_urls=model.image_urls_json or [],
+        video_urls=model.video_urls_json or [],
         status=model.status.value if hasattr(model.status, "value") else str(model.status),
         risk_status=model.risk_status,
         content_version=model.content_version,

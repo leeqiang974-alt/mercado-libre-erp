@@ -46,6 +46,7 @@ class ProductDraft(Base):
     listing_type_id: Mapped[str] = mapped_column(String(40), default="")
     shipping_profile: Mapped[str] = mapped_column(String(80), default="")
     image_urls_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    video_urls_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[ProductDraftStatus] = mapped_column(default=ProductDraftStatus.DRAFT)
     risk_status: Mapped[str] = mapped_column(String(40), default="unreviewed")
     content_version: Mapped[int] = mapped_column(Integer, default=1)

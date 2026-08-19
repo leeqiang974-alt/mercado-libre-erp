@@ -2,18 +2,27 @@ import { useEffect, useRef, useState } from "react";
 import {
   Bot,
   Calculator,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   ImageOff,
   ListPlus,
   Plus,
   RefreshCw,
   Save,
   ShieldCheck,
+  Sparkles,
   Trash2,
+  Video,
 } from "lucide-react";
 import {
   enqueueBehavioralAuditBatch,
   getDraftPricing,
   getDraftListingConfig,
+  getCategoryAttributes,
+  getCategoryPredictions,
+  confirmDraftCategory,
+  generateDraftContent,
   getLatestBehavioralReview,
   getSystemReadiness,
   listDrafts,
@@ -93,6 +102,10 @@ export function DraftsPage({
   const [reviewJobs, setReviewJobs] = useState<ReviewJob[]>([]);
   const [batchReviewResult, setBatchReviewResult] = useState<ReviewJobBatchResult | null>(null);
   const [contentForm, setContentForm] = useState<DraftContentUpdate | null>(null);
+  const [categoryQuery, setCategoryQuery] = useState("");
+  const [categoryPredictions, setCategoryPredictions] = useState<Record<string, unknown>[]>([]);
+  const [categoryAttributes, setCategoryAttributes] = useState<Record<string, unknown>[]>([]);
+  const [categoryVerified, setCategoryVerified] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const draftEpochRef = useRef(0);
@@ -155,6 +168,7 @@ export function DraftsPage({
       description: draft.description,
       brand: draft.brand,
       image_urls: draft.image_urls.length > 0 ? draft.image_urls : [""],
+      video_urls: draft.video_urls ?? [],
     });
   }, [draftId, draft?.content_version]);
 
@@ -167,6 +181,9 @@ export function DraftsPage({
     setReviewHistory([]);
     setPricingResult(null);
     setListingConfigured(false);
+    setCategoryQuery(draft.title);
+    setCategoryAttributes([]);
+    setCategoryVerified(false);
     setPricing({
       ...EMPTY_PRICING,
       source_price: draft.source_price ?? 0,
@@ -174,6 +191,14 @@ export function DraftsPage({
       target_currency: currencyForSite(draft.target_site_id) || draft.currency,
     });
     if (!draftId) return;
+    if (draft.target_category_id) {
+      getCategoryAttributes(draft.target_category_id)
+        .then((result) => {
+          setCategoryAttributes(result.attributes);
+          setCategoryVerified(result.verified);
+        })
+        .catch(() => undefined);
+    }
     getDraftListingConfig(draftId)
       .then((config) => setListingConfigured(Boolean(config)))
       .catch(() => setListingConfigured(false));
@@ -232,6 +257,104 @@ export function DraftsPage({
     });
   }
 
+  function moveContentImage(index: number, direction: -1 | 1) {
+    setContentForm((current) => {
+      if (!current) return current;
+      const nextIndex = index + direction;
+      if (nextIndex < 0 || nextIndex >= current.image_urls.length) return current;
+      const imageUrls = [...current.image_urls];
+      [imageUrls[index], imageUrls[nextIndex]] = [imageUrls[nextIndex], imageUrls[index]];
+      return { ...current, image_urls: imageUrls };
+    });
+  }
+
+  function updateContentVideo(index: number, value: string) {
+    setContentForm((current) => {
+      if (!current) return current;
+      const videoUrls = [...(current.video_urls ?? [])];
+      videoUrls[index] = value;
+      return { ...current, video_urls: videoUrls };
+    });
+  }
+
+  function removeContentVideo(index: number) {
+    setContentForm((current) => current
+      ? { ...current, video_urls: (current.video_urls ?? []).filter((_, itemIndex) => itemIndex !== index) }
+      : current);
+  }
+
+  async function searchCategories() {
+    if (!draft) return;
+    const query = categoryQuery.trim() || draft.title.trim();
+    if (!query) return;
+    setBusy("category-search");
+    setError("");
+    try {
+      const result = await getCategoryPredictions(draft.target_site_id, query);
+      setCategoryPredictions(result.predictions);
+    } catch (categoryError) {
+      setError(readableDraftError(categoryError, "分类搜索失败"));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function confirmCategory(categoryId: string) {
+    if (!draftId || !draft?.content_version) return;
+    setBusy("category-confirm");
+    setError("");
+    try {
+      const result = await confirmDraftCategory(draftId, {
+        expected_content_version: draft.content_version,
+        target_site_id: draft.target_site_id,
+        category_id: categoryId,
+      });
+      onDraftChange(result.draft);
+      let attributes = result.attributes;
+      let verified = result.attributes_verified;
+      if (!verified) {
+        const metadata = await getCategoryAttributes(categoryId);
+        attributes = metadata.attributes;
+        verified = metadata.verified;
+      }
+      setCategoryAttributes(attributes);
+      setCategoryVerified(verified);
+      setCategoryPredictions([]);
+      setListingConfigured(false);
+      onReviewChange(null);
+      setProviderReview(null);
+      setSavedDrafts((items) => items.map((item) => item.id === draftId ? result.draft : item));
+    } catch (categoryError) {
+      setError(readableDraftError(categoryError, "分类确认失败"));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function generateContentWithVolcengine() {
+    if (!draftId || !categoryConfirmed) return;
+    setBusy("generate-content");
+    setError("");
+    try {
+      const result = await generateDraftContent(draftId, draft!.target_category_id);
+      onDraftChange(result.draft);
+      setSavedDrafts((items) => items.map((item) => item.id === draftId ? result.draft : item));
+      setContentForm((current) => current ? {
+        ...current,
+        expected_content_version: result.draft.content_version,
+        title: result.title,
+        description: result.description,
+        brand: result.brand,
+      } : current);
+      onReviewChange(null);
+      setProviderReview(null);
+    } catch (generationError) {
+      setError(readableDraftError(generationError, "火山 AI 生成失败"));
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function saveContent() {
     if (!draftId || !contentForm || !draft?.content_version) return;
     setBusy("content");
@@ -241,6 +364,7 @@ export function DraftsPage({
         ...contentForm,
         expected_content_version: draft.content_version,
         image_urls: contentForm.image_urls.map((url) => url.trim()).filter(Boolean),
+        video_urls: (contentForm.video_urls ?? []).map((url) => url.trim()).filter(Boolean),
       });
       onDraftChange(updated);
       setContentForm({
@@ -249,6 +373,7 @@ export function DraftsPage({
         description: updated.description,
         brand: updated.brand,
         image_urls: updated.image_urls.length > 0 ? updated.image_urls : [""],
+        video_urls: updated.video_urls ?? [],
       });
       if (updated.content_version !== draft.content_version) {
         onReviewChange(null);
@@ -256,7 +381,7 @@ export function DraftsPage({
       }
       setSavedDrafts((items) => items.map((item) => (item.id === draftId ? updated : item)));
     } catch (contentError) {
-      const message = contentError instanceof Error ? contentError.message : "Failed to save content";
+      const message = readableDraftError(contentError, "保存内容失败");
       setError(message.includes("draft_content_version_conflict")
         ? "This draft changed in another operation. Reload it before saving your edits."
         : message);
@@ -361,6 +486,8 @@ export function DraftsPage({
   const nvidiaReady = Boolean(readiness?.ai.nvidia_configured);
   const decision = typeof review?.decision === "string" ? review.decision : "not reviewed";
   const normalizedContentImages = contentForm?.image_urls.map((url) => url.trim()).filter(Boolean) ?? [];
+  const normalizedContentVideos = contentForm?.video_urls?.map((url) => url.trim()).filter(Boolean) ?? [];
+  const categoryConfirmed = Boolean(draft?.target_category_id && categoryVerified);
   const contentDirty = Boolean(
     draft
     && contentForm
@@ -369,6 +496,7 @@ export function DraftsPage({
       || contentForm.description !== draft.description
       || contentForm.brand !== draft.brand
       || JSON.stringify(normalizedContentImages) !== JSON.stringify(draft.image_urls)
+      || JSON.stringify(normalizedContentVideos) !== JSON.stringify(draft.video_urls ?? [])
     )
   );
 
@@ -422,6 +550,57 @@ export function DraftsPage({
             </div>
           </div>
 
+          <section className="surface category-first-card">
+            <div className="section-heading">
+              <div><span className="step-number">1</span><h3>先确认 Mercado Libre 分类</h3></div>
+              <span className={`state-pill ${categoryConfirmed ? "ready" : "blocked"}`}>
+                {categoryConfirmed ? "分类已确认" : "必须先完成"}
+              </span>
+            </div>
+            <p className="section-note">分类确认后，系统才读取官方必填属性、可选值和变体属性；更换分类会清空旧的刊登配置。</p>
+            <div className="category-search-line">
+              <input
+                value={categoryQuery}
+                placeholder="用英文标题搜索分类"
+                onChange={(event) => setCategoryQuery(event.target.value)}
+              />
+              <button className="secondary-button" disabled={!categoryQuery.trim() || busy === "category-search"} onClick={searchCategories}>
+                {busy === "category-search" ? "搜索中" : "搜索分类"}
+              </button>
+            </div>
+            {draft.target_category_id && (
+              <div className="category-confirmed-row">
+                <CheckCircle2 size={17} />
+                <strong>{draft.target_category_id}</strong>
+                <span>{categoryVerified ? `已读取 ${categoryAttributes.length} 项官方属性` : "尚未读取官方属性"}</span>
+              </div>
+            )}
+            {categoryPredictions.length > 0 && (
+              <div className="category-prediction-list">
+                {categoryPredictions.slice(0, 8).map((prediction, index) => {
+                  const categoryId = String(prediction.category_id ?? prediction.id ?? "");
+                  const categoryName = String(prediction.category_name ?? prediction.name ?? categoryId);
+                  return (
+                    <button className="category-prediction-item" key={`${categoryId}-${index}`} disabled={!categoryId || busy === "category-confirm"} onClick={() => confirmCategory(categoryId)}>
+                      <span><strong>{categoryName}</strong><small>{categoryId}</small></span>
+                      <span>{busy === "category-confirm" ? "确认中" : "确认此分类"}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {categoryConfirmed && (
+              <div className="category-attribute-summary">
+                <div className="attribute-summary-head"><strong>官方属性已加载</strong><span>必填 {categoryAttributes.filter((item) => Boolean((item.tags as Record<string, unknown> | undefined)?.required || (item.tags as Record<string, unknown> | undefined)?.catalog_required)).length} 项 · 变体 {categoryAttributes.filter((item) => Boolean((item.tags as Record<string, unknown> | undefined)?.variation_attribute)).length} 项</span></div>
+                <div className="attribute-chip-list">
+                  {categoryAttributes.filter((item) => !Boolean((item.tags as Record<string, unknown> | undefined)?.hidden)).slice(0, 18).map((item) => (
+                    <span key={String(item.id)}>{String(item.name ?? item.id)}{Boolean((item.tags as Record<string, unknown> | undefined)?.required) ? " *" : ""}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+
           {contentForm && (
             <section className="surface content-editor">
               <div className="section-heading">
@@ -431,8 +610,8 @@ export function DraftsPage({
                 </span>
               </div>
               <div className="form-grid two-col">
-                <label className="full-span">标题<input
-                    maxLength={200}
+                <label className="full-span">英文标题 <span className="field-hint">{contentForm.title.length}/60</span><input
+                    maxLength={60}
                     value={contentForm.title}
                     onChange={(event) => updateContentField("title", event.target.value)}
                   />
@@ -440,7 +619,7 @@ export function DraftsPage({
                 <label>品牌<input
                     maxLength={120}
                     value={contentForm.brand}
-                    onChange={(event) => updateContentField("brand", event.target.value)}
+                    readOnly
                   />
                 </label>
                 <label className="full-span">商品描述<textarea
@@ -451,29 +630,31 @@ export function DraftsPage({
                   />
                 </label>
               </div>
+              <div className="ai-content-bar">
+                <div><Sparkles size={17} /><span>使用火山 AI 根据 Amazon 素材生成合规英文标题和描述</span></div>
+                <button className="secondary-button" disabled={!categoryConfirmed || busy === "generate-content"} onClick={generateContentWithVolcengine}>
+                  <Sparkles size={15} /> {busy === "generate-content" ? "生成中" : "火山 AI 生成并保存"}
+                </button>
+              </div>
               <div className="image-url-editor">
                 <div className="section-heading compact">
-                  <div><h4>Product images</h4></div>
+                  <div><h4>图片素材库</h4></div>
                   <span>{contentForm.image_urls.filter(Boolean).length} / 12</span>
                 </div>
-                {contentForm.image_urls.map((url, index) => (
-                  <div className="image-url-row" key={`${index}-${contentForm.expected_content_version}`}>
-                    <ProductImage src={url} alt={`Product image ${index + 1}`} />
-                    <input
-                      aria-label={`商品图片链接 ${index + 1}`}
-                      value={url}
-                      onChange={(event) => updateContentImage(index, event.target.value)}
-                    />
-                    <button
-                      className="icon-button secondary-button"
-                      title="Remove image"
-                      aria-label={`删除图片 ${index + 1}`}
-                      onClick={() => removeContentImage(index)}
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                ))}
+                <div className="media-library-grid">
+                  {contentForm.image_urls.map((url, index) => (
+                    <div className={`media-tile ${index === 0 ? "is-cover" : ""}`} key={`${index}-${contentForm.expected_content_version}`}>
+                      <ProductImage src={url} alt={`商品图片 ${index + 1}`} />
+                      {index === 0 && <span className="cover-label">主图</span>}
+                      <input aria-label={`商品图片链接 ${index + 1}`} placeholder="粘贴图片地址" value={url} onChange={(event) => updateContentImage(index, event.target.value)} />
+                      <div className="media-tile-actions">
+                        <button className="icon-button secondary-button" title="上移" aria-label={`图片 ${index + 1} 上移`} disabled={index === 0} onClick={() => moveContentImage(index, -1)}><ChevronUp size={14} /></button>
+                        <button className="icon-button secondary-button" title="下移" aria-label={`图片 ${index + 1} 下移`} disabled={index === contentForm.image_urls.length - 1} onClick={() => moveContentImage(index, 1)}><ChevronDown size={14} /></button>
+                        <button className="icon-button secondary-button" title="删除图片" aria-label={`删除图片 ${index + 1}`} onClick={() => removeContentImage(index)}><Trash2 size={14} /></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
                 <button
                   className="secondary-button"
                   disabled={contentForm.image_urls.length >= 12}
@@ -481,8 +662,18 @@ export function DraftsPage({
                     ? { ...current, image_urls: [...current.image_urls, ""] }
                     : current)}
                 >
-                  <Plus size={16} /> Add image
+                  <Plus size={16} /> 添加图片
                 </button>
+              </div>
+              <div className="video-library">
+                <div className="section-heading compact"><div><h4><Video size={16} /> 视频素材</h4></div><span>{(contentForm.video_urls ?? []).length} / 3</span></div>
+                {(contentForm.video_urls ?? []).map((url, index) => (
+                  <div className="video-url-row" key={`${index}-${contentForm.expected_content_version}`}>
+                    <Video size={18} /><input aria-label={`视频链接 ${index + 1}`} placeholder="粘贴视频地址（MP4/MOV）" value={url} onChange={(event) => updateContentVideo(index, event.target.value)} /><button className="icon-button secondary-button" aria-label={`删除视频 ${index + 1}`} onClick={() => removeContentVideo(index)}><Trash2 size={15} /></button>
+                  </div>
+                ))}
+                <button className="secondary-button" disabled={(contentForm.video_urls ?? []).length >= 3} onClick={() => setContentForm((current) => current ? { ...current, video_urls: [...(current.video_urls ?? []), ""] } : current)}><Plus size={16} /> 添加视频</button>
+                <p className="section-note">视频先独立保存和人工确认，只有目标站点支持时才进入发布请求。</p>
               </div>
               <div className="action-line">
                 <button
@@ -500,38 +691,57 @@ export function DraftsPage({
                     description: draft.description,
                     brand: draft.brand,
                     image_urls: draft.image_urls.length > 0 ? draft.image_urls : [""],
+                    video_urls: draft.video_urls ?? [],
                   })}
                 >
-                  Reset
+                  恢复已保存内容
                 </button>
-                <span>Saving content requires a new AI 合规审核.</span>
+                <span>保存后必须重新进行合规审核。</span>
               </div>
             </section>
           )}
 
+          <section className="surface draft-submit-flow">
+            <div className="section-heading"><div><h3>上架流程</h3></div><span className="section-note">每一步完成后才能进入下一步</span></div>
+            <div className="draft-flow-steps">
+              {[
+                ["分类", categoryConfirmed],
+                ["属性与变体", categoryConfirmed && categoryAttributes.length > 0],
+                ["内容与素材", Boolean(contentForm && !contentDirty && contentForm.title.length <= 60)],
+                ["价格", pricingReady],
+                ["审核与发布", decision === "pass" && listingConfigured],
+              ].map(([label, done], index) => (
+                <div className={`draft-flow-step ${done ? "done" : "pending"}`} key={String(label)}>
+                  <span>{done ? <CheckCircle2 size={16} /> : index + 1}</span><strong>{label}</strong>
+                </div>
+              ))}
+            </div>
+            {!categoryConfirmed && <p className="inline-warning">请先在上方确认分类，官方属性和变体才能继续。</p>}
+          </section>
+
           <div className="workflow-grid">
             <section className="surface">
               <div className="section-heading">
-                <div><span className="step-number">1</span><h3>价格设置 · {draft.target_site_id}</h3></div>
+                <div><span className="step-number">4</span><h3>价格设置 · {draft.target_site_id}</h3></div>
                 <span className={`state-pill ${pricingReady ? "ready" : "blocked"}`}>
                   {pricingReady ? "已保存" : "必填"}
                 </span>
               </div>
               <div className="form-grid three-col">
-                <label>Source price<input type="number" value={draft.source_price ?? ""} readOnly /></label>
-                <label>Source currency<input value={draft.source_currency} readOnly /></label>
-                <label>Exchange rate<input type="number" min="0" step="0.0001" value={pricing.exchange_rate} onChange={(event) => updatePricing("exchange_rate", event.target.value)} /></label>
-                <label>Purchase extras<input type="number" min="0" step="0.01" value={pricing.purchase_extra_cost} onChange={(event) => updatePricing("purchase_extra_cost", event.target.value)} /></label>
-                <label>Shipping cost<input type="number" min="0" step="0.01" value={pricing.shipping_cost} onChange={(event) => updatePricing("shipping_cost", event.target.value)} /></label>
-                <label>Target currency<input value={pricing.target_currency} readOnly /></label>
-                <label>Platform fee %<input type="number" min="0" max="99" step="0.1" value={pricing.platform_fee_rate * 100} onChange={(event) => updatePricing("platform_fee_rate", String(Number(event.target.value) / 100))} /></label>
-                <label>Tax %<input type="number" min="0" max="99" step="0.1" value={pricing.tax_rate * 100} onChange={(event) => updatePricing("tax_rate", String(Number(event.target.value) / 100))} /></label>
-                <label>Target profit %<input type="number" min="0" max="99" step="0.1" value={pricing.profit_margin_rate * 100} onChange={(event) => updatePricing("profit_margin_rate", String(Number(event.target.value) / 100))} /></label>
-                <label>Round up to<input type="number" min="0.01" step="0.01" value={pricing.rounding_increment} onChange={(event) => updatePricing("rounding_increment", event.target.value)} /></label>
+                <label>Amazon 成本<input type="number" value={draft.source_price ?? ""} readOnly /></label>
+                <label>成本币种<input value={draft.source_currency} readOnly /></label>
+                <label>汇率<input type="number" min="0" step="0.0001" value={pricing.exchange_rate} onChange={(event) => updatePricing("exchange_rate", event.target.value)} /></label>
+                <label>采购附加成本<input type="number" min="0" step="0.01" value={pricing.purchase_extra_cost} onChange={(event) => updatePricing("purchase_extra_cost", event.target.value)} /></label>
+                <label>运费<input type="number" min="0" step="0.01" value={pricing.shipping_cost} onChange={(event) => updatePricing("shipping_cost", event.target.value)} /></label>
+                <label>目标币种<input value={pricing.target_currency} readOnly /></label>
+                <label>平台费 %<input type="number" min="0" max="99" step="0.1" value={pricing.platform_fee_rate * 100} onChange={(event) => updatePricing("platform_fee_rate", String(Number(event.target.value) / 100))} /></label>
+                <label>税费 %<input type="number" min="0" max="99" step="0.1" value={pricing.tax_rate * 100} onChange={(event) => updatePricing("tax_rate", String(Number(event.target.value) / 100))} /></label>
+                <label>目标利润 %<input type="number" min="0" max="99" step="0.1" value={pricing.profit_margin_rate * 100} onChange={(event) => updatePricing("profit_margin_rate", String(Number(event.target.value) / 100))} /></label>
+                <label>价格取整<input type="number" min="0.01" step="0.01" value={pricing.rounding_increment} onChange={(event) => updatePricing("rounding_increment", event.target.value)} /></label>
               </div>
               <div className="action-line">
                 <button disabled={!draftId || contentDirty || pricing.source_price <= 0 || pricing.exchange_rate <= 0 || busy === "pricing"} onClick={calculateAndSavePricing}>
-                  <Calculator size={16} /> Calculate and save
+                  <Calculator size={16} /> 计算并保存价格
                 </button>
                 {pricingResult && (
                   <div className="calculation-result">
@@ -547,7 +757,7 @@ export function DraftsPage({
 
             <section className="surface">
               <div className="section-heading">
-                <div><span className="step-number">2</span><h3>AI 合规审核</h3></div>
+                <div><span className="step-number">5</span><h3>AI 合规审核与提交</h3></div>
                 <span className={`state-pill ${decision === "pass" ? "ready" : "blocked"}`}>{decision}</span>
               </div>
               <div className="provider-status">
@@ -724,4 +934,25 @@ function ReviewSummary({ value }: { value: Record<string, unknown> }) {
       {reasons.map((reason) => <p key={String(reason)}>{String(reason)}</p>)}
     </div>
   );
+}
+
+function readableDraftError(error: unknown, fallback: string) {
+  const raw = error instanceof Error ? error.message : "";
+  try {
+    const detail = JSON.parse(raw).detail;
+    const code = typeof detail === "string" ? detail : detail?.code;
+    const messages: Record<string, string> = {
+      category_confirmation_required: "请先确认 Mercado Libre 分类。",
+      category_attributes_not_verified: "官方分类属性尚未读取成功，请刷新分类属性后再试。",
+      category_site_mismatch: "分类与目标站点不匹配。",
+      volcengine_api_key_required: "请先在店铺管理中配置火山 AI API Key。",
+      volcengine_unreachable: "火山 AI 暂时无法连接，请稍后重试。",
+      generated_content_invalid: "火山 AI 返回的内容未通过合规检查，请重新生成。",
+      draft_content_version_conflict: "草稿已被其他操作修改，请重新选择草稿。",
+    };
+    if (typeof code === "string" && messages[code]) return messages[code];
+  } catch {
+    // Keep a stable human-readable fallback for non-JSON errors.
+  }
+  return raw && !raw.startsWith("{") ? raw : fallback;
 }
