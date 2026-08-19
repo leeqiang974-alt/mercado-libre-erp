@@ -104,8 +104,8 @@ function shortSource(sourceUrl: string) {
 
 function collectionMessage(message: string) {
   const translations: Record<string, string> = {
-    "Amazon product page is incomplete; manual action required.": "Amazon 返回的商品页内容不完整，请使用 HTML 快照继续。",
-    "Amazon challenge detected; manual action required.": "Amazon 要求验证，请使用 HTML 快照继续。",
+    "Amazon product page is incomplete; manual action required.": "Amazon 返回的商品页内容不完整，需要人工补救。",
+    "Amazon challenge detected; manual action required.": "Amazon 要求验证，需要人工补救。",
     "Amazon redirected this link away from the requested product; verify the ASIN.": "Amazon 已将该链接跳转到非商品页面，请检查 ASIN 是否正确。",
     "Amazon redirected this link to a different ASIN; the requested product was not collected.": "Amazon 已将该链接跳转到另一个 ASIN，原商品未被采集。",
     "Collection timed out; retry is safe.": "采集超时，可以重新采集。",
@@ -155,7 +155,7 @@ export function ImportPage({
   onOpenDraft: (draft: ProductDraftRead) => void;
   status: string;
 }) {
-  const [mode, setMode] = useState<ImportMode>("url");
+  const [mode, setMode] = useState<ImportMode>("discover");
   const [sourceUrls, setSourceUrls] = useState("");
   const [discoveryKeyword, setDiscoveryKeyword] = useState("");
   const [discoveryDomain, setDiscoveryDomain] = useState("amazon.com");
@@ -250,8 +250,8 @@ export function ImportPage({
   }, [refreshCollectionJobs]);
 
   async function runUrlCollection() {
-    // Every collection goes through a persisted job so an Amazon challenge has
-    // a visible "HTML snapshot" recovery action instead of leaving the page busy.
+    // Every collection goes through a persisted job so a blocked Amazon page has
+    // a visible operator recovery action instead of leaving the page busy.
     await queueCollectionJob();
   }
 
@@ -484,17 +484,18 @@ export function ImportPage({
         >
           <Link2 size={17} /> 链接采集
         </button>
-        <button
-          role="tab"
-          aria-selected={mode === "html"}
-          className={mode === "html" ? "selected" : ""}
-          onClick={() => setMode("html")}
-        >
-          <FileCode2 size={17} /> HTML 快照
-        </button>
       </div>
 
       <section className="surface import-source">
+        {mode === "html" && (
+          <div className="section-heading">
+            <div>
+              <h3>采集异常补救</h3>
+              <p>仅当 Amazon 出现验证码或页面无法自动读取时使用。正常选品和采集无需操作这里。</p>
+            </div>
+            <button className="secondary-button" onClick={() => setMode("discover")}>返回智能选品</button>
+          </div>
+        )}
         <div className="form-grid two-col">
           <label>
             {mode === "discover" ? "选品关键词" : "Amazon 商品链接"}
@@ -553,7 +554,7 @@ export function ImportPage({
           <>
             <div className="inline-warning import-warning">
               <AlertTriangle size={17} />
-              <span>采集任务会自动运行；如 Amazon 返回验证页或内容不完整，请在任务中点击“HTML 快照”继续。</span>
+              <span>采集任务会自动运行；只有 Amazon 返回验证页或内容不完整时，任务才会显示“人工补救”。</span>
             </div>
             <div className="batch-options">
               <span className={urlEntries.length > 100 ? "error" : ""}>
@@ -637,10 +638,10 @@ export function ImportPage({
         ) : (
           <>
             <label>
-              Amazon 页面 HTML 快照
+              Amazon 页面内容
               <textarea
                 className="snapshot-input"
-                placeholder="粘贴已保存的 Amazon 商品详情页 HTML 源码"
+                placeholder="粘贴已保存的 Amazon 商品详情页页面内容"
                 value={html}
                 onChange={(event) => setHtml(event.target.value)}
               />
@@ -657,7 +658,7 @@ export function ImportPage({
               </label>
               <button disabled={!snapshotUrl.trim() || !html.trim() || isBusy} onClick={runHtmlImport}>
                 {busyAction === "html" ? <LoaderCircle className="spin" size={17} /> : <Upload size={17} />}
-                导入 HTML 快照
+                继续处理该商品
               </button>
             </div>
           </>
@@ -730,7 +731,7 @@ export function ImportPage({
                           <strong>{job.source_product.title}</strong>
                           <span>
                             {job.source_product.collection_method === "operator_snapshot"
-                              ? "人工 HTML 快照"
+                              ? "人工补救采集"
                               : job.source_product.collection_method === "server_browser_headed"
                                 ? "服务器浏览器采集"
                                 : job.source_product.collection_method === "server_browser_headless"
@@ -896,7 +897,7 @@ export function ImportPage({
                         disabled={isBusy}
                         onClick={() => useSnapshotFallback(job)}
                       >
-                        <FileCode2 size={16} /> HTML 快照
+                        <FileCode2 size={16} /> 人工补救
                       </button>
                     )}
                     {canRun && !needsSnapshot && (
