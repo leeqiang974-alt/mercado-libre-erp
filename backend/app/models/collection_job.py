@@ -1,7 +1,8 @@
 from datetime import UTC, datetime
 from enum import Enum
 
-from sqlalchemy import DateTime, Enum as SqlEnum, ForeignKey, Index, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text
+from sqlalchemy.types import TypeDecorator
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -15,6 +16,33 @@ class CollectionJobStatus(str, Enum):
     FAILED = "failed"
 
 
+class CollectionJobStatusType(TypeDecorator[str]):
+    """Store collection statuses as VARCHAR and read legacy uppercase values."""
+
+    impl = String(32)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if isinstance(value, CollectionJobStatus):
+            return value.value
+        text = str(value).strip()
+        try:
+            return CollectionJobStatus[text.upper()].value
+        except KeyError:
+            return text.lower()
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        text = str(value).strip()
+        try:
+            return CollectionJobStatus(text.lower())
+        except ValueError:
+            return CollectionJobStatus[text.upper()]
+
+
 class CollectionJob(Base):
     __tablename__ = "collection_jobs"
     __table_args__ = (
@@ -25,14 +53,8 @@ class CollectionJob(Base):
     source_url: Mapped[str] = mapped_column(Text)
     source_identity: Mapped[str | None] = mapped_column(String(256), nullable=True)
     target_site_id: Mapped[str] = mapped_column(String(8), default="MLM")
-    # The migration stores this as VARCHAR, so do not ask PostgreSQL for a
-    # native enum type that is not present in existing deployments.
     status: Mapped[CollectionJobStatus] = mapped_column(
-        SqlEnum(
-            CollectionJobStatus,
-            native_enum=False,
-            values_callable=lambda enum_type: [item.value for item in enum_type],
-        ),
+        CollectionJobStatusType(),
         default=CollectionJobStatus.PENDING,
     )
     message: Mapped[str] = mapped_column(Text, default="")
