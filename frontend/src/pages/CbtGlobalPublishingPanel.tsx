@@ -15,14 +15,18 @@ import {
   getCategoryPredictions,
   getCbtListingConfig,
   getCbtPublishingProfile,
+  getDraftPricing,
   approveDraft,
   executeCbtPublishFromDraft,
   getSystemReadiness,
   listStores,
   previewCbtPublishFromDraft,
+  saveDraftPricing,
   saveCbtListingConfig,
   type CbtListingConfig,
   type CbtPublishingProfile,
+  type DraftPricing,
+  type DraftPricingInput,
   type ProductDraft,
   type PublishExecutionResult,
   type SystemReadiness,
@@ -49,13 +53,13 @@ export function CbtGlobalPublishingPanel({
   draftId,
   onDraftChange,
   onReviewInvalidated,
-  onBack,
+  onBackToEditing,
 }: {
   draft: ProductDraft;
   draftId: number;
   onDraftChange: (draft: ProductDraft) => void;
   onReviewInvalidated: () => void;
-  onBack: () => void;
+  onBackToEditing: () => void;
 }) {
   const [stores, setStores] = useState<StoreRecord[]>([]);
   const [storeId, setStoreId] = useState("");
@@ -78,6 +82,7 @@ export function CbtGlobalPublishingPanel({
   const [publishConfirmed, setPublishConfirmed] = useState(false);
   const [execution, setExecution] = useState<PublishExecutionResult | null>(null);
   const [readiness, setReadiness] = useState<SystemReadiness | null>(null);
+  const [pricing, setPricing] = useState<DraftPricing | null>(null);
   const [busy, setBusy] = useState("");
   const [status, setStatus] = useState("");
 
@@ -94,20 +99,31 @@ export function CbtGlobalPublishingPanel({
     return [...new Set([...REQUIRED_ATTRIBUTE_IDS, ...fromMetadata])];
   }, [attributeDefinitions]);
   const missing = requiredIds.filter((id) => !attributes[id]?.trim());
-  const selectedSites = new Set(offers.map((offer) => offer.site_id));
+  const unitCostUsd = pricing
+    ? (pricing.purchase_cost + pricing.domestic_shipping_cost) * pricing.exchange_rate
+    : null;
+  const estimatedProfitUsd = Number(priceUsd) > 0 && unitCostUsd !== null
+    ? Number(priceUsd) - unitCostUsd
+    : null;
   const canSave = Boolean(
     storeId && categoryId && familyName.trim() && globalTitle.trim() && description.trim()
     && Number(priceUsd) > 0 && Number.isInteger(Number(quantity)) && Number(quantity) > 0
-    && offers.length > 0 && missing.length === 0,
+    && pricing?.target_currency === "USD" && offers.length > 0 && missing.length === 0,
   );
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([listStores(), getCbtListingConfig(draftId), getSystemReadiness()])
-      .then(([storeRows, config, system]) => {
+    Promise.all([
+      listStores(),
+      getCbtListingConfig(draftId),
+      getSystemReadiness(),
+      getDraftPricing(draftId).catch(() => null),
+    ])
+      .then(([storeRows, config, system, savedPricing]) => {
         if (cancelled) return;
         setStores(storeRows);
         setReadiness(system);
+        setPricing(savedPricing);
         const defaultStore = config?.store_id
           ? String(config.store_id)
           : storeRows.find((store) => store.site_id === "CBT" && store.oauth_status === "connected")?.id ?? "";
@@ -184,6 +200,25 @@ export function CbtGlobalPublishingPanel({
     if (!canSave) return;
     setBusy("save"); setStatus(""); setPreview(null); setApproved(false); setPublishConfirmed(false); setExecution(null);
     try {
+      const currentPricing = pricing;
+      const targetPrice = Number(priceUsd);
+      const landedCost = unitCostUsd;
+      if (!currentPricing || landedCost === null || landedCost <= 0) {
+        throw new Error("请先在编辑上架页保存采购成本、国内运费和 USD 汇率。");
+      }
+      const pricingPayload: DraftPricingInput = {
+        source_price: currentPricing.source_price,
+        source_currency: currentPricing.source_currency,
+        target_currency: "USD",
+        cost_currency: "CNY",
+        purchase_cost: currentPricing.purchase_cost,
+        domestic_shipping_cost: currentPricing.domestic_shipping_cost,
+        exchange_rate: currentPricing.exchange_rate,
+        profit_margin_rate: targetPrice / landedCost - 1,
+        rounding_increment: currentPricing.rounding_increment,
+      };
+      const savedPricing = await saveDraftPricing(draftId, pricingPayload);
+      setPricing(savedPricing);
       const config = await saveCbtListingConfig(draftId, {
         store_id: Number(storeId), category_id: categoryId, family_name: familyName,
         global_title: globalTitle, description, price_usd: Number(priceUsd),
@@ -230,14 +265,14 @@ export function CbtGlobalPublishingPanel({
     <header className="page-header">
       <div>
         <p className="eyebrow">GLOBAL SELLING · CBT</p>
-        <h2>跨境商品刊登</h2>
-        <p>传统跨境店使用 `/global/items`，按目标国家一次创建全球商品。</p>
+        <h2>跨境商品上架</h2>
+        <p>一个全球商品可同步销售到多个国家；售价统一以 USD 设置，各站分别配置标题和刊登类型。</p>
       </div>
-      <button className="secondary-button" onClick={onBack}><ArrowLeft size={16} /> 本土店刊登</button>
+      <button className="secondary-button" onClick={onBackToEditing}><ArrowLeft size={16} /> 返回编辑上架</button>
     </header>
 
     <section className="surface publish-section">
-      <div className="section-heading"><div><span className="step-number">1</span><h3>跨境店与目标市场</h3></div><button className="icon-button" title="刷新店铺能力" disabled={!storeId || busy === "profile"} onClick={() => setProfileReloadKey((value) => value + 1)}><RefreshCw size={17} /></button></div>
+      <div className="section-heading"><div><span className="step-number">1</span><h3>跨境店与商品基础资料</h3></div><button className="icon-button" title="刷新店铺能力" disabled={!storeId || busy === "profile"} onClick={() => setProfileReloadKey((value) => value + 1)}><RefreshCw size={17} /></button></div>
       <label>已授权跨境店
         <select value={storeId} onChange={(event) => { setStoreId(event.target.value); setOffers([]); setPreview(null); }}>
           <option value="">选择 CBT 店铺</option>
@@ -248,26 +283,14 @@ export function CbtGlobalPublishingPanel({
       {profile && <>
         <div className="cbt-profile-line"><Store size={16} /><strong>{profile.seller_id}</strong><span>发布模型：{profile.model === "traditional_global" ? "传统 Global Selling" : "User Products"}</span></div>
         {profile.model !== "traditional_global" && <p className="inline-warning">此账号已启用 User Products，不能使用本页的传统 `/global/items` 流程。</p>}
-        <div className="cbt-market-grid">
-          {profile.marketplaces.map((market) => {
-            const checked = selectedSites.has(market.site_id);
-            const capacity = market.listing_count !== null && market.listing_limit !== null ? `${market.listing_count} / ${market.listing_limit}` : "配额待返回";
-            return <label key={`${market.site_id}-${market.logistic_type}`} className={`cbt-market ${market.available ? "" : "disabled"}`}>
-              <input type="checkbox" disabled={!market.available || profile.model !== "traditional_global"} checked={checked} onChange={() => toggleMarket(market.site_id)} />
-              <span><strong>{MARKET_NAMES[market.site_id] ?? market.site_id}</strong><small>{market.site_id} · {market.logistic_type}</small><small>已刊登 / 配额：{capacity}</small></span>
-              {!market.available && <em>{market.logistic_type === "fulfillment" ? "FULL 不支持" : "不可用"}</em>}
-            </label>;
-          })}
-        </div>
+        <p className="section-note">可销售国家和 Remote 物流能力来自已授权店铺；在销售配置表中启用需要发布的国家。</p>
       </>}
     </section>
 
     <section className="surface publish-section">
-      <div className="section-heading"><div><span className="step-number">2</span><h3>全球商品基础资料</h3></div></div>
+      <div className="section-heading"><div><span className="step-number">2</span><h3>全球商品资料</h3></div></div>
       <div className="form-grid two-col">
-        <label>英文全局标题 *<input value={globalTitle} onChange={(event) => { setGlobalTitle(event.target.value); setSaved(null); setPreview(null); }} /></label>
         <label>产品族名称 family_name *<input value={familyName} placeholder="例如 Silicone Mold Collection" onChange={(event) => { setFamilyName(event.target.value); setSaved(null); setPreview(null); }} /></label>
-        <label>销售价 USD *<input type="number" min="0.01" step="0.01" value={priceUsd} onChange={(event) => { setPriceUsd(event.target.value); setSaved(null); setPreview(null); }} /></label>
         <label>可售库存 *<input type="number" min="1" step="1" value={quantity} onChange={(event) => { setQuantity(event.target.value); setSaved(null); setPreview(null); }} /></label>
       </div>
       <label>英文商品描述 *<textarea rows={7} value={description} onChange={(event) => { setDescription(event.target.value); setSaved(null); setPreview(null); }} /></label>
@@ -287,9 +310,38 @@ export function CbtGlobalPublishingPanel({
     </section>
 
     <section className="surface publish-section">
-      <div className="section-heading"><div><span className="step-number">4</span><h3>各市场销售设置</h3></div></div>
-      {offers.length === 0 && <p className="inline-warning">请先从第一步勾选至少一个 Remote 市场。</p>}
-      {offers.map((offer) => <div className="cbt-offer-row" key={offer.site_id}><Globe2 size={18} /><strong>{MARKET_NAMES[offer.site_id] ?? offer.site_id}</strong><label>当地标题<input value={offer.title} onChange={(event) => updateOffer(offer.site_id, "title", event.target.value)} /></label><label>刊登类型<select value={offer.listing_type_id} onChange={(event) => updateOffer(offer.site_id, "listing_type_id", event.target.value)}><option value="gold_pro">Premium</option><option value="gold_special">Classic</option></select></label></div>)}
+      <div className="section-heading"><div><span className="step-number">4</span><h3>销售配置</h3><p>先设置全球售价，再逐个启用销售国家并确认标题和刊登类型。</p></div></div>
+      <div className="cbt-pricing-rule">非 FULL 跨境商品按“售价 - 采购成本 - 国内运费”显示预估净收益；国际运输由美客多统一处理，不作为单品成本输入。</div>
+      <div className="cbt-sales-table-wrap">
+        <table className="cbt-sales-table">
+          <thead><tr><th>销售国家/地区</th><th>售价（USD）</th><th>预估净收益（USD）</th><th>刊登类型</th><th>标题</th></tr></thead>
+          <tbody>
+            <tr className="cbt-global-row">
+              <th><Globe2 size={16} /> 全球商品</th>
+              <td><input type="number" min="0.01" step="0.01" value={priceUsd} onChange={(event) => { setPriceUsd(event.target.value); setSaved(null); setPreview(null); setApproved(false); setPublishConfirmed(false); }} /></td>
+              <td><strong>{estimatedProfitUsd === null ? "请先完成成本定价" : estimatedProfitUsd.toFixed(2)}</strong></td>
+              <td><span className="cbt-derived-value">按国家设置</span></td>
+              <td><div className="cbt-title-input"><input maxLength={60} value={globalTitle} onChange={(event) => { setGlobalTitle(event.target.value); setSaved(null); setPreview(null); }} /><small>{globalTitle.length}/60</small></div></td>
+            </tr>
+            {remoteMarkets.map((market) => {
+              const offer = offers.find((item) => item.site_id === market.site_id);
+              const enabled = Boolean(offer);
+              const capacity = market.listing_count !== null && market.listing_limit !== null ? `${market.listing_count} / ${market.listing_limit}` : "配额待返回";
+              return <tr className={enabled ? "" : "disabled"} key={`${market.site_id}-${market.logistic_type}`}>
+                <th><label className="cbt-site-toggle"><input type="checkbox" disabled={profile?.model !== "traditional_global"} checked={enabled} onChange={() => toggleMarket(market.site_id)} /><span><strong>{MARKET_NAMES[market.site_id] ?? market.site_id}</strong><small>{market.site_id} · 已刊登/配额 {capacity}</small></span></label></th>
+                <td><span className="cbt-derived-value">{priceUsd || "-"}</span></td>
+                <td><span className="cbt-derived-value">{estimatedProfitUsd === null ? "-" : estimatedProfitUsd.toFixed(2)}</span></td>
+                <td><select disabled={!enabled} value={offer?.listing_type_id ?? "gold_pro"} onChange={(event) => updateOffer(market.site_id, "listing_type_id", event.target.value)}><option value="gold_pro">Premium（优质）</option><option value="gold_special">Classic（经典）</option></select></td>
+                <td><div className="cbt-title-input"><input disabled={!enabled} maxLength={60} value={offer?.title ?? globalTitle} onChange={(event) => updateOffer(market.site_id, "title", event.target.value)} /><small>{(offer?.title ?? globalTitle).length}/60</small></div></td>
+              </tr>;
+            })}
+          </tbody>
+        </table>
+      </div>
+      {remoteMarkets.length === 0 && <p className="inline-warning">未读取到可用的 Remote 销售国家，请刷新店铺能力或检查跨境店授权。</p>}
+      {unitCostUsd === null && <p className="inline-warning">请先返回编辑上架，保存采购成本、国内运费和 USD 汇率，才能核对预估净收益。</p>}
+      {pricing && pricing.target_currency !== "USD" && <p className="inline-warning">这张上架单当前不是 CBT 的 USD 定价。请重新以 CBT 为目标站点采集并完成成本定价。</p>}
+      {offers.length === 0 && <p className="inline-warning">请至少启用一个可用的 Remote 销售国家。</p>}
       <div className="button-row"><button disabled={!canSave || busy === "save"} onClick={saveConfig}><Save size={16} /> 保存跨境刊登配置</button><button className="secondary-button" disabled={!saved || busy === "preview"} onClick={previewPayload}><ListChecks size={16} /> 生成官方请求预检</button></div>
       {preview && <div className={`validation-result ${preview.allowed ? "ready" : "blocked"}`}><strong>{preview.allowed ? "官方 Global Selling 请求已通过结构校验" : "刊登请求未通过"}</strong>{preview.errors.map((error) => <span key={error}>{error}</span>)}</div>}
       <div className="release-summary"><div><span>商品素材</span><strong>{draft.image_urls.length} 张图片</strong></div><div><span>预检</span><strong>{preview?.allowed ? "通过" : "未完成"}</strong></div><div><span>人工批准</span><strong>{approved ? "已批准" : "未批准"}</strong></div><div><span>线上发布</span><strong>{readiness?.mercado_libre.live_publish_enabled ? "已开启" : "未开启"}</strong></div></div>

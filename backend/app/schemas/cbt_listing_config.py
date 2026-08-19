@@ -18,7 +18,7 @@ class CbtSaleTerm(BaseModel):
 
 class CbtMarketplaceOffer(BaseModel):
     site_id: str = Field(min_length=3, max_length=8)
-    title: str = Field(min_length=3, max_length=200)
+    title: str = Field(min_length=3, max_length=60)
     listing_type_id: str
     logistic_type: str = "remote"
     picture_urls: list[str] = Field(default_factory=list, max_length=12)
@@ -48,7 +48,7 @@ class CbtListingConfigUpsert(BaseModel):
     store_id: int
     category_id: str = Field(min_length=4, max_length=40)
     family_name: str = Field(min_length=3, max_length=200)
-    global_title: str = Field(min_length=3, max_length=200)
+    global_title: str = Field(min_length=3, max_length=60)
     description: str = Field(min_length=1, max_length=50000)
     price_usd: float = Field(gt=0)
     available_quantity: int = Field(ge=1)

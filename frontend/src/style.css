@@ -1628,6 +1628,25 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .cbt-offer-row > strong { margin-bottom: 10px; }
 .cbt-offer-row label { margin: 0; }
 .cbt-attributes { margin-top: 14px; }
+.cbt-pricing-rule { background: #eef8e8; border-left: 3px solid #65a30d; color: #3f6212; font-size: 13px; margin-bottom: 12px; padding: 9px 12px; }
+.cbt-sales-table-wrap { border: 1px solid #dce3ea; overflow-x: auto; }
+.cbt-sales-table { border-collapse: collapse; min-width: 880px; width: 100%; }
+.cbt-sales-table th, .cbt-sales-table td { border-bottom: 1px solid #e4e9ee; border-right: 1px solid #e4e9ee; padding: 8px; text-align: left; vertical-align: middle; }
+.cbt-sales-table th:last-child, .cbt-sales-table td:last-child { border-right: 0; }
+.cbt-sales-table thead th { background: #f4f6f8; color: #374151; font-size: 13px; font-weight: 700; white-space: nowrap; }
+.cbt-sales-table tbody th { background: #fafbfc; color: #1f2937; font-size: 13px; font-weight: 600; min-width: 150px; }
+.cbt-sales-table tbody tr:last-child th, .cbt-sales-table tbody tr:last-child td { border-bottom: 0; }
+.cbt-sales-table tbody tr.disabled { background: #fcfcfc; color: #9ca3af; }
+.cbt-sales-table tbody tr.disabled input, .cbt-sales-table tbody tr.disabled select { background: #f6f7f8; }
+.cbt-global-row th, .cbt-global-row td { background: #fffaf5; }
+.cbt-sales-table input, .cbt-sales-table select { box-sizing: border-box; margin: 0; min-width: 0; width: 100%; }
+.cbt-sales-table td:nth-child(2), .cbt-sales-table td:nth-child(3), .cbt-sales-table td:nth-child(4) { min-width: 142px; }
+.cbt-sales-table td:last-child { min-width: 300px; }
+.cbt-site-toggle { align-items: center; display: flex; gap: 8px; margin: 0; }
+.cbt-site-toggle input { flex: 0 0 auto; width: auto; }
+.cbt-site-toggle span, .cbt-title-input { display: grid; gap: 3px; min-width: 0; }
+.cbt-site-toggle small, .cbt-title-input small { color: #6b7280; font-size: 11px; font-weight: 400; }
+.cbt-derived-value { color: #52606d; font-size: 13px; }
 .product-filter-bar { display: flex; align-items: end; gap: 12px; margin-bottom: 16px; padding: 16px; }
 .product-filter-bar label { margin: 0; min-width: 220px; }
 .product-filter-bar label svg { vertical-align: middle; margin-right: 6px; color: #ea580c; }

@@ -1053,7 +1053,7 @@ export function PublishingPage({
       draftId={draftId}
       onDraftChange={onDraftChange}
       onReviewInvalidated={onReviewInvalidated}
-      onBack={() => setPublishingModel("local")}
+      onBackToEditing={onBackToEditing}
     />;
   }
 
@@ -1085,7 +1085,7 @@ export function PublishingPage({
           <h2>最终确认并发布</h2>
           <p>{draft.title}</p>
         </div>
-        <div className="page-header-actions"><button className="secondary-button" onClick={onBackToEditing}>返回编辑</button><button className="secondary-button" onClick={() => setPublishingModel("cbt")}>跨境店发布（CBT）</button><span className="record-id">上架单 #{draftId}</span></div>
+        <div className="page-header-actions"><button className="secondary-button" onClick={onBackToEditing}>返回编辑</button>{draft.target_site_id !== "CBT" && <button className="secondary-button" onClick={() => setPublishingModel("cbt")}>切换跨境店（CBT）</button>}<span className="record-id">上架单 #{draftId}</span></div>
       </header>
 
       <div className="publish-progress">

@@ -161,7 +161,7 @@ export function ImportPage({
   const [discoveryDomain, setDiscoveryDomain] = useState("amazon.com");
   const [discoveryLimit, setDiscoveryLimit] = useState("20");
   const [snapshotUrl, setSnapshotUrl] = useState("");
-  const [targetSiteId, setTargetSiteId] = useState("MLM");
+  const [targetSiteId, setTargetSiteId] = useState("CBT");
   const [html, setHtml] = useState("");
   const [persist, setPersist] = useState(true);
   const [snapshotJobId, setSnapshotJobId] = useState<number | null>(null);
