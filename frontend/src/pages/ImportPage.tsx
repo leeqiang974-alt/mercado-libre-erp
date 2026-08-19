@@ -22,6 +22,7 @@ import {
   createSourceVariantCollectionJob,
   createSourceVariantCollectionJobs,
   createSourceVariantDraft,
+  getDraft,
   getSourceProduct,
   listCollectionJobs,
   listCollectionJobStatuses,
@@ -31,6 +32,7 @@ import {
   type AmazonSourceVariant,
   type SourceProductRecord,
   type SourceVariantCollectionBatchResult,
+  type ProductDraftRead,
 } from "../api/client";
 import { MERCADO_LIBRE_SITES } from "../domain/sites";
 
@@ -140,6 +142,7 @@ function findVariantCollectionJob(
 
 export function ImportPage({
   onImportHtml,
+  onOpenDraft,
   status,
 }: {
   onImportHtml: (
@@ -149,6 +152,7 @@ export function ImportPage({
     persist: boolean,
     collectionJobId: number | null,
   ) => Promise<void>;
+  onOpenDraft: (draft: ProductDraftRead) => void;
   status: string;
 }) {
   const [mode, setMode] = useState<ImportMode>("url");
@@ -367,8 +371,21 @@ export function ImportPage({
         variantTargetSiteId,
       );
       setVariantDraftIds((current) => ({ ...current, [key]: draft.id }));
+      onOpenDraft(draft);
     } catch (variantError) {
       setError(variantError instanceof Error ? variantError.message : "Failed to create variant draft");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function openDraftEditor(productDraftId: number) {
+    setBusyAction(`open-draft-${productDraftId}`);
+    setError("");
+    try {
+      onOpenDraft(await getDraft(productDraftId));
+    } catch (draftError) {
+      setError(draftError instanceof Error ? draftError.message : "打开上架编辑页失败");
     } finally {
       setBusyAction("");
     }
@@ -435,9 +452,9 @@ export function ImportPage({
     <section className="workspace import-workspace">
       <header className="page-header">
         <div>
-          <p className="eyebrow">商品素材</p>
-          <h2>Amazon 商品采集</h2>
-          <p>采集商品信息、图片和变体，生成可审核的上架草稿。</p>
+          <p className="eyebrow">第一步</p>
+          <h2>智能采集</h2>
+          <p>输入关键词自动发现并采集 Amazon 商品；采集成功后，直接进入编辑上架。</p>
         </div>
         <button
           className="icon-button"
@@ -653,8 +670,8 @@ export function ImportPage({
       <section className="saved-section" aria-labelledby="collection-queue-title">
         <div className="section-heading">
           <div>
-            <h3 id="collection-queue-title">采集任务</h3>
-            <p>{displayedCollectionJobs.length} 个任务</p>
+              <h3 id="collection-queue-title">采集库</h3>
+              <p>{displayedCollectionJobs.length} 个采集任务</p>
           </div>
         </div>
 
@@ -852,7 +869,13 @@ export function ImportPage({
                     )}
                   </div>
                   <div className="collection-job-actions">
-                    {job.draft_id && <span className="record-id">草稿 #{job.draft_id}</span>}
+                    {job.draft_id && <button
+                      className="secondary-button"
+                      disabled={isBusy}
+                      onClick={() => void openDraftEditor(job.draft_id!)}
+                    >
+                      <FilePlus2 size={16} /> {busyAction === `open-draft-${job.draft_id}` ? "打开中" : "编辑上架"}
+                    </button>}
                     {job.source_product?.has_snapshot && (
                       <button
                         className="secondary-button"

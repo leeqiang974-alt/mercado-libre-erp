@@ -1,8 +1,7 @@
 import {
   ClipboardList,
-  FileText,
+  FilePenLine,
   Gauge,
-  Send,
   Store,
   Upload,
   ShoppingCart,
@@ -27,10 +26,9 @@ const menuGroups = [
   {
     title: "商品管理",
     items: [
-      { id: "import", label: "商品采集", icon: Upload },
-      { id: "drafts", label: "商品草稿", icon: FileText },
-      { id: "products", label: "店铺商品", icon: Package },
-      { id: "publishing", label: "刊登中心", icon: Send },
+      { id: "import", label: "智能采集", icon: Upload },
+      { id: "drafts", label: "上架库", icon: FilePenLine },
+      { id: "products", label: "店铺已上架", icon: Package },
     ],
   },
   {

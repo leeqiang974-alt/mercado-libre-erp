@@ -116,12 +116,14 @@ export function PublishingPage({
   review,
   onDraftChange,
   onReviewInvalidated,
+  onBackToEditing,
 }: {
   draft: ProductDraft | null;
   draftId: number | null;
   review: Record<string, unknown> | null;
   onDraftChange: (draft: ProductDraft) => void;
   onReviewInvalidated: () => void;
+  onBackToEditing: () => void;
 }) {
   const [publishingModel, setPublishingModel] = useState<"local" | "cbt">(
     draft?.target_site_id === "CBT" ? "cbt" : "local",
@@ -318,6 +320,14 @@ export function PublishingPage({
           ? "gold_special"
           : metadata.listing_type_ids.includes("gold_pro") ? "gold_pro" : "";
         setListingTypeId(defaultType);
+        if (draft.target_category_id) {
+          void loadAttributes(
+            false,
+            draft.target_category_id,
+            matchingStore?.id ?? "",
+            defaultType,
+          );
+        }
       })
       .catch((error) => {
         if (!cancelled && initRequestEpochRef.current === initEpoch) {
@@ -889,23 +899,26 @@ export function PublishingPage({
   );
 
   const batchPublishSection = (
+    <details className="advanced-section">
+      <summary>批量自动发布（上架库积累后使用）</summary>
+      <p className="section-note">单个商品先在本页完成确认并发布。批量发布仅处理已经通过预检的上架单。</p>
     <section className="saved-section batch-publish-section">
       <div className="section-heading">
-        <div><h3>Batch publish queue</h3></div>
+        <div><h3>批量发布</h3></div>
         <span>{batchDrafts.length}</span>
       </div>
-      {batchDrafts.length === 0 && <p>No saved drafts are available.</p>}
+      {batchDrafts.length === 0 && <p>暂无可批量处理的上架单。</p>}
       {batchDrafts.length > 0 && (
         <>
           <div className="batch-review-controls">
             <div className="action-line">
-              <span>{selectedBatchDraftIds.size} / {MAX_PUBLISH_BATCH_SIZE} selected</span>
+              <span>已选 {selectedBatchDraftIds.size} / {MAX_PUBLISH_BATCH_SIZE}</span>
               <button
                 className="secondary-button"
                 disabled={selectedBatchDraftIds.size === 0 || busy === "batch-preflight"}
                 onClick={checkBatchReadiness}
               >
-                <ListChecks size={16} /> Check readiness
+                <ListChecks size={16} /> 检查可发布性
               </button>
               <label className="check-row">
                 <input
@@ -913,7 +926,7 @@ export function PublishingPage({
                   checked={batchPublishAcknowledged}
                   onChange={(event) => setBatchPublishAcknowledged(event.target.checked)}
                 />
-                Confirm ready drafts may be published by the worker
+                我确认可发布的上架单可由后台任务执行发布
               </label>
               <button
                 disabled={
@@ -926,38 +939,38 @@ export function PublishingPage({
                 }
                 onClick={queuePublishBatch}
               >
-                <ListPlus size={16} /> Queue selected drafts
+                <ListPlus size={16} /> 加入批量发布队列
               </button>
             </div>
             {batchPreflightResult && (
               <div className="batch-result-summary" aria-live="polite">
-                <strong>{batchPreflightResult.ready_count} ready</strong>
-                <span>{batchPreflightResult.not_ready_count} blocked</span>
-                <span>{batchPreflightResult.not_found_count} missing</span>
+                <strong>可发布 {batchPreflightResult.ready_count} 个</strong>
+                <span>被拦截 {batchPreflightResult.not_ready_count} 个</span>
+                <span>不存在 {batchPreflightResult.not_found_count} 个</span>
               </div>
             )}
             {batchPreflightResult?.items.some((item) => item.errors.length > 0) && (
               <div className="batch-review-errors">
                 {batchPreflightResult.items.filter((item) => item.errors.length > 0).map((item) => (
                   <span key={item.draft_id}>
-                    Draft #{item.draft_id}: {item.errors.map(readablePublishError).join(", ")}
+                    上架单 #{item.draft_id}: {item.errors.map(readablePublishError).join(", ")}
                   </span>
                 ))}
               </div>
             )}
             {batchPublishResult && (
               <div className="batch-result-summary" aria-live="polite">
-                <strong>{batchPublishResult.queued_count} queued</strong>
-                <span>{batchPublishResult.existing_count} existing</span>
-                <span>{batchPublishResult.not_ready_count} not ready</span>
-                <span>{batchPublishResult.not_found_count} missing</span>
+                <strong>已入队 {batchPublishResult.queued_count} 个</strong>
+                <span>已有任务 {batchPublishResult.existing_count} 个</span>
+                <span>未就绪 {batchPublishResult.not_ready_count} 个</span>
+                <span>不存在 {batchPublishResult.not_found_count} 个</span>
               </div>
             )}
             {batchPublishResult?.items.some((item) => item.errors.length > 0) && (
               <div className="batch-review-errors">
                 {batchPublishResult.items.filter((item) => item.errors.length > 0).map((item) => (
                   <span key={item.draft_id}>
-                    Draft #{item.draft_id}: {item.errors.map(readablePublishError).join(", ")}
+                    上架单 #{item.draft_id}: {item.errors.map(readablePublishError).join(", ")}
                   </span>
                 ))}
               </div>
@@ -969,7 +982,7 @@ export function PublishingPage({
                 <label className="draft-selector">
                   <input
                     type="checkbox"
-                    aria-label={`Select draft ${item.id} for publish queue`}
+                    aria-label={`选择上架单 ${item.id} 进行批量发布`}
                     checked={selectedBatchDraftIds.has(item.id)}
                     disabled={
                       !selectedBatchDraftIds.has(item.id)
@@ -981,16 +994,16 @@ export function PublishingPage({
                 <div className="batch-publish-row">
                   <span>
                     <strong>{item.title}</strong>
-                    <small>#{item.id} · {item.target_site_id} · {item.listing_type_id || "offer not configured"}</small>
+                    <small>上架单 #{item.id} · {item.target_site_id} · {item.listing_type_id || "未配置刊登方式"}</small>
                   </span>
-                  <span>{item.currency} {item.price ?? "not priced"}</span>
+                  <span>{item.currency} {item.price ?? "未定价"}</span>
                   <span>{item.risk_status}</span>
                   {batchPreflightResult && (() => {
                     const checked = batchPreflightResult.items.find((result) => result.draft_id === item.id);
                     if (!checked) return null;
                     return (
                       <span className={`state-pill ${checked.outcome === "ready" ? "ready" : "blocked"}`}>
-                        {checked.outcome === "ready" ? "Ready" : "Blocked"}
+                        {checked.outcome === "ready" ? "可发布" : "被拦截"}
                       </span>
                     );
                   })()}
@@ -1001,28 +1014,32 @@ export function PublishingPage({
         </>
       )}
     </section>
+    </details>
   );
   const publishJobsSection = (
-    <PublishJobHistory
-      jobs={jobs}
-      refreshing={jobsRefreshing}
-      busy={busy}
-      cancelCandidateJobId={cancelCandidateJobId}
-      onRefresh={() => void refreshPublishJobs(true)}
-      onRetry={(jobId) => void retryJob(jobId)}
-      onRequestCancel={setCancelCandidateJobId}
-      onCancel={(jobId) => void cancelJob(jobId)}
-      onKeep={() => setCancelCandidateJobId(null)}
-      onReconcile={(jobId) => void reconcileJob(jobId)}
-      hasMore={jobsHaveMore}
-      onLoadOlder={() => void loadOlderJobs()}
-    />
+    <details className="advanced-section">
+      <summary>发布任务记录</summary>
+      <PublishJobHistory
+        jobs={jobs}
+        refreshing={jobsRefreshing}
+        busy={busy}
+        cancelCandidateJobId={cancelCandidateJobId}
+        onRefresh={() => void refreshPublishJobs(true)}
+        onRetry={(jobId) => void retryJob(jobId)}
+        onRequestCancel={setCancelCandidateJobId}
+        onCancel={(jobId) => void cancelJob(jobId)}
+        onKeep={() => setCancelCandidateJobId(null)}
+        onReconcile={(jobId) => void reconcileJob(jobId)}
+        hasMore={jobsHaveMore}
+        onLoadOlder={() => void loadOlderJobs()}
+      />
+    </details>
   );
 
   if (!draft || !draftId) {
     return (
       <section className="workspace">
-        <div className="empty-state">Select and prepare a saved draft before publishing.</div>
+        <div className="empty-state">请先从上架库选择一个商品进行编辑。</div>
         {status && <p className="status-line">{status}</p>}
         {batchPublishSection}
         {publishJobsSection}
@@ -1064,30 +1081,30 @@ export function PublishingPage({
     <section className="workspace">
       <header className="page-header">
         <div>
-          <p className="eyebrow">Mercado Libre delivery</p>
-          <h2>Publish workspace</h2>
+          <p className="eyebrow">第三步</p>
+          <h2>最终确认并发布</h2>
           <p>{draft.title}</p>
         </div>
-        <div className="page-header-actions"><button className="secondary-button" onClick={() => setPublishingModel("cbt")}>跨境店刊登（CBT）</button><span className="record-id">Draft #{draftId}</span></div>
+        <div className="page-header-actions"><button className="secondary-button" onClick={onBackToEditing}>返回编辑</button><button className="secondary-button" onClick={() => setPublishingModel("cbt")}>跨境店发布（CBT）</button><span className="record-id">上架单 #{draftId}</span></div>
       </header>
 
       <div className="publish-progress">
-        <ProgressItem label="Priced" ready={pricingValid} />
-        <ProgressItem label="AI passed" ready={reviewPassed} />
-        <ProgressItem label="Configured" ready={configReady} />
-        <ProgressItem label="Approved" ready={Boolean(approval)} />
-        <ProgressItem label="Validated" ready={previewMatchesCurrentConfig} />
+        <ProgressItem label="价格" ready={pricingValid} />
+        <ProgressItem label="AI 审核" ready={reviewPassed} />
+        <ProgressItem label="属性与站点" ready={configReady} />
+        <ProgressItem label="人工确认" ready={Boolean(approval)} />
+        <ProgressItem label="发布预检" ready={previewMatchesCurrentConfig} />
       </div>
 
       <section className="surface publish-section">
-        <div className="section-heading"><div><span className="step-number">1</span><h3>Market and offer</h3></div><button className="icon-button" title="Refresh listing types" onClick={refreshCommercialTypes} disabled={busy === "listing-types"}><RefreshCw size={17} /></button></div>
+        <div className="section-heading"><div><span className="step-number">1</span><h3>店铺、销售方式与库存</h3></div><button className="icon-button" title="刷新刊登方式" onClick={refreshCommercialTypes} disabled={busy === "listing-types"}><RefreshCw size={17} /></button></div>
         <div className="form-grid two-col">
-          <label>Mercado Libre site
+          <label>美客多站点
             <select value={siteId} onChange={(event) => changeSite(event.target.value)}>
               {MERCADO_LIBRE_SITES.map((site) => <option key={site.id} value={site.id}>{site.country} ({site.id}) · {site.currency}</option>)}
             </select>
           </label>
-          <label>Authorized store
+          <label>授权店铺
             <select value={storeId} onChange={(event) => {
               categoryAttributesEpochRef.current += 1;
               listingTypeRequestEpochRef.current += 1;
@@ -1102,11 +1119,11 @@ export function PublishingPage({
               setPreview(null);
               setSelectedShippingKey("");
             }}>
-              <option value="">Select a connected {siteId} store</option>
+              <option value="">请选择已授权的 {siteId} 店铺</option>
               {siteStores.map((store) => <option key={store.id} value={store.id}>{store.display_name} · seller {store.seller_id}</option>)}
             </select>
           </label>
-          <label>Available quantity
+          <label>可售库存
             <input
               type="number"
               min="1"
@@ -1121,20 +1138,20 @@ export function PublishingPage({
             />
           </label>
         </div>
-        {!siteMatchesDraft && <p className="inline-warning">This draft was prepared for {draft.target_site_id}. Return to Import, select {siteId}, then reprice and rerun the AI review before publishing.</p>}
-        {siteMatchesDraft && !draft.price && <p className="inline-warning">This draft has no target selling price. Calculate and save a price in {expectedCurrency} before publishing to {siteId}.</p>}
-        {siteMatchesDraft && Boolean(draft.price) && draft.currency !== expectedCurrency && <p className="inline-warning">This draft is priced in {draft.currency || "no currency"}. Reprice it in {expectedCurrency} before publishing to {siteId}.</p>}
-        {siteStores.length === 0 && <p className="inline-warning">No connected store is authorized for {siteId}.</p>}
+        {!siteMatchesDraft && <p className="inline-warning">当前上架单已按 {draft.target_site_id} 分类，请返回编辑页重新选择站点、分类并重新计算价格。</p>}
+        {siteMatchesDraft && !draft.price && <p className="inline-warning">请返回编辑页计算并保存 {expectedCurrency} 销售价。</p>}
+        {siteMatchesDraft && Boolean(draft.price) && draft.currency !== expectedCurrency && <p className="inline-warning">当前价格币种不是 {expectedCurrency}，请返回编辑页重新计算。</p>}
+        {siteStores.length === 0 && <p className="inline-warning">此站点没有已授权店铺。</p>}
         <div className="listing-choice" role="group" aria-label="Listing type">
           {commercialTypes.map((type) => (
             <button key={type.id} className={listingTypeId === type.id ? "selected" : ""} disabled={!type.available} onClick={() => { setListingTypeId(type.id); setSavedConfig(null); setPreview(null); }}>
-              <strong>{type.label}</strong><span>{type.available ? "Available for this seller and category" : "Unavailable for this seller and category"}</span>
+              <strong>{type.label}</strong><span>{type.available ? "此店铺与分类可用" : "此店铺与分类不可用"}</span>
             </button>
           ))}
         </div>
-        {!listingTypesVerified && <p className="inline-warning">Load category attributes to verify Classic/Premium eligibility for this authorized seller and category.</p>}
+        {!listingTypesVerified && <p className="inline-warning">正在依据已确认分类读取店铺可用的 Classic / Premium 刊登方式。</p>}
         <div className="shipping-choice">
-          <label><Truck size={16} /> Verified non-FULL shipping
+          <label><Truck size={16} /> 已验证的非 FULL 物流
             <select
               value={selectedShippingKey}
               disabled={!storeId || shippingOptions.length === 0}
@@ -1144,7 +1161,7 @@ export function PublishingPage({
                 setPreview(null);
               }}
             >
-              <option value="">Select a store shipping option</option>
+              <option value="">选择店铺物流方式</option>
               {shippingOptions.map((option) => (
                 <option key={shippingKey(option)} value={shippingKey(option)}>
                   {SHIPPING_LABELS[shippingKey(option)] ?? `${option.mode} · ${option.logistic_type}`}
@@ -1154,33 +1171,25 @@ export function PublishingPage({
           </label>
           {shippingStatus && <span>{shippingStatus}</span>}
         </div>
-        <p className="full-exclusion">Options are read from the authorized store. FULL is filtered out and cannot be saved.</p>
+        <p className="full-exclusion">物流选项来自已授权店铺，系统已排除 FULL，不能保存或发布 FULL 商品。</p>
       </section>
 
       <section className="surface publish-section">
-        <div className="section-heading"><div><span className="step-number">2</span><h3>Category and attributes</h3></div></div>
-        <div className="category-controls">
-          <label>Category ID<input value={categoryId} onChange={(event) => changeCategory(event.target.value)} placeholder={`${siteId} category`} /></label>
-          <button onClick={predictDraftCategory} disabled={busy === "category"}><Search size={16} /> Predict</button>
-          <button className="secondary-button" onClick={() => loadAttributes(false)} disabled={!categoryId || busy === "attributes"}><ListChecks size={16} /> Load attributes</button>
-        </div>
-        {predictions.length > 0 && <div className="prediction-list">{predictions.map((prediction) => {
-          const id = String(prediction.category_id ?? "");
-          return <button key={id} className={categoryId === id ? "selected" : ""} onClick={() => changeCategory(id)}>{String(prediction.category_name ?? prediction.domain_name ?? id)}<small>{id}</small></button>;
-        })}</div>}
+        <div className="section-heading"><div><span className="step-number">2</span><h3>官方属性与变体</h3><p>分类已在编辑页确认：{categoryId || "未确认"}</p></div><button className="secondary-button" onClick={onBackToEditing}>返回重新分类</button></div>
+        <p className="section-note">系统仅展示该分类的必填属性、变体属性和可自动匹配的 Amazon 规格。</p>
         {attributeSuggestions.length > 0 && (
           <div className="attribute-mapping">
             <div className="attribute-mapping-heading">
               <span>
-                <strong>Amazon variant {draft.source_variant_asin || "source"}</strong>
-                <small>{attributeSuggestions.length} category matches</small>
+                <strong>Amazon 变体 {draft.source_variant_asin || "源商品"}</strong>
+                <small>{attributeSuggestions.length} 项可自动匹配</small>
               </span>
               <button
                 className="secondary-button"
                 disabled={!attributeSuggestions.some((item) => item.can_apply)}
                 onClick={applyExactSuggestions}
               >
-                <Sparkles size={16} /> Apply exact matches
+                <Sparkles size={16} /> 应用准确匹配
               </button>
             </div>
             <div className="attribute-suggestion-list">
@@ -1197,10 +1206,10 @@ export function PublishingPage({
                       className="icon-text-button"
                       onClick={() => applyAttributeSuggestion(suggestion)}
                     >
-                      <Sparkles size={14} /> Apply
+                      <Sparkles size={14} /> 应用
                     </button>
                   ) : (
-                    <span className="state-pill blocked">Manual entry</span>
+                    <span className="state-pill blocked">需要人工确认</span>
                   )}
                 </div>
               ))}
@@ -1229,7 +1238,7 @@ export function PublishingPage({
                     setPreview(null);
                   }}
                 >
-                  <option value="">Select item condition</option>
+                  <option value="">请选择商品状况</option>
                   {values.map((value) => (
                     <option key={String(value.id)} value={String(value.id)}>{String(value.name ?? "")}</option>
                   ))}
@@ -1269,35 +1278,35 @@ export function PublishingPage({
         })}</div>}
         {attributeError && <p className="inline-warning" role="alert">{attributeError}</p>}
         {categoryId && !categoryAttributesVerified && !attributeError && (
-          <p className="inline-warning">Load verified category attributes before saving.</p>
+          <p className="inline-warning">正在读取官方已验证的分类属性，请稍后再保存。</p>
         )}
         {missingRequiredAttributes.length > 0 && (
           <p className="inline-warning">
-            {missingRequiredAttributes.length} required attribute{missingRequiredAttributes.length === 1 ? "" : "s"} remaining
+            还需填写 {missingRequiredAttributes.length} 个必填属性
           </p>
         )}
-        {categoryAttributes.length > 0 && <div className="action-line"><span>{requiredAttributes.length} required · {categoryAttributes.length} total attributes loaded</span><button className="secondary-button" onClick={() => loadAttributes(true)}><RefreshCw size={16} /> Refresh metadata</button></div>}
-        <div className="action-line"><button onClick={saveConfig} disabled={!categoryId || !categoryAttributesVerified || !listingTypesVerified || !listingTypeId || !selectedShipping || !pricingValid || !Number.isInteger(Number(availableQuantity)) || Number(availableQuantity) < 1 || missingRequiredAttributes.length > 0 || busy === "config"}><Save size={16} /> Save listing configuration</button>{savedConfig && <span className="success-text"><CheckCircle2 size={16} /> Saved as non-FULL</span>}</div>
+        {categoryAttributes.length > 0 && <div className="action-line"><span>必填 {requiredAttributes.length} 项 · 已加载 {categoryAttributes.length} 项官方属性</span><button className="secondary-button" onClick={() => loadAttributes(true)}><RefreshCw size={16} /> 刷新官方属性</button></div>}
+        <div className="action-line"><button onClick={saveConfig} disabled={!categoryId || !categoryAttributesVerified || !listingTypesVerified || !listingTypeId || !selectedShipping || !pricingValid || !Number.isInteger(Number(availableQuantity)) || Number(availableQuantity) < 1 || missingRequiredAttributes.length > 0 || busy === "config"}><Save size={16} /> 保存上架配置</button>{savedConfig && <span className="success-text"><CheckCircle2 size={16} /> 已保存非 FULL 上架配置</span>}</div>
       </section>
 
       <section className="surface publish-section">
-        <div className="section-heading"><div><span className="step-number">3</span><h3>Approval and publish</h3></div></div>
+        <div className="section-heading"><div><span className="step-number">3</span><h3>审核、人工确认与发布</h3></div></div>
         <div className="release-summary">
-          <div><span>AI decision</span><strong>{String(review?.decision ?? "Not reviewed")}</strong></div>
-          <div><span>Store</span><strong>{selectedStore?.display_name ?? "Not selected"}</strong></div>
-          <div><span>Offer</span><strong>{COMMERCIAL_TYPES.find((type) => type.id === listingTypeId)?.label ?? "Not selected"}</strong></div>
-          <div><span>Shipping</span><strong>{selectedShipping ? (SHIPPING_LABELS[selectedShippingKey] ?? selectedShippingKey) : "Not selected"}</strong></div>
-          <div><span>Price</span><strong>{draft.price ? `${draft.currency} ${draft.price}` : "Not priced"}</strong></div>
-          <div><span>Inventory</span><strong>{availableQuantity || "Not confirmed"}</strong></div>
+          <div><span>AI 审核</span><strong>{String(review?.decision ?? "未审核")}</strong></div>
+          <div><span>店铺</span><strong>{selectedStore?.display_name ?? "未选择"}</strong></div>
+          <div><span>刊登方式</span><strong>{COMMERCIAL_TYPES.find((type) => type.id === listingTypeId)?.label ?? "未选择"}</strong></div>
+          <div><span>物流</span><strong>{selectedShipping ? (SHIPPING_LABELS[selectedShippingKey] ?? selectedShippingKey) : "未选择"}</strong></div>
+          <div><span>售价</span><strong>{draft.price ? `${draft.currency} ${draft.price}` : "未定价"}</strong></div>
+          <div><span>库存</span><strong>{availableQuantity || "未确认"}</strong></div>
         </div>
         <div className="button-row">
-          <button disabled={!canApprove || busy === "approval"} onClick={approveCurrentDraft}><CheckCircle2 size={16} /> Record human approval</button>
-          <button className="secondary-button" disabled={!canPreview || busy === "preview"} onClick={createPreview}><ListChecks size={16} /> Validate payload</button>
-          <button disabled={!previewMatchesCurrentConfig || !selectedStore || !readiness?.mercado_libre.live_publish_enabled || busy === "execute" || busy === "config"} onClick={executePublish}><Rocket size={16} /> Publish now</button>
-          <button className="secondary-button" disabled={!previewMatchesCurrentConfig || !selectedStore || busy === "queue" || busy === "config"} onClick={queuePublish}><Rocket size={16} /> Add to queue</button>
+          <button disabled={!canApprove || busy === "approval"} onClick={approveCurrentDraft}><CheckCircle2 size={16} /> 人工确认可发布</button>
+          <button className="secondary-button" disabled={!canPreview || busy === "preview"} onClick={createPreview}><ListChecks size={16} /> 发布前检查</button>
+          <button disabled={!previewMatchesCurrentConfig || !selectedStore || !readiness?.mercado_libre.live_publish_enabled || busy === "execute" || busy === "config"} onClick={executePublish}><Rocket size={16} /> 立即发布</button>
+          <button className="secondary-button" disabled={!previewMatchesCurrentConfig || !selectedStore || busy === "queue" || busy === "config"} onClick={queuePublish}><Rocket size={16} /> 加入发布队列</button>
         </div>
-        {!readiness?.mercado_libre.live_publish_enabled && <p className="inline-warning">Live publishing is disabled in server configuration.</p>}
-        {preview && <div className={`validation-result ${preview.allowed ? "ready" : "blocked"}`}><strong>{preview.allowed ? "Payload is ready" : "Payload is blocked"}</strong>{preview.errors.map((item) => <span key={item}>{readablePublishError(item)}</span>)}</div>}
+        {!readiness?.mercado_libre.live_publish_enabled && <p className="inline-warning">服务器尚未开启真实发布，当前只能完成预检。</p>}
+        {preview && <div className={`validation-result ${preview.allowed ? "ready" : "blocked"}`}><strong>{preview.allowed ? "发布参数已通过检查" : "发布被阻断"}</strong>{preview.errors.map((item) => <span key={item}>{readablePublishError(item)}</span>)}</div>}
         {execution && <div className={`validation-result ${execution.status === "published" ? "ready" : "blocked"}`}><strong>{execution.status}</strong>{execution.item_id && <span>{execution.item_id}</span>}{execution.shipping_mode && <span>Shipping: {execution.shipping_mode}{execution.shipping_logistic_type ? ` · ${execution.shipping_logistic_type}` : ""}</span>}{execution.errors.map((item) => <span key={item}>{readablePublishError(item)}</span>)}</div>}
       </section>
 

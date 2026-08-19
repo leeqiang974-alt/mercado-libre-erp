@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Layout } from "./components/Layout";
-import { importAmazonHtml, type ProductDraft } from "./api/client";
+import { importAmazonHtml, type ProductDraft, type ProductDraftRead } from "./api/client";
 import { ImportPage } from "./pages/ImportPage";
 import { DraftsPage } from "./pages/DraftsPage";
 import { PublishingPage } from "./pages/PublishingPage";
@@ -61,6 +61,14 @@ export function App() {
     setPage("drafts");
   }
 
+  function openDraftForListing(selectedDraft: ProductDraftRead) {
+    setDraft(selectedDraft);
+    setDraftId(selectedDraft.id);
+    setReview(null);
+    setStatus(`正在编辑上架商品 #${selectedDraft.id}`);
+    setPage("drafts");
+  }
+
   return (
     <Layout page={page} onPageChange={changePage}>
       {page === "dashboard" && <DashboardPage onNavigate={setPage} />}
@@ -69,6 +77,7 @@ export function App() {
       {page === "import" && (
         <ImportPage
           onImportHtml={importAndReview}
+          onOpenDraft={openDraftForListing}
           status={status}
         />
       )}
@@ -81,11 +90,9 @@ export function App() {
           onDraftChange={setDraft}
           onContentDirtyChange={setDraftContentDirty}
           onSelectDraft={(selectedDraft) => {
-            setDraft(selectedDraft);
-            setDraftId(selectedDraft.id);
-            setReview(null);
-            setStatus(`已选择草稿 #${selectedDraft.id}`);
+            openDraftForListing(selectedDraft);
           }}
+          onContinueListing={() => setPage("publishing")}
         />
       )}
       {page === "products" && <StoreProductsPage />}
@@ -96,6 +103,7 @@ export function App() {
           review={review}
           onDraftChange={setDraft}
           onReviewInvalidated={() => setReview(null)}
+          onBackToEditing={() => setPage("drafts")}
         />
       )}
 

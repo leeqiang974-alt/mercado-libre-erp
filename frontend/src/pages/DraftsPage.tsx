@@ -81,6 +81,7 @@ export function DraftsPage({
   onSelectDraft,
   onDraftChange,
   onContentDirtyChange,
+  onContinueListing,
 }: {
   draft: ProductDraft | null;
   draftId: number | null;
@@ -89,6 +90,7 @@ export function DraftsPage({
   onSelectDraft: (draft: ProductDraftRead) => void;
   onDraftChange: (draft: ProductDraft) => void;
   onContentDirtyChange: (dirty: boolean) => void;
+  onContinueListing: () => void;
 }) {
   const [savedDrafts, setSavedDrafts] = useState<ProductDraftRead[]>([]);
   const [providerReview, setProviderReview] = useState<Record<string, unknown> | null>(null);
@@ -518,11 +520,11 @@ export function DraftsPage({
     <section className="workspace">
       <header className="page-header">
         <div>
-          <p className="eyebrow">准备与审核</p>
-          <h2>商品草稿</h2>
-          <p>Price and configure the final listing before Claude and NVIDIA review it.</p>
+          <p className="eyebrow">第二步</p>
+          <h2>编辑上架</h2>
+          <p>分类、属性、标题、图片、价格都在这一张上架单中处理；能自动处理的交给 AI，不能处理的再人工确认。</p>
         </div>
-        {draftId && <span className="record-id">Draft #{draftId}</span>}
+        {draftId && <span className="record-id">上架单 #{draftId}</span>}
       </header>
 
       {!draft && <div className="empty-state">请先选择草稿，或去商品采集页面导入 Amazon 商品</div>}
@@ -532,10 +534,10 @@ export function DraftsPage({
             <ProductImage src={draft.image_urls[0]} alt={draft.title || "Product"} />
             <div>
               <h3>{draft.title || "未命名商品"}</h3>
-              <p>{draft.brand || "Brand not captured"}</p>
+              <p>{draft.brand || "未识别品牌"}</p>
               {draft.source_variant_asin && (
                 <div className="variant-provenance">
-                  <span>Amazon variant · {draft.source_variant_asin}</span>
+                  <span>Amazon 变体 · {draft.source_variant_asin}</span>
                   <div>
                     {Object.entries(draft.source_variant_attributes ?? {}).map(([name, value]) => (
                       <span key={name}>{name}: {value}</span>
@@ -544,8 +546,8 @@ export function DraftsPage({
                 </div>
               )}
               <div className="price-pair">
-                <span>Amazon source <strong>{draft.source_currency} {draft.source_price ?? "-"}</strong></span>
-                <span>Mercado Libre <strong>{draft.currency} {draft.price ?? "Not priced"}</strong></span>
+                <span>Amazon 采集价 <strong>{draft.source_currency} {draft.source_price ?? "-"}</strong></span>
+                <span>美客多售价 <strong>{draft.currency} {draft.price ?? "未定价"}</strong></span>
               </div>
             </div>
           </div>
@@ -606,7 +608,7 @@ export function DraftsPage({
               <div className="section-heading">
                 <div><h3>商品内容</h3></div>
                 <span className={`state-pill ${contentDirty ? "blocked" : "ready"}`}>
-                  {contentDirty ? "Unsaved" : `Version ${draft.content_version}`}
+                  {contentDirty ? "尚未保存" : `版本 ${draft.content_version}`}
                 </span>
               </div>
               <div className="form-grid two-col">
@@ -680,7 +682,7 @@ export function DraftsPage({
                   disabled={!contentForm.title.trim() || !contentDirty || busy === "content"}
                   onClick={saveContent}
                 >
-                  <Save size={16} /> {busy === "content" ? "Saving" : "保存内容"}
+                  <Save size={16} /> {busy === "content" ? "保存中" : "保存内容"}
                 </button>
                 <button
                   className="secondary-button"
@@ -717,6 +719,10 @@ export function DraftsPage({
               ))}
             </div>
             {!categoryConfirmed && <p className="inline-warning">请先在上方确认分类，官方属性和变体才能继续。</p>}
+            <div className="action-line listing-next-action">
+              <span>完成内容和素材后，在下一步确认属性、站点和价格，再提交发布。</span>
+              <button disabled={!categoryConfirmed || contentDirty} onClick={onContinueListing}>继续配置并发布</button>
+            </div>
           </section>
 
           <div className="workflow-grid">
@@ -745,13 +751,13 @@ export function DraftsPage({
                 </button>
                 {pricingResult && (
                   <div className="calculation-result">
-                    <span>Landed cost {pricingResult.target_currency} {pricingResult.landed_cost}</span>
-                    <strong>Selling price {pricingResult.target_currency} {pricingResult.target_price}</strong>
+                    <span>落地成本 {pricingResult.target_currency} {pricingResult.landed_cost}</span>
+                    <strong>建议售价 {pricingResult.target_currency} {pricingResult.target_price}</strong>
                   </div>
                 )}
               </div>
               {(!draft.source_price || !draft.source_currency) && (
-                <p className="inline-warning">Amazon source price evidence is missing. Recollect the source page before pricing.</p>
+                <p className="inline-warning">未采集到 Amazon 原始价格，请重新采集商品页面后再核价。</p>
               )}
             </section>
 
@@ -761,8 +767,8 @@ export function DraftsPage({
                 <span className={`state-pill ${decision === "pass" ? "ready" : "blocked"}`}>{decision}</span>
               </div>
               <div className="provider-status">
-                <div><Bot size={18} /><span>Claude</span><strong>{claudeReady ? "Configured" : "API key required"}</strong></div>
-                <div><ShieldCheck size={18} /><span>NVIDIA</span><strong>{nvidiaReady ? "Configured" : "API key required"}</strong></div>
+                <div><Bot size={18} /><span>Claude</span><strong>{claudeReady ? "已配置" : "需要 API 密钥"}</strong></div>
+                <div><ShieldCheck size={18} /><span>NVIDIA</span><strong>{nvidiaReady ? "已配置" : "需要 API 密钥"}</strong></div>
               </div>
               <div className="button-row">
                 <label className="check-row">
@@ -771,13 +777,13 @@ export function DraftsPage({
                     checked={providerCostAcknowledged}
                     onChange={(event) => setProviderCostAcknowledged(event.target.checked)}
                   />
-                  Confirm Claude and NVIDIA usage costs
+                  我确认本次会消耗 Claude 和 NVIDIA 的用量费用
                 </label>
-                <button disabled={!draftId || contentDirty || !pricingReady || !listingConfigured || !claudeReady || !nvidiaReady || !providerCostAcknowledged || Boolean(busy)} onClick={queueCurrentReview}><ShieldCheck size={16} /> Queue combined audit</button>
-                <button className="secondary-button" disabled={!draftId} onClick={refreshReviewHistory}><RefreshCw size={16} /> History</button>
+                <button disabled={!draftId || contentDirty || !pricingReady || !listingConfigured || !claudeReady || !nvidiaReady || !providerCostAcknowledged || Boolean(busy)} onClick={queueCurrentReview}><ShieldCheck size={16} /> 发起 AI 合规审核</button>
+                <button className="secondary-button" disabled={!draftId} onClick={refreshReviewHistory}><RefreshCw size={16} /> 查看历史</button>
               </div>
-              {!pricingReady && <p className="inline-warning">Save pricing before running provider review.</p>}
-              {pricingReady && !listingConfigured && <p className="inline-warning">Save the target category, Classic/Premium offer, and required attributes in Publish before running provider review.</p>}
+              {!pricingReady && <p className="inline-warning">请先保存价格，再发起 AI 合规审核。</p>}
+              {pricingReady && !listingConfigured && <p className="inline-warning">请在下一步保存店铺、刊登方式和必填属性后，再发起 AI 合规审核。</p>}
               {providerReview && <ReviewSummary value={providerReview} />}
               {reviewHistory.length > 0 && (
                 <div className="review-history-list">
@@ -816,58 +822,41 @@ export function DraftsPage({
 
       {error && <p className="error">{error}</p>}
       <section className="saved-section">
-        <div className="section-heading"><div><h3>已保存草稿</h3></div><span>{savedDrafts.length}</span></div>
-        {savedDrafts.length === 0 && <p>No saved drafts yet.</p>}
+        <div className="section-heading"><div><h3>上架库</h3><p>每个采集商品都是一张上架单。打开后编辑，处理完成即可发布。</p></div><span>{savedDrafts.length}</span></div>
+        {savedDrafts.length === 0 && <p>暂无待上架商品，请先使用智能采集。</p>}
         {savedDrafts.length > 0 && (
-          <div className="batch-review-controls">
-            <div className="action-line">
-              <span>{selectedDraftIds.size} / {MAX_REVIEW_BATCH_SIZE} selected</span>
-              <label className="check-row">
-                <input
-                  type="checkbox"
-                  checked={providerCostAcknowledged}
-                  onChange={(event) => setProviderCostAcknowledged(event.target.checked)}
-                />
-                Confirm Claude and NVIDIA usage costs
-              </label>
-              <button
-                disabled={
-                  selectedDraftIds.size === 0
-                  || Boolean(contentDirty && draftId && selectedDraftIds.has(draftId))
-                  || !providerCostAcknowledged
-                  || !claudeReady
-                  || !nvidiaReady
-                  || Boolean(busy)
-                }
-                onClick={queueBatchReview}
-              >
-                <ListPlus size={16} /> Queue combined audits
+          <div className="draft-list">
+            {savedDrafts.map((savedDraft) => (
+              <button className={`draft-row ${draftId === savedDraft.id ? "selected" : ""}`} key={savedDraft.id} onClick={() => selectSavedDraft(savedDraft)}>
+                <ProductImage src={savedDraft.image_urls[0]} alt={savedDraft.title || "商品图片"} />
+                <span className="draft-copy">
+                  <strong>{savedDraft.title || "未命名商品"}</strong>
+                  <small>上架单 #{savedDraft.id} · {savedDraft.target_site_id} · 采集价 {savedDraft.source_currency} {savedDraft.source_price ?? "-"} · 售价 {savedDraft.currency} {savedDraft.price ?? "未定价"}</small>
+                  {savedDraft.source_variant_asin && <small>{savedDraft.source_variant_asin}{Object.entries(savedDraft.source_variant_attributes).slice(0, 2).map(([name, value]) => ` · ${name}: ${value}`)}</small>}
+                </span>
+                <span className="draft-state">{savedDraft.risk_status}</span>
               </button>
-            </div>
-            {batchReviewResult && (
-              <div className="batch-result-summary" aria-live="polite">
-                <strong>{batchReviewResult.queued_count} queued</strong>
-                <span>{batchReviewResult.existing_count} active</span>
-                <span>{batchReviewResult.not_ready_count} not ready</span>
-                <span>{batchReviewResult.not_found_count} missing</span>
-              </div>
-            )}
-            {batchReviewResult?.items.some((item) => item.errors.length > 0) && (
-              <div className="batch-review-errors">
-                {batchReviewResult.items.filter((item) => item.errors.length > 0).map((item) => (
-                  <span key={item.draft_id}>Draft #{item.draft_id}: {item.errors.join(", ")}</span>
-                ))}
-              </div>
-            )}
+            ))}
           </div>
         )}
-        <div className="draft-list">
-          {savedDrafts.map((savedDraft) => (
-            <div className="draft-selection-row" key={savedDraft.id}>
+        {savedDrafts.length > 0 && <details className="advanced-section">
+          <summary>批量自动处理（商品积累后使用）</summary>
+          <p className="section-note">先在这里选择多张已完成编辑的上架单，再批量发起 AI 合规审核。未完成的商品会被系统拦截。</p>
+          <div className="batch-review-controls">
+            <div className="action-line">
+              <span>已选 {selectedDraftIds.size} / {MAX_REVIEW_BATCH_SIZE}</span>
+              <label className="check-row"><input type="checkbox" checked={providerCostAcknowledged} onChange={(event) => setProviderCostAcknowledged(event.target.checked)} />我确认本次会消耗 Claude 和 NVIDIA 的用量费用</label>
+              <button disabled={selectedDraftIds.size === 0 || Boolean(contentDirty && draftId && selectedDraftIds.has(draftId)) || !providerCostAcknowledged || !claudeReady || !nvidiaReady || Boolean(busy)} onClick={queueBatchReview}><ListPlus size={16} /> 批量发起 AI 审核</button>
+            </div>
+            {batchReviewResult && <div className="batch-result-summary" aria-live="polite"><strong>已加入 {batchReviewResult.queued_count} 个</strong><span>进行中 {batchReviewResult.existing_count} 个</span><span>未就绪 {batchReviewResult.not_ready_count} 个</span><span>不存在 {batchReviewResult.not_found_count} 个</span></div>}
+            {batchReviewResult?.items.some((item) => item.errors.length > 0) && <div className="batch-review-errors">{batchReviewResult.items.filter((item) => item.errors.length > 0).map((item) => <span key={item.draft_id}>上架单 #{item.draft_id}: {item.errors.join(", ")}</span>)}</div>}
+          </div>
+          <div className="draft-list">
+            {savedDrafts.map((savedDraft) => (
+              <div className="draft-selection-row" key={savedDraft.id}>
               <label className="draft-selector">
                 <input
-                  type="checkbox"
-                  aria-label={`选择草稿 ${savedDraft.id} for combined audit`}
+                  type="checkbox" aria-label={`选择上架单 ${savedDraft.id} 进行批量审核`}
                   checked={selectedDraftIds.has(savedDraft.id)}
                   disabled={
                     Boolean(contentDirty && savedDraft.id === draftId)
@@ -880,10 +869,10 @@ export function DraftsPage({
                 />
               </label>
               <button className={`draft-row ${draftId === savedDraft.id ? "selected" : ""}`} onClick={() => selectSavedDraft(savedDraft)}>
-                <ProductImage src={savedDraft.image_urls[0]} alt={savedDraft.title || "Product"} />
+                <ProductImage src={savedDraft.image_urls[0]} alt={savedDraft.title || "商品图片"} />
                 <span className="draft-copy">
                   <strong>{savedDraft.title}</strong>
-                  <small>#{savedDraft.id} · {savedDraft.target_site_id} · source {savedDraft.source_currency} {savedDraft.source_price ?? "-"} · target {savedDraft.currency} {savedDraft.price ?? "not priced"}</small>
+                  <small>上架单 #{savedDraft.id} · {savedDraft.target_site_id} · 采集价 {savedDraft.source_currency} {savedDraft.source_price ?? "-"} · 售价 {savedDraft.currency} {savedDraft.price ?? "未定价"}</small>
                   {savedDraft.source_variant_asin && (
                     <small>
                       {savedDraft.source_variant_asin}
@@ -897,21 +886,22 @@ export function DraftsPage({
               </button>
             </div>
           ))}
-        </div>
+          </div>
         {reviewJobs.length > 0 && (
           <div className="review-job-list">
             {reviewJobs.slice(0, 20).map((job) => (
               <div key={job.id}>
-                <span>Review #{job.id} · draft #{job.product_draft_id}</span>
+                <span>审核任务 #{job.id} · 上架单 #{job.product_draft_id}</span>
                 <strong>{job.status}</strong>
                 {job.error_code && <small>{job.error_code}</small>}
                 {job.next_attempt_at && (
-                  <small>Available after {new Date(job.next_attempt_at).toLocaleString()}</small>
+                  <small>可执行时间：{new Date(job.next_attempt_at).toLocaleString()}</small>
                 )}
               </div>
             ))}
           </div>
         )}
+        </details>}
       </section>
     </section>
   );
