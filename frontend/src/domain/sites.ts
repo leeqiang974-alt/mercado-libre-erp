@@ -5,6 +5,7 @@ export type MercadoLibreSite = {
 };
 
 export const MERCADO_LIBRE_SITES: MercadoLibreSite[] = [
+  { id: "CBT", country: "全球卖家", currency: "USD" },
   { id: "MLA", country: "阿根廷", currency: "ARS" },
   { id: "MBO", country: "玻利维亚", currency: "BOB" },
   { id: "MLB", country: "巴西", currency: "BRL" },

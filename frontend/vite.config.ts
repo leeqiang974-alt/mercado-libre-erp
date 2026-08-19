@@ -6,7 +6,9 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     proxy: {
-      "/api": "http://127.0.0.1:8000",
+      // The full MVP backend owns this API. Port 8000 may be occupied by the
+      // legacy OAuth shell, so local development uses the isolated backend.
+      "/api": process.env.VITE_API_PROXY_TARGET || "http://127.0.0.1:8001",
     },
   },
 });

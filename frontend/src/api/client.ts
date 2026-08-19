@@ -931,7 +931,16 @@ export async function getLatestBehavioralReview(productDraftId: number) {
 export async function listStores() {
   const response = await fetch(`${API_BASE}/api/stores`);
   if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<StoreRecord[]>;
+  const payload = await response.json() as unknown;
+  if (!Array.isArray(payload)) {
+    // A legacy service can still be listening on the local API port. Do not
+    // let its incompatible payload crash every page that reads stores.
+    if (payload && typeof payload === "object" && "stores" in payload && Array.isArray((payload as { stores: unknown }).stores)) {
+      return [];
+    }
+    throw new Error("店铺接口返回了无法识别的数据格式");
+  }
+  return payload as StoreRecord[];
 }
 
 export async function getStoreShippingOptions(storeId: number) {

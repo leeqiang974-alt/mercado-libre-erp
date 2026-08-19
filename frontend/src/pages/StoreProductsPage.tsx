@@ -15,13 +15,13 @@ export function StoreProductsPage() {
   const [loadingReferenceId, setLoadingReferenceId] = useState("");
   const limit = 30;
 
-  const connected = stores.filter((store) => store.oauth_status === "connected");
+  const connected = stores.filter((store) => store && store.oauth_status === "connected");
   async function load(nextOffset = offset) {
     if (!storeId) return;
     setLoading(true); setError("");
     try {
       const result = await listStoreItems(Number(storeId), { limit, offset: nextOffset, search });
-      setItems(result.items); setTotal(Number(result.total)); setOffset(nextOffset); setPriceReferences({});
+      setItems(Array.isArray(result.items) ? result.items : []); setTotal(Number(result.total) || 0); setOffset(nextOffset); setPriceReferences({});
     } catch (loadError) { setError(loadError instanceof Error ? loadError.message : "加载店铺商品失败"); }
     finally { setLoading(false); }
   }
