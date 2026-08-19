@@ -912,6 +912,12 @@ export type StoreItem = {
   sold_quantity?: number;
   listing_type_id?: string;
   permalink?: string;
+  warranty?: string;
+  shipping_mode?: string;
+  shipping_logistic_type?: string;
+  free_shipping?: boolean;
+  last_updated?: string;
+  has_public_permalink?: boolean;
   load_error?: boolean;
 };
 

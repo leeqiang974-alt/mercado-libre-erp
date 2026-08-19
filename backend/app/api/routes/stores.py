@@ -259,6 +259,12 @@ async def list_store_items(
             "sold_quantity": detail.get("sold_quantity"),
             "listing_type_id": str(detail.get("listing_type_id") or ""),
             "permalink": str(detail.get("permalink") or ""),
+            "warranty": str(detail.get("warranty") or ""),
+            "shipping_mode": str((detail.get("shipping") or {}).get("mode") or ""),
+            "shipping_logistic_type": str((detail.get("shipping") or {}).get("logistic_type") or ""),
+            "free_shipping": bool((detail.get("shipping") or {}).get("free_shipping")),
+            "last_updated": str(detail.get("last_updated") or ""),
+            "has_public_permalink": bool(detail.get("permalink")),
         })
     paging = result.get("paging") if isinstance(result.get("paging"), dict) else {}
     return {
