@@ -55,7 +55,7 @@ function ProductImage({ src, alt }: { src?: string; alt: string }) {
 
   if (!src || failed) {
     return (
-      <span className="product-image image-placeholder" aria-label="No product image">
+      <span className="product-image image-placeholder" aria-label="无商品图片">
         <ImageOff aria-hidden="true" />
       </span>
     );
@@ -108,7 +108,7 @@ export function DraftsPage({
         setReviewJobs(jobs);
       })
       .catch((loadError) =>
-        setError(loadError instanceof Error ? loadError.message : "Failed to load drafts"),
+        setError(loadError instanceof Error ? loadError.message : "加载草稿失败"),
       );
   }, []);
 
@@ -390,20 +390,20 @@ export function DraftsPage({
     <section className="workspace">
       <header className="page-header">
         <div>
-          <p className="eyebrow">Prepare and review</p>
-          <h2>Product draft</h2>
+          <p className="eyebrow">准备与审核</p>
+          <h2>商品草稿</h2>
           <p>Price and configure the final listing before Claude and NVIDIA review it.</p>
         </div>
         {draftId && <span className="record-id">Draft #{draftId}</span>}
       </header>
 
-      {!draft && <div className="empty-state">Select a saved draft or collect an Amazon URL first.</div>}
+      {!draft && <div className="empty-state">请先选择草稿，或去商品采集页面导入 Amazon 商品</div>}
       {draft && (
         <>
           <div className="product-summary">
             <ProductImage src={draft.image_urls[0]} alt={draft.title || "Product"} />
             <div>
-              <h3>{draft.title || "Untitled product"}</h3>
+              <h3>{draft.title || "未命名商品"}</h3>
               <p>{draft.brand || "Brand not captured"}</p>
               {draft.source_variant_asin && (
                 <div className="variant-provenance">
@@ -425,31 +425,25 @@ export function DraftsPage({
           {contentForm && (
             <section className="surface content-editor">
               <div className="section-heading">
-                <div><h3>Listing content</h3></div>
+                <div><h3>商品内容</h3></div>
                 <span className={`state-pill ${contentDirty ? "blocked" : "ready"}`}>
                   {contentDirty ? "Unsaved" : `Version ${draft.content_version}`}
                 </span>
               </div>
               <div className="form-grid two-col">
-                <label className="full-span">
-                  Title
-                  <input
+                <label className="full-span">标题<input
                     maxLength={200}
                     value={contentForm.title}
                     onChange={(event) => updateContentField("title", event.target.value)}
                   />
                 </label>
-                <label>
-                  Brand
-                  <input
+                <label>品牌<input
                     maxLength={120}
                     value={contentForm.brand}
                     onChange={(event) => updateContentField("brand", event.target.value)}
                   />
                 </label>
-                <label className="full-span">
-                  Description
-                  <textarea
+                <label className="full-span">商品描述<textarea
                     maxLength={50000}
                     rows={6}
                     value={contentForm.description}
@@ -466,14 +460,14 @@ export function DraftsPage({
                   <div className="image-url-row" key={`${index}-${contentForm.expected_content_version}`}>
                     <ProductImage src={url} alt={`Product image ${index + 1}`} />
                     <input
-                      aria-label={`Product image URL ${index + 1}`}
+                      aria-label={`商品图片链接 ${index + 1}`}
                       value={url}
                       onChange={(event) => updateContentImage(index, event.target.value)}
                     />
                     <button
                       className="icon-button secondary-button"
                       title="Remove image"
-                      aria-label={`Remove product image ${index + 1}`}
+                      aria-label={`删除图片 ${index + 1}`}
                       onClick={() => removeContentImage(index)}
                     >
                       <Trash2 size={16} />
@@ -495,7 +489,7 @@ export function DraftsPage({
                   disabled={!contentForm.title.trim() || !contentDirty || busy === "content"}
                   onClick={saveContent}
                 >
-                  <Save size={16} /> {busy === "content" ? "Saving" : "Save content"}
+                  <Save size={16} /> {busy === "content" ? "Saving" : "保存内容"}
                 </button>
                 <button
                   className="secondary-button"
@@ -510,7 +504,7 @@ export function DraftsPage({
                 >
                   Reset
                 </button>
-                <span>Saving content requires a new Claude + NVIDIA review.</span>
+                <span>Saving content requires a new AI 合规审核.</span>
               </div>
             </section>
           )}
@@ -518,9 +512,9 @@ export function DraftsPage({
           <div className="workflow-grid">
             <section className="surface">
               <div className="section-heading">
-                <div><span className="step-number">1</span><h3>Price for {draft.target_site_id}</h3></div>
+                <div><span className="step-number">1</span><h3>价格设置 · {draft.target_site_id}</h3></div>
                 <span className={`state-pill ${pricingReady ? "ready" : "blocked"}`}>
-                  {pricingReady ? "Saved" : "Required"}
+                  {pricingReady ? "已保存" : "必填"}
                 </span>
               </div>
               <div className="form-grid three-col">
@@ -553,7 +547,7 @@ export function DraftsPage({
 
             <section className="surface">
               <div className="section-heading">
-                <div><span className="step-number">2</span><h3>Claude + NVIDIA review</h3></div>
+                <div><span className="step-number">2</span><h3>AI 合规审核</h3></div>
                 <span className={`state-pill ${decision === "pass" ? "ready" : "blocked"}`}>{decision}</span>
               </div>
               <div className="provider-status">
@@ -612,7 +606,7 @@ export function DraftsPage({
 
       {error && <p className="error">{error}</p>}
       <section className="saved-section">
-        <div className="section-heading"><div><h3>Saved drafts</h3></div><span>{savedDrafts.length}</span></div>
+        <div className="section-heading"><div><h3>已保存草稿</h3></div><span>{savedDrafts.length}</span></div>
         {savedDrafts.length === 0 && <p>No saved drafts yet.</p>}
         {savedDrafts.length > 0 && (
           <div className="batch-review-controls">
@@ -663,7 +657,7 @@ export function DraftsPage({
               <label className="draft-selector">
                 <input
                   type="checkbox"
-                  aria-label={`Select draft ${savedDraft.id} for combined audit`}
+                  aria-label={`选择草稿 ${savedDraft.id} for combined audit`}
                   checked={selectedDraftIds.has(savedDraft.id)}
                   disabled={
                     Boolean(contentDirty && savedDraft.id === draftId)

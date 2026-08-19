@@ -36,11 +36,11 @@ import { MERCADO_LIBRE_SITES } from "../domain/sites";
 type ImportMode = "url" | "html";
 
 const JOB_LABELS: Record<CollectionJobRecord["status"], string> = {
-  pending: "Pending",
-  running: "Running",
-  completed: "Collected",
-  needs_manual_action: "Manual action",
-  failed: "Failed",
+  pending: "待处理",
+  running: "采集中",
+  completed: "已完成",
+  needs_manual_action: "需人工处理",
+  failed: "失败",
 };
 
 const BATCH_LABELS: Record<CollectionBatchResult["items"][number]["outcome"], string> = {

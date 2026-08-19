@@ -20,14 +20,48 @@ class MercadoLibreToken(BaseModel):
     user_id: int | str
 
 
-def create_state_token(secret: str, site_id: str) -> str:
+def _generate_code_verifier() -> str:
+    """Generate a PKCE code_verifier (43-128 chars, URL-safe)."""
+    return secrets.token_urlsafe(64)
+
+
+def _code_challenge_from_verifier(verifier: str) -> str:
+    """Compute PKCE code_challenge = BASE64URL(SHA256(verifier))."""
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+def create_state_token(secret: str, site_id: str, code_verifier: str | None = None) -> str:
     timestamp = str(int(time.time()))
     normalized_site_id = site_id.strip().upper()
     authorization_base_url(normalized_site_id)
     nonce = secrets.token_urlsafe(24)
-    payload = f"{timestamp}.{normalized_site_id}.{nonce}"
+    verifier = code_verifier or _generate_code_verifier()
+    payload = f"{timestamp}.{normalized_site_id}.{nonce}.{verifier}"
     signature = _sign_state(payload, secret)
     return f"{payload}.{signature}"
+
+
+def get_state_code_verifier(state: str, secret: str) -> str | None:
+    """Extract code_verifier from a valid state token."""
+    try:
+        parts = state.split(".")
+        if len(parts) < 5:
+            return None
+        timestamp_text = parts[0]
+        site_id = parts[1]
+        nonce = parts[2]
+        verifier = parts[3]
+        signature = ".".join(parts[4:])
+        int(timestamp_text)
+        authorization_base_url(site_id)
+        payload = f"{timestamp_text}.{site_id}.{nonce}.{verifier}"
+        expected_signature = _sign_state(payload, secret)
+        if not hmac.compare_digest(signature, expected_signature):
+            return None
+        return verifier
+    except (AttributeError, TypeError, ValueError):
+        return None
 
 
 def verify_state_token(
@@ -44,7 +78,17 @@ def get_state_site_id(
     max_age_seconds: int = 600,
 ) -> str | None:
     try:
-        timestamp_text, site_id, nonce, signature = state.split(".", 3)
+        parts = state.split(".")
+        if len(parts) < 5:
+            # Legacy state without code_verifier (4 parts)
+            timestamp_text, site_id, nonce, signature = state.split(".", 3)
+            payload = f"{timestamp_text}.{site_id}.{nonce}"
+        else:
+            timestamp_text = parts[0]
+            site_id = parts[1]
+            nonce = parts[2]
+            signature = ".".join(parts[4:])
+            payload = f"{timestamp_text}.{site_id}.{nonce}.{parts[3]}"
         timestamp = int(timestamp_text)
     except (AttributeError, TypeError, ValueError):
         return None
@@ -52,7 +96,6 @@ def get_state_site_id(
         authorization_base_url(site_id)
     except ValueError:
         return None
-    payload = f"{timestamp_text}.{site_id}.{nonce}"
     expected_signature = _sign_state(payload, secret)
     if not hmac.compare_digest(signature, expected_signature):
         return None
@@ -74,15 +117,20 @@ def build_authorization_url(
     redirect_uri: str,
     state: str,
     site_id: str,
+    code_verifier: str | None = None,
 ) -> str:
-    query = urlencode(
-        {
-            "response_type": "code",
-            "client_id": client_id,
-            "redirect_uri": redirect_uri,
-            "state": state,
-        }
-    )
+    params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "state": state,
+        "scope": "read write offline_access orders:read orders:write products:read products:write marketplace:read marketplace:write",
+    }
+    # PKCE: add code_challenge
+    verifier = code_verifier or _generate_code_verifier()
+    params["code_challenge"] = _code_challenge_from_verifier(verifier)
+    params["code_challenge_method"] = "S256"
+    query = urlencode(params)
     return f"{authorization_base_url(site_id)}?{query}"
 
 
@@ -99,7 +147,7 @@ class MercadoLibreOAuthClient:
         self.redirect_uri = redirect_uri
         self.transport = transport
 
-    async def exchange_code(self, code: str) -> MercadoLibreToken:
+    async def exchange_code(self, code: str, code_verifier: str | None = None) -> MercadoLibreToken:
         data = {
             "grant_type": "authorization_code",
             "client_id": self.client_id,
@@ -107,6 +155,8 @@ class MercadoLibreOAuthClient:
             "code": code,
             "redirect_uri": self.redirect_uri,
         }
+        if code_verifier:
+            data["code_verifier"] = code_verifier
         async with httpx.AsyncClient(transport=self.transport, timeout=30) as client:
             response = await client.post(TOKEN_URL, data=data)
             response.raise_for_status()

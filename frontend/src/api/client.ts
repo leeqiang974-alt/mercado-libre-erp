@@ -350,6 +350,10 @@ export type DraftPricingInput = {
   tax_rate: number;
   profit_margin_rate: number;
   rounding_increment: number;
+  // 步骤式刊登使用的直填字段
+  sale_price?: number;
+  quantity?: number;
+  product_cost_cny?: number;
 };
 
 export type DraftPricing = DraftPricingInput & {
@@ -361,6 +365,11 @@ export type DraftPricing = DraftPricingInput & {
   draft: ProductDraftRead;
   created_at: string;
   updated_at: string;
+  // 步骤式刊登使用的计算结果
+  product_cost_mxn?: number;
+  platform_fee?: number;
+  net_profit?: number;
+  net_margin?: number;
 };
 
 export async function importAmazonHtml(
@@ -516,6 +525,21 @@ export async function getDraftPricing(productDraftId: number) {
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<DraftPricing | null>;
 }
+export const EMPTY_PRICING: DraftPricingInput = {
+  source_price: 0,
+  source_currency: "CNY",
+  target_currency: "MXN",
+  exchange_rate: 2.4,
+  purchase_extra_cost: 0,
+  shipping_cost: 0,
+  platform_fee_rate: 0.17,
+  tax_rate: 0.16,
+  profit_margin_rate: 0.3,
+  rounding_increment: 0,
+  sale_price: 0,
+  quantity: 0,
+  product_cost_cny: 0,
+};
 
 export async function createCollectionJob(sourceUrl: string, targetSiteId: string) {
   const response = await fetch(`${API_BASE}/api/imports/amazon-url/jobs`, {

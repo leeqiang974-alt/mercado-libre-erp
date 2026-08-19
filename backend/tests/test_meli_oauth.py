@@ -60,7 +60,8 @@ def test_authorization_url_uses_site_marketplace_domain(site_id, expected_prefix
 
 def test_every_supported_marketplace_site_has_an_authorization_domain():
     assert set(SITE_MARKETPLACE_DOMAINS) == set(SITE_CURRENCIES)
-    assert len(SITE_MARKETPLACE_DOMAINS) == 18
+    assert len(SITE_MARKETPLACE_DOMAINS) == 19
+    assert SITE_MARKETPLACE_DOMAINS["CBT"] == "mercadolibre.com"
 
 
 @pytest.mark.asyncio

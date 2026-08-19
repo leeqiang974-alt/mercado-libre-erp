@@ -1,0 +1,704 @@
+/* 商品草稿 - 步骤式引导 */
+.drafts-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 20px;
+}
+
+.drafts-sidebar {
+  background: white;
+  border: 1px solid #e4e7eb;
+  border-radius: 8px;
+  padding: 16px;
+  height: fit-content;
+}
+
+.drafts-sidebar h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: #1f2933;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.draft-search {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #cbd2d9;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.draft-search:focus {
+  outline: none;
+  border-color: #ea580c;
+  box-shadow: 0 0 0 2px rgba(234, 88, 12, 0.1);
+}
+
+.draft-list {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.draft-item {
+  padding: 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 4px;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+}
+
+.draft-item:hover {
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.draft-item.active {
+  background: #fff7ed;
+  border-color: #ea580c;
+}
+
+.draft-item-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1f2933;
+  margin: 0 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.draft-item-meta {
+  font-size: 11px;
+  color: #7b8794;
+  display: flex;
+  justify-content: space-between;
+}
+
+.draft-status {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.status-draft {
+  background: #f0f4f8;
+  color: #52606d;
+}
+
+.status-reviewing {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.status-published {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+/* 步骤指示器 */
+.stepper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: white;
+  border: 1px solid #e4e7eb;
+  border-radius: 8px;
+  padding: 16px 24px;
+  margin-bottom: 20px;
+}
+
+.step-wrapper {
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 6px;
+  color: #7b8794;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+
+.step:hover {
+  color: #ea580c;
+  background: #fff7ed;
+}
+
+.step.active {
+  color: #ea580c;
+  font-weight: 600;
+}
+
+.step.completed {
+  color: #059669;
+}
+
+.step-arrow {
+  color: #cbd2d9;
+  margin: 0 4px;
+}
+
+/* 步骤面板 */
+.step-panel {
+  background: white;
+  border: 1px solid #e4e7eb;
+  border-radius: 8px;
+  padding: 24px;
+}
+
+.step-title {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #f0f4f8;
+}
+
+.step-title h3 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  color: #1f2933;
+}
+
+.step-title p {
+  margin: 0;
+  color: #7b8794;
+  font-size: 13px;
+}
+
+/* 表单 */
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: #323f4b;
+  margin-bottom: 6px;
+}
+
+.form-group input,
+.form-group textarea,
+.form-group select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #cbd2d9;
+  border-radius: 6px;
+  font-size: 13px;
+  box-sizing: border-box;
+  transition: all 0.15s;
+}
+
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: #ea580c;
+  box-shadow: 0 0 0 2px rgba(234, 88, 12, 0.1);
+}
+
+.form-group textarea {
+  min-height: 120px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.form-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.form-actions button {
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s;
+}
+
+.form-actions button:first-child {
+  background: #ea580c;
+  color: white;
+}
+
+.form-actions button:first-child:hover {
+  background: #c2410c;
+}
+
+.form-actions button:first-child:disabled {
+  background: #fed7aa;
+  cursor: not-allowed;
+}
+
+.form-actions button.secondary {
+  background: #f0f4f8;
+  color: #323f4b;
+}
+
+.form-actions button.secondary:hover {
+  background: #e4e7eb;
+}
+
+/* 价格网格 */
+.pricing-grid {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 24px;
+}
+
+.pricing-left {
+  padding-right: 24px;
+  border-right: 1px solid #f0f4f8;
+}
+
+.profit-card {
+  background: #fafaf9;
+  border: 1px solid #e4e7eb;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.profit-card h4 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: #1f2933;
+}
+
+.profit-details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.profit-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: #52606d;
+}
+
+.profit-row.total {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #e4e7eb;
+  font-weight: 600;
+  color: #1f2933;
+}
+
+.profit-row .cost {
+  color: #dc2626;
+}
+
+.profit-row .profit {
+  color: #059669;
+}
+
+.profit-row .loss {
+  color: #dc2626;
+}
+
+.text-muted {
+  color: #9aa5b1;
+  font-size: 12px;
+}
+
+/* 类目选择 */
+.category-tree {
+  border: 1px solid #e4e7eb;
+  border-radius: 6px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.category-node {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #f0f4f8;
+  font-size: 13px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.category-node:hover {
+  background: #fff7ed;
+}
+
+.category-node.selected {
+  background: #fff7ed;
+  color: #ea580c;
+  font-weight: 500;
+}
+
+.category-path {
+  padding: 8px 12px;
+  background: #fff7ed;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: #9a3412;
+}
+
+/* 属性表格 */
+.attributes-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+/* 物流选项 */
+.shipping-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shipping-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #e4e7eb;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.shipping-option:hover {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+
+.shipping-option.selected {
+  border-color: #ea580c;
+  background: #fff7ed;
+}
+
+.shipping-option input[type="radio"] {
+  accent-color: #ea580c;
+}
+
+/* 审核面板 */
+.review-section {
+  margin-bottom: 20px;
+}
+
+.review-section h4 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: #1f2933;
+}
+
+.review-item {
+  padding: 12px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.review-item.pass {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+}
+
+.review-item.warning {
+  background: #fef3c7;
+  border-color: #fde68a;
+}
+
+.review-item.error {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.review-item-title {
+  font-weight: 500;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.review-item-desc {
+  font-size: 12px;
+  color: #52606d;
+}
+
+/* 错误提示 */
+.error-banner {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  padding: 12px 16px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 响应式 */
+@media (max-width: 900px) {
+  .drafts-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .pricing-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pricing-left {
+    padding-right: 0;
+    border-right: none;
+    border-bottom: 1px solid #f0f4f8;
+    padding-bottom: 20px;
+  }
+
+  .stepper {
+    overflow-x: auto;
+    padding: 12px;
+  }
+
+  .attributes-grid {
+    grid-template-columns: 1fr;
+  }
+}
+/* 主内容区 */
+.drafts-main {
+  min-width: 0;
+}
+
+/* 空状态 */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  background: white;
+  border: 1px solid #e4e7eb;
+  border-radius: 8px;
+}
+
+/* 类目预测 */
+.category-predictions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.category-prediction-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #e4e7eb;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.category-prediction-item:hover {
+  background: #fff7ed;
+  border-color: #ea580c;
+}
+
+.category-prediction-item .cat-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1f2937;
+}
+
+.category-prediction-item .cat-id {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+/* 当前类目 */
+.category-current {
+  padding: 10px 12px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.category-id {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #ea580c;
+}
+
+/* 类目提示 */
+.category-tips {
+  background: #fef9c3;
+  border: 1px solid #fde047;
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-top: 16px;
+}
+
+.category-tips h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #854d0e;
+}
+
+.category-tips ul {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 12px;
+  color: #713f12;
+  line-height: 1.8;
+}
+
+/* 属性区域 */
+.attr-section {
+  margin-bottom: 20px;
+}
+
+.attr-section h4 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: #1f2937;
+}
+
+/* 图片列表 */
+.image-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.image-item {
+  width: 80px;
+  height: 80px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #f9fafb;
+}
+
+.image-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 审核区域 */
+.review-section {
+  margin-bottom: 24px;
+}
+
+.review-section h4 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: #1f2937;
+}
+
+.review-buttons {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.review-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.review-history-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #f9fafb;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.review-provider {
+  font-weight: 500;
+  color: #374151;
+}
+
+.review-decision {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.decision-approve {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.decision-block {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.decision-manual {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.review-date {
+  margin-left: auto;
+  color: #9ca3af;
+}
+
+/* 刊登区域 */
+.publish-section {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #f0f4f8;
+}
+
+.publish-warning {
+  display: flex;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
+
+.publish-warning strong {
+  display: block;
+  font-size: 13px;
+  color: #9a3412;
+  margin-bottom: 2px;
+}
+
+.publish-warning p {
+  margin: 0;
+  font-size: 12px;
+  color: #c2410c;
+}

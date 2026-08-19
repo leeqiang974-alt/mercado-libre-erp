@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.api.routes import (
     audit_events,
     drafts,
+    erp,
     imports,
     integrations,
     metadata,
@@ -55,6 +56,7 @@ app.include_router(publishing.router)
 app.include_router(stores.router)
 app.include_router(audit_events.router)
 app.include_router(integrations.router)
+app.include_router(erp.router)
 
 
 @app.get("/health")

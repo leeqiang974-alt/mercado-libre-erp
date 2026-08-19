@@ -7,6 +7,14 @@ import { PublishingPage } from "./pages/PublishingPage";
 import { StoresPage } from "./pages/StoresPage";
 import { AuditPage } from "./pages/AuditPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { OrdersPage } from "./pages/OrdersPage";
+import { InventoryPage } from "./pages/InventoryPage";
+import { WarehousePage } from "./pages/WarehousePage";
+import { PurchasePage } from "./pages/PurchasePage";
+import { LogisticsPage } from "./pages/LogisticsPage";
+import { FinancePage } from "./pages/FinancePage";
+import { ReportsPage } from "./pages/ReportsPage";
+import { MessagesPage } from "./pages/MessagesPage";
 
 export function App() {
   const [draft, setDraft] = useState<ProductDraft | null>(null);
@@ -23,7 +31,7 @@ export function App() {
       page === "drafts"
       && nextPage !== "drafts"
       && draftContentDirty
-      && !window.confirm("Discard unsaved listing content changes?")
+      && !window.confirm("丢弃未保存的商品内容修改？")
     ) return;
     setPage(nextPage);
   }
@@ -35,7 +43,7 @@ export function App() {
     persist: boolean,
     collectionJobId: number | null,
   ) {
-    setStatus("Importing Amazon page snapshot");
+    setStatus("正在导入 Amazon 页面快照");
     const importResult = await importAmazonHtml(
       sourceUrl,
       html,
@@ -48,12 +56,12 @@ export function App() {
     setDraft(nextDraft);
     setDraftId(nextDraftId);
     setReview(null);
-    setStatus("Draft saved. Select Claude, NVIDIA, or combined review.");
+    setStatus("草稿已保存。请选择 Claude、NVIDIA 或组合审核。");
     setPage("drafts");
   }
 
   async function collectUrlAndReview(sourceUrl: string, targetSiteId: string) {
-    setStatus("Collecting Amazon page");
+    setStatus("正在采集 Amazon 页面");
     const result = await importAmazonUrl(sourceUrl, targetSiteId);
     if (result.status !== "collected" || !result.draft) {
       setStatus(result.message);
@@ -64,13 +72,15 @@ export function App() {
     setDraft(result.draft);
     setDraftId(result.draft_id);
     setReview(null);
-    setStatus("Draft saved. Select Claude, NVIDIA, or combined review.");
+    setStatus("草稿已保存。请选择 Claude、NVIDIA 或组合审核。");
     setPage("drafts");
   }
 
   return (
     <Layout page={page} onPageChange={changePage}>
       {page === "dashboard" && <DashboardPage onNavigate={setPage} />}
+
+      {/* 商品管理 */}
       {page === "import" && (
         <ImportPage
           onImportHtml={importAndReview}
@@ -90,7 +100,7 @@ export function App() {
             setDraft(selectedDraft);
             setDraftId(selectedDraft.id);
             setReview(null);
-            setStatus(`Draft #${selectedDraft.id} selected`);
+            setStatus(`已选择草稿 #${selectedDraft.id}`);
           }}
         />
       )}
@@ -103,6 +113,28 @@ export function App() {
           onReviewInvalidated={() => setReview(null)}
         />
       )}
+
+      {/* 订单管理 */}
+      {page === "orders" && <OrdersPage />}
+
+      {/* 库存管理 */}
+      {page === "inventory" && <InventoryPage />}
+      {page === "warehouse" && <WarehousePage />}
+
+      {/* 采购管理 */}
+      {page === "purchase" && <PurchasePage />}
+
+      {/* 物流管理 */}
+      {page === "logistics" && <LogisticsPage />}
+
+      {/* 客户服务 */}
+      {page === "messages" && <MessagesPage />}
+
+      {/* 财务报表 */}
+      {page === "finance" && <FinancePage />}
+      {page === "reports" && <ReportsPage />}
+
+      {/* 店铺设置 */}
       {page === "stores" && <StoresPage />}
       {page === "audit" && <AuditPage />}
     </Layout>

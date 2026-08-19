@@ -1,4 +1,5 @@
 SITE_CURRENCIES = {
+    "CBT": "USD",  # Cross-Border Trade (全球卖家)
     "MLA": "ARS",
     "MBO": "BOB",
     "MLB": "BRL",
@@ -20,6 +21,7 @@ SITE_CURRENCIES = {
 }
 
 SITE_MARKETPLACE_DOMAINS = {
+    "CBT": "mercadolibre.com",  # Cross-Border Trade 全球站
     "MLA": "mercadolibre.com.ar",
     "MBO": "mercadolibre.com.bo",
     "MLB": "mercadolivre.com.br",

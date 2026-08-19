@@ -13,6 +13,7 @@ from app.services.meli.oauth import (
     build_authorization_url,
     create_state_token,
     get_state_site_id,
+    get_state_code_verifier,
 )
 from app.services.meli.token_vault import upsert_store_token
 from app.services.meli.shipping import list_non_full_shipping_options
@@ -53,7 +54,10 @@ def get_meli_authorization_url(
         )
     normalized_site_id = site_id.strip().upper()
     try:
-        state = create_state_token(settings.token_encryption_key, normalized_site_id)
+        # Generate PKCE code_verifier and embed it in the signed state token
+        import secrets
+        code_verifier = secrets.token_urlsafe(64)
+        state = create_state_token(settings.token_encryption_key, normalized_site_id, code_verifier=code_verifier)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="Unsupported Mercado Libre site.") from exc
     return {
@@ -62,6 +66,7 @@ def get_meli_authorization_url(
             redirect_uri=settings.meli_redirect_uri,
             state=state,
             site_id=normalized_site_id,
+            code_verifier=code_verifier,
         ),
         "site_id": normalized_site_id,
     }
@@ -80,7 +85,8 @@ async def meli_callback(
             status_code=409,
             detail="Mercado Libre application credentials changed during authorization.",
         )
-    token = await create_oauth_client(db).exchange_code(code)
+    code_verifier = get_state_code_verifier(state, settings.token_encryption_key)
+    token = await create_oauth_client(db).exchange_code(code, code_verifier=code_verifier)
     seller_id = str(token.user_id)
     try:
         profile = await create_meli_client(token.access_token).get("/users/me")
@@ -89,17 +95,24 @@ async def meli_callback(
             status_code=502,
             detail="Mercado Libre authorization succeeded but seller site lookup failed.",
         ) from exc
-    site_id = str(profile.get("site_id", "")).strip().upper()
-    if not site_id:
+    profile_site_id = str(profile.get("site_id", "")).strip().upper()
+    if not profile_site_id:
         raise HTTPException(
             status_code=502,
             detail="Mercado Libre seller profile did not include a site_id.",
         )
-    if site_id != expected_site_id:
-        raise HTTPException(
-            status_code=409,
-            detail="Authorized seller site does not match the requested site.",
-        )
+    # CBT (全球卖家/跨境店) 特殊处理：
+    # 全球卖家授权后，/users/me 返回的是本土站影子用户的 site_id（如 MLM），不是 CBT。
+    # 如果请求的是 CBT，且返回了有效的本土站 site_id，也接受，使用 CBT 作为站点。
+    if expected_site_id == "CBT":
+        site_id = "CBT"
+    else:
+        site_id = profile_site_id
+        if site_id != expected_site_id:
+            raise HTTPException(
+                status_code=409,
+                detail="Authorized seller site does not match the requested site.",
+            )
     existing = db.query(Store).filter(Store.seller_id == seller_id).one_or_none()
     if existing:
         existing.site_id = site_id

@@ -47,7 +47,7 @@ export function StoresPage() {
     try {
       setStores(await listStores());
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Failed to load stores");
+      setStatus(error instanceof Error ? error.message : "加载店铺失败");
     } finally {
       setLoading(false);
     }
@@ -57,17 +57,17 @@ export function StoresPage() {
     const query = new URLSearchParams(window.location.search);
     if (query.get("meli_auth") === "authorized") {
       setStatus(
-        `Store ${query.get("seller_id") ?? ""} connected successfully for ${query.get("site_id") ?? ""}.`,
+        `店铺 ${query.get("seller_id") ?? ""} 已成功连接到站点 ${query.get("site_id") ?? ""}。`,
       );
       window.history.replaceState({}, "", window.location.pathname);
     }
     void refreshStores();
     void getIntegrationCredentialStatus()
       .then(setCredentialStatus)
-      .catch((error) => setStatus(error instanceof Error ? error.message : "Failed to load credentials"));
+      .catch((error) => setStatus(error instanceof Error ? error.message : "加载凭证失败"));
     void getProviderModelPrices()
       .then(setModelPrices)
-      .catch((error) => setStatus(error instanceof Error ? error.message : "Failed to load model prices"));
+      .catch((error) => setStatus(error instanceof Error ? error.message : "加载模型价格失败"));
   }, []);
 
   useEffect(() => {
@@ -105,9 +105,9 @@ export function StoresPage() {
         claude_api_key: "",
         nvidia_api_key: "",
       });
-      setStatus("Integration credentials updated.");
+      setStatus("集成凭证已更新。");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Failed to update credentials");
+      setStatus(error instanceof Error ? error.message : "更新凭证失败");
     } finally {
       setSavingCredentials(false);
     }
@@ -253,7 +253,7 @@ export function StoresPage() {
         <div className="credential-provider-list">
           <CredentialRow
             icon={<StoreIcon size={18} />}
-            name="Mercado Libre app"
+            name="美客多应用"
             state={credentialStatus?.meli_client_id_configured && credentialStatus.meli_client_secret_configured ? "Configured" : "Not configured"}
             fields={[
               ["Client ID", "meli_client_id"],
@@ -268,7 +268,7 @@ export function StoresPage() {
             icon={<KeyRound size={18} />}
             name="Claude"
             state={credentialStatus?.claude_api_key_configured ? credentialStatus.claude_model : "Not configured"}
-            fields={[["API key", "claude_api_key"]]}
+            fields={[["API Key", "claude_api_key"]]}
             values={credentials}
             onChange={(key, value) => setCredentials((current) => ({ ...current, [key]: value }))}
             onClear={() => clearCredentials({ claude_api_key: "" })}
@@ -278,7 +278,7 @@ export function StoresPage() {
             icon={<KeyRound size={18} />}
             name="NVIDIA"
             state={credentialStatus?.nvidia_api_key_configured ? credentialStatus.nvidia_model : "Not configured"}
-            fields={[["API key", "nvidia_api_key"]]}
+            fields={[["API Key", "nvidia_api_key"]]}
             values={credentials}
             onChange={(key, value) => setCredentials((current) => ({ ...current, [key]: value }))}
             onClear={() => clearCredentials({ nvidia_api_key: "" })}
@@ -377,7 +377,7 @@ function DiagnosticRow({ result, stores }: { result: IntegrationDiagnosticResult
   const ready = result.status === "verified" || result.status === "configured";
   const store = result.store_id ? stores.find((item) => Number(item.id) === result.store_id) : null;
   const label = result.provider === "mercado_libre"
-    ? store?.display_name ?? "Mercado Libre app"
+    ? store?.display_name ?? "美客多应用"
     : result.provider === "claude" ? "Claude" : "NVIDIA";
   return (
     <div className={`diagnostic-result-row ${ready ? "ready" : "blocked"}`}>
@@ -391,28 +391,28 @@ function DiagnosticRow({ result, stores }: { result: IntegrationDiagnosticResult
 
 function diagnosticMessage(result: IntegrationDiagnosticResult) {
   const messages: Record<string, string> = {
-    app_credentials_required: "Application credentials required",
-    app_credentials_incomplete: "Application credentials incomplete",
-    oauth_authorization_required: "Seller authorization required",
+    app_credentials_required: "需要配置应用凭证",
+    app_credentials_incomplete: "应用凭证不完整",
+    oauth_authorization_required: "需要卖家授权",
     authorized_store_available: "Application configured",
-    connected_store_verification_failed: "No connected store could be verified",
-    api_key_required: "API key required",
+    connected_store_verification_failed: "无法验证已连接店铺",
+    api_key_required: "需要 API Key",
     credentials_valid_model_available: `${result.model} available`,
     configured_model_not_available: `${result.model} unavailable`,
-    provider_authentication_failed: "Authentication failed",
-    provider_permission_denied: "Permission denied",
-    provider_payment_required: "Payment required",
-    provider_request_rejected: "Request rejected",
-    provider_rate_limited: "Rate limited",
-    provider_unavailable: "Provider unavailable",
-    models_response_invalid: "Invalid provider response",
-    store_not_connected: "Store authorization required",
-    store_token_unavailable: "Store token unavailable",
-    store_reauthorization_required: "Store authorization expired",
-    token_refresh_response_invalid: "Invalid token refresh response",
-    store_identity_mismatch: "Seller identity mismatch",
-    seller_profile_invalid: "Invalid seller profile",
-    store_identity_verified: "Seller identity verified",
+    provider_authentication_failed: "认证失败",
+    provider_permission_denied: "权限不足",
+    provider_payment_required: "需付费",
+    provider_request_rejected: "请求被拒绝",
+    provider_rate_limited: "速率限制",
+    provider_unavailable: "服务不可用",
+    models_response_invalid: "服务响应无效",
+    store_not_connected: "需要店铺授权",
+    store_token_unavailable: "店铺 Token 不可用",
+    store_reauthorization_required: "店铺授权已过期",
+    token_refresh_response_invalid: "Token 刷新响应无效",
+    store_identity_mismatch: "卖家身份不匹配",
+    seller_profile_invalid: "卖家资料无效",
+    store_identity_verified: "卖家身份已验证",
   };
   return messages[result.code] ?? result.code;
 }
