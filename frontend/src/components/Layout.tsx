@@ -29,7 +29,8 @@ const menuGroups = [
     items: [
       { id: "import", label: "商品采集", icon: Upload },
       { id: "drafts", label: "商品草稿", icon: FileText },
-      { id: "publishing", label: "刊登任务", icon: Send },
+      { id: "products", label: "店铺商品", icon: Package },
+      { id: "publishing", label: "刊登中心", icon: Send },
     ],
   },
   {

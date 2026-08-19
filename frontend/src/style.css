@@ -1627,11 +1627,23 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .cbt-offer-row > strong { margin-bottom: 10px; }
 .cbt-offer-row label { margin: 0; }
 .cbt-attributes { margin-top: 14px; }
+.product-filter-bar { display: flex; align-items: end; gap: 12px; margin-bottom: 16px; padding: 16px; }
+.product-filter-bar label { margin: 0; min-width: 220px; }
+.product-filter-bar label svg { vertical-align: middle; margin-right: 6px; color: #ea580c; }
+.product-search { flex: 1; min-width: 260px !important; display: flex; align-items: center; border: 1px solid #dfe5ea; padding: 0 10px; border-radius: 6px; }
+.product-search input { border: 0; padding-left: 4px; }
+.store-product-title { display: flex; align-items: center; gap: 9px; min-width: 250px; }
+.store-product-title img { width: 42px; height: 42px; object-fit: cover; border: 1px solid #e6eaee; border-radius: 5px; }
+.store-products-table { overflow-x: auto; }
+.table-pagination { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-top: 1px solid #e7ebef; color: #697586; font-size: 13px; }
+.table-pagination div { display: flex; gap: 8px; }
 @media (max-width: 900px) {
   .cbt-market-grid { grid-template-columns: 1fr; }
   .cbt-offer-row { grid-template-columns: 22px 1fr; }
   .cbt-offer-row label { grid-column: 1 / -1; }
   .page-header-actions { align-items: flex-end; flex-direction: column; }
+  .product-filter-bar { align-items: stretch; flex-direction: column; }
+  .product-filter-bar label { width: 100%; }
 }
 
 /* 使用指南 */

@@ -15,6 +15,7 @@ import { LogisticsPage } from "./pages/LogisticsPage";
 import { FinancePage } from "./pages/FinancePage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { MessagesPage } from "./pages/MessagesPage";
+import { StoreProductsPage } from "./pages/StoreProductsPage";
 
 export function App() {
   const [draft, setDraft] = useState<ProductDraft | null>(null);
@@ -104,6 +105,7 @@ export function App() {
           }}
         />
       )}
+      {page === "products" && <StoreProductsPage />}
       {page === "publishing" && (
         <PublishingPage
           draft={draft}

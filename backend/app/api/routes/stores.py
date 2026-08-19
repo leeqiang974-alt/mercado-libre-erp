@@ -197,6 +197,80 @@ async def get_cbt_publishing_profile(
     return profile
 
 
+@router.get("/{store_id}/items")
+async def list_store_items(
+    store_id: int,
+    limit: int = Query(default=30, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    search: str = Query(default="", max_length=200),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """List real seller items without exposing store credentials to the browser."""
+    store = db.get(Store, store_id)
+    if store is None:
+        raise HTTPException(status_code=404, detail="Store not found.")
+    if store.oauth_status != "connected":
+        raise HTTPException(status_code=409, detail="Store is not connected.")
+    try:
+        access_token = await resolve_fresh_store_access_token(
+            db=db,
+            store=store,
+            encryption_key=settings.token_encryption_key,
+            oauth_client=create_oauth_client(db),
+        )
+        if not access_token:
+            raise HTTPException(status_code=409, detail="Store access token is unavailable.")
+        client = create_meli_client(access_token)
+        query = f"limit={limit}&offset={offset}"
+        if search.strip():
+            query += f"&search={httpx.QueryParams({'search': search.strip()})['search']}"
+        result = await client.get(f"/users/{store.seller_id}/items/search?{query}")
+        if not isinstance(result, dict) or not isinstance(result.get("results"), list):
+            raise ValueError("invalid_item_search_response")
+        item_ids = [str(item).strip() for item in result["results"] if str(item).strip()]
+        detail_path = "/marketplace/items/{}" if store.site_id.strip().upper() == "CBT" else "/items/{}"
+        details = await asyncio.gather(
+            *(client.get(detail_path.format(item_id)) for item_id in item_ids),
+            return_exceptions=True,
+        )
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="Mercado Libre store item list is unavailable.") from exc
+
+    items: list[dict[str, object]] = []
+    for item_id, detail in zip(item_ids, details, strict=True):
+        if not isinstance(detail, dict):
+            items.append({"id": item_id, "load_error": True})
+            continue
+        pictures = detail.get("pictures") if isinstance(detail.get("pictures"), list) else []
+        thumbnail = str(detail.get("thumbnail") or "")
+        if not thumbnail and pictures and isinstance(pictures[0], dict):
+            thumbnail = str(pictures[0].get("secure_url") or pictures[0].get("url") or "")
+        items.append({
+            "id": str(detail.get("id") or item_id),
+            "title": str(detail.get("title") or ""),
+            "thumbnail": thumbnail,
+            "status": str(detail.get("status") or ""),
+            "category_id": str(detail.get("category_id") or ""),
+            "price": detail.get("price"),
+            "currency_id": str(detail.get("currency_id") or ""),
+            "available_quantity": detail.get("available_quantity"),
+            "sold_quantity": detail.get("sold_quantity"),
+            "listing_type_id": str(detail.get("listing_type_id") or ""),
+            "permalink": str(detail.get("permalink") or ""),
+        })
+    paging = result.get("paging") if isinstance(result.get("paging"), dict) else {}
+    return {
+        "store_id": store.id,
+        "site_id": store.site_id,
+        "items": items,
+        "total": paging.get("total", 0),
+        "limit": paging.get("limit", limit),
+        "offset": paging.get("offset", offset),
+    }
+
+
 @router.get("/{store_id}/categories/{category_id}/listing-types")
 async def get_store_category_listing_types(
     store_id: int,

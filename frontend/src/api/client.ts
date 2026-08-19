@@ -900,6 +900,31 @@ export async function getCbtPublishingProfile(storeId: number) {
   return response.json() as Promise<CbtPublishingProfile>;
 }
 
+export type StoreItem = {
+  id: string;
+  title?: string;
+  thumbnail?: string;
+  status?: string;
+  category_id?: string;
+  price?: number;
+  currency_id?: string;
+  available_quantity?: number;
+  sold_quantity?: number;
+  listing_type_id?: string;
+  permalink?: string;
+  load_error?: boolean;
+};
+
+export async function listStoreItems(storeId: number, options: { limit?: number; offset?: number; search?: string } = {}) {
+  const params = new URLSearchParams({
+    limit: String(options.limit ?? 30), offset: String(options.offset ?? 0),
+  });
+  if (options.search?.trim()) params.set("search", options.search.trim());
+  const response = await fetch(`${API_BASE}/api/stores/${storeId}/items?${params}`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<{ store_id: number; site_id: string; items: StoreItem[]; total: number; limit: number; offset: number }>;
+}
+
 export async function getStoreCategoryListingTypes(storeId: number, categoryId: string) {
   const response = await fetch(
     `${API_BASE}/api/stores/${storeId}/categories/${encodeURIComponent(categoryId)}/listing-types`,
