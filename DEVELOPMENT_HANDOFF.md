@@ -3,6 +3,17 @@
 This file is the handoff brief for the next developer or coding agent.
 Read it together with `AGENTS.md` before changing code.
 
+## Global Selling Price References
+
+- For this CBT store, `/marketplace/benchmarks/items/{CBT_ITEM}/details` returns
+  `400 Invalid site id for item`. Price references are issued for active market
+  child items (for example `MLB...`) under the remote marketplace shadow seller,
+  not for a CBT parent item. Query `/marketplace/users/{CBT_SELLER}` first and
+  use each Remote marketplace `user_id` with `/marketplace/benchmarks/user/{USER_ID}/items`.
+- The list response is not a parent-item mapping. Build and persist an explicit
+  CBT-parent to market-child mapping before showing a price reference in the
+  parent-item table. Do not treat an empty benchmark as zero fees or zero profit.
+
 ## Product Truth
 
 This repository is an in-progress MVP for an Amazon-to-Mercado Libre listing

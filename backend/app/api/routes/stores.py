@@ -277,6 +277,106 @@ async def list_store_items(
     }
 
 
+@router.get("/{store_id}/items/{item_id}/price-reference")
+async def get_store_item_price_reference(
+    store_id: int,
+    item_id: str,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Read Mercado Libre's optional price benchmark for one CBT item.
+
+    A 404 is a documented normal outcome: Mercado Libre only produces a
+    benchmark for eligible items.  It must not be presented as a zero-cost
+    quote or a backend failure in the operator UI.
+    """
+    store = db.get(Store, store_id)
+    if store is None:
+        raise HTTPException(status_code=404, detail="Store not found.")
+    if store.site_id.strip().upper() != "CBT":
+        raise HTTPException(status_code=422, detail="Price references are currently available for CBT Global Selling stores only.")
+    if store.oauth_status != "connected":
+        raise HTTPException(status_code=409, detail="Store is not connected.")
+    normalized_item_id = item_id.strip().upper()
+    if not normalized_item_id.startswith("CBT"):
+        raise HTTPException(status_code=422, detail="Price reference lookup starts from a CBT parent item.")
+
+    try:
+        access_token = await resolve_fresh_store_access_token(
+            db=db,
+            store=store,
+            encryption_key=settings.token_encryption_key,
+            oauth_client=create_oauth_client(db),
+        )
+        if not access_token:
+            raise HTTPException(status_code=409, detail="Store access token is unavailable.")
+        result = await create_meli_client(access_token).get(
+            f"/marketplace/benchmarks/items/{normalized_item_id}/details"
+        )
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 400:
+            return {
+                "store_id": store.id,
+                "item_id": normalized_item_id,
+                "availability": "unavailable",
+                "reason": "requires_marketplace_child_item",
+                "message": "Price references apply to active marketplace child items, not directly to the CBT parent item.",
+            }
+        if exc.response.status_code == 404:
+            return {
+                "store_id": store.id,
+                "item_id": normalized_item_id,
+                "availability": "unavailable",
+                "reason": "official_no_reference",
+                "message": "Mercado Libre has not provided a price reference for this item.",
+            }
+        if exc.response.status_code in {403, 412}:
+            return {
+                "store_id": store.id,
+                "item_id": normalized_item_id,
+                "availability": "unavailable",
+                "reason": "not_eligible_or_not_authorized",
+                "message": "Mercado Libre did not make a price reference available for this item.",
+            }
+        raise HTTPException(status_code=502, detail="Mercado Libre price reference is unavailable.") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Mercado Libre price reference is unavailable.") from exc
+
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=502, detail="Mercado Libre returned an invalid price reference.")
+    current_price = result.get("current_price") if isinstance(result.get("current_price"), dict) else {}
+    suggested_price = result.get("suggested_price") if isinstance(result.get("suggested_price"), dict) else {}
+    estimated_taxes = result.get("estimated_taxes") if isinstance(result.get("estimated_taxes"), dict) else {}
+    costs = result.get("costs") if isinstance(result.get("costs"), dict) else {}
+    cost_values = [costs.get("selling_fees"), costs.get("shipping_fees"), estimated_taxes.get("amount")]
+    can_estimate_after_reference_costs = isinstance(current_price.get("amount"), (int, float)) and all(
+        isinstance(value, (int, float)) for value in cost_values
+    )
+    estimated_after_reference_costs = (
+        float(current_price["amount"]) - sum(float(value) for value in cost_values)
+        if can_estimate_after_reference_costs
+        else None
+    )
+    return {
+        "store_id": store.id,
+        "item_id": str(result.get("item_id") or normalized_item_id),
+        "availability": "available",
+        "status": str(result.get("status") or ""),
+        "currency_id": str(result.get("currency_id") or ""),
+        "current_price": current_price,
+        "suggested_price": suggested_price,
+        "lowest_price": result.get("lowest_price") if isinstance(result.get("lowest_price"), dict) else {},
+        "estimated_taxes": estimated_taxes,
+        "selling_fees": costs.get("selling_fees"),
+        "shipping_fees": costs.get("shipping_fees"),
+        "percent_difference": result.get("percent_difference"),
+        "applicable_suggestion": bool(result.get("applicable_suggestion")),
+        "last_updated": str(result.get("last_updated") or ""),
+        "estimated_after_reference_costs": estimated_after_reference_costs,
+    }
+
+
 @router.get("/{store_id}/categories/{category_id}/listing-types")
 async def get_store_category_listing_types(
     store_id: int,

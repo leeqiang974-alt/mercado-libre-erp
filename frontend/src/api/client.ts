@@ -921,6 +921,26 @@ export type StoreItem = {
   load_error?: boolean;
 };
 
+export type StoreItemPriceReference = {
+  store_id: number;
+  item_id: string;
+  availability: "available" | "unavailable";
+  reason?: "official_no_reference" | "not_eligible_or_not_authorized" | "requires_marketplace_child_item";
+  message?: string;
+  status?: string;
+  currency_id?: string;
+  current_price?: { amount?: number; usd_amount?: number };
+  suggested_price?: { amount?: number; usd_amount?: number };
+  lowest_price?: { amount?: number; usd_amount?: number };
+  estimated_taxes?: { amount?: number; usd_amount?: number };
+  selling_fees?: number;
+  shipping_fees?: number;
+  percent_difference?: number;
+  applicable_suggestion?: boolean;
+  last_updated?: string;
+  estimated_after_reference_costs?: number | null;
+};
+
 export async function listStoreItems(storeId: number, options: { limit?: number; offset?: number; search?: string } = {}) {
   const params = new URLSearchParams({
     limit: String(options.limit ?? 30), offset: String(options.offset ?? 0),
@@ -929,6 +949,14 @@ export async function listStoreItems(storeId: number, options: { limit?: number;
   const response = await fetch(`${API_BASE}/api/stores/${storeId}/items?${params}`);
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<{ store_id: number; site_id: string; items: StoreItem[]; total: number; limit: number; offset: number }>;
+}
+
+export async function getStoreItemPriceReference(storeId: number, itemId: string) {
+  const response = await fetch(
+    `${API_BASE}/api/stores/${storeId}/items/${encodeURIComponent(itemId)}/price-reference`,
+  );
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<StoreItemPriceReference>;
 }
 
 export async function getStoreCategoryListingTypes(storeId: number, categoryId: string) {

@@ -342,3 +342,79 @@ def test_store_category_listing_types_reject_cross_site_category(monkeypatch):
 
     assert response.status_code == 422
     assert response.json()["detail"] == "Category site does not match store site."
+
+
+def test_cbt_item_price_reference_returns_official_cost_fields(monkeypatch):
+    client, testing_session = make_client(with_session=True)
+    with testing_session() as db:
+        db.add(Store(site_id="CBT", seller_id="2942677449", display_name="Global", oauth_status="connected"))
+        db.commit()
+
+    async def fresh_token(**kwargs):
+        return "access-token"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/marketplace/benchmarks/items/CBT123/details"
+        return httpx.Response(200, json={
+            "item_id": "CBT123", "status": "with_benchmark_high", "currency_id": "USD",
+            "current_price": {"amount": 100, "usd_amount": 100},
+            "suggested_price": {"amount": 90, "usd_amount": 90},
+            "estimated_taxes": {"amount": 12, "usd_amount": 12},
+            "costs": {"selling_fees": 15, "shipping_fees": 8},
+            "percent_difference": 11.11, "applicable_suggestion": True,
+            "last_updated": "09-12-2025 14:33:36",
+        })
+
+    monkeypatch.setattr(stores, "resolve_fresh_store_access_token", fresh_token)
+    monkeypatch.setattr(stores, "create_meli_client", lambda token: MercadoLibreClient(token, transport=httpx.MockTransport(handler)))
+
+    response = client.get("/api/stores/1/items/CBT123/price-reference")
+
+    assert response.status_code == 200
+    assert response.json()["availability"] == "available"
+    assert response.json()["estimated_after_reference_costs"] == 65.0
+    assert response.json()["selling_fees"] == 15
+
+
+def test_cbt_item_price_reference_treats_documented_404_as_unavailable(monkeypatch):
+    client, testing_session = make_client(with_session=True)
+    with testing_session() as db:
+        db.add(Store(site_id="CBT", seller_id="2942677449", display_name="Global", oauth_status="connected"))
+        db.commit()
+
+    async def fresh_token(**kwargs):
+        return "access-token"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"message": "Item price reference not found"})
+
+    monkeypatch.setattr(stores, "resolve_fresh_store_access_token", fresh_token)
+    monkeypatch.setattr(stores, "create_meli_client", lambda token: MercadoLibreClient(token, transport=httpx.MockTransport(handler)))
+
+    response = client.get("/api/stores/1/items/CBT123/price-reference")
+
+    assert response.status_code == 200
+    assert response.json()["availability"] == "unavailable"
+    assert response.json()["reason"] == "official_no_reference"
+
+
+def test_cbt_parent_price_reference_requires_a_marketplace_child_item(monkeypatch):
+    client, testing_session = make_client(with_session=True)
+    with testing_session() as db:
+        db.add(Store(site_id="CBT", seller_id="2942677449", display_name="Global", oauth_status="connected"))
+        db.commit()
+
+    async def fresh_token(**kwargs):
+        return "access-token"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"message": "Invalid site id for item"})
+
+    monkeypatch.setattr(stores, "resolve_fresh_store_access_token", fresh_token)
+    monkeypatch.setattr(stores, "create_meli_client", lambda token: MercadoLibreClient(token, transport=httpx.MockTransport(handler)))
+
+    response = client.get("/api/stores/1/items/CBT123/price-reference")
+
+    assert response.status_code == 200
+    assert response.json()["availability"] == "unavailable"
+    assert response.json()["reason"] == "requires_marketplace_child_item"
