@@ -72,6 +72,8 @@
 
 ## Work Continuity And Reporting
 
+- A Git commit or push does not deploy this project. Report a frontend or backend change as online only after the server source/static files have been synchronized, migrations (when present) have completed, the backend health endpoint succeeds, and the public HTML references the expected new frontend asset hash.
+- Production deployment must preserve `.env`, `data/`, browser profiles, and PostgreSQL/Redis volumes. Check collection, review, and publish queues for active work before restarting containers; do not use legacy `docker-compose --force-recreate` on this server because its 1.29 runtime can fail with `ContainerConfig` and interrupt stateful containers.
 - Continue implementation through coding, verification, review, and commit. Do not stop after one subsystem while meaningful credential-independent product work remains.
 - Progress reports must distinguish long-lived services, currently executing commands, active review agents, and completed code. Never present container uptime as active development time.
 - Treat queue workers that report zero processed items as idle services, not running tasks, and close completed review agents promptly.
