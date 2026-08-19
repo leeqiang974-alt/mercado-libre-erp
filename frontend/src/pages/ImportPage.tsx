@@ -44,16 +44,16 @@ const JOB_LABELS: Record<CollectionJobRecord["status"], string> = {
 };
 
 const BATCH_LABELS: Record<CollectionBatchResult["items"][number]["outcome"], string> = {
-  created: "Queued",
-  duplicate_input: "Duplicate input",
-  existing: "Already exists",
-  invalid: "Invalid URL",
+  created: "已加入队列",
+  duplicate_input: "重复链接",
+  existing: "已有任务",
+  invalid: "链接无效",
 };
 
 const BATCH_DETAILS: Record<string, string> = {
-  only_public_amazon_product_urls_allowed: "Use a public Amazon product URL",
-  duplicate_amazon_product_in_request: "Same product appears earlier in this batch",
-  collection_job_already_exists: "A collection job already exists",
+  only_public_amazon_product_urls_allowed: "仅支持公开的 Amazon 商品链接",
+  duplicate_amazon_product_in_request: "该商品已在本次导入中",
+  collection_job_already_exists: "该商品已有采集任务",
 };
 
 const AMAZON_DOMAINS = [
@@ -127,7 +127,6 @@ function findVariantCollectionJob(
 
 export function ImportPage({
   onImportHtml,
-  onCollectUrl,
   status,
 }: {
   onImportHtml: (
@@ -137,7 +136,6 @@ export function ImportPage({
     persist: boolean,
     collectionJobId: number | null,
   ) => Promise<void>;
-  onCollectUrl: (sourceUrl: string, targetSiteId: string) => Promise<void>;
   status: string;
 }) {
   const [mode, setMode] = useState<ImportMode>("url");
@@ -232,16 +230,9 @@ export function ImportPage({
   }, [refreshCollectionJobs]);
 
   async function runUrlCollection() {
-    setError("");
-    setBusyAction("collect");
-    try {
-      await onCollectUrl(urlEntries[0], targetSiteId);
-      await refreshCollectionJobs(false);
-    } catch (importError) {
-      setError(importError instanceof Error ? importError.message : "Collection failed");
-    } finally {
-      setBusyAction("");
-    }
+    // Every collection goes through a persisted job so an Amazon challenge has
+    // a visible "HTML snapshot" recovery action instead of leaving the page busy.
+    await queueCollectionJob();
   }
 
   async function runHtmlImport() {
@@ -414,14 +405,14 @@ export function ImportPage({
     <section className="workspace import-workspace">
       <header className="page-header">
         <div>
-          <p className="eyebrow">Source acquisition</p>
-          <h2>Amazon import</h2>
-          <p>Collect product data into a reviewable draft.</p>
+          <p className="eyebrow">商品素材</p>
+          <h2>Amazon 商品采集</h2>
+          <p>采集商品信息、图片和变体，生成可审核的上架草稿。</p>
         </div>
         <button
           className="icon-button"
-          title="Refresh collection queue"
-          aria-label="Refresh collection queue"
+          title="刷新采集任务"
+          aria-label="刷新采集任务"
           disabled={isBusy}
           onClick={() => void refreshCollectionJobs()}
         >
@@ -429,14 +420,14 @@ export function ImportPage({
         </button>
       </header>
 
-      <div className="import-mode-switch" role="tablist" aria-label="Amazon import method">
+      <div className="import-mode-switch" role="tablist" aria-label="Amazon 采集方式">
         <button
           role="tab"
           aria-selected={mode === "url"}
           className={mode === "url" ? "selected" : ""}
           onClick={() => setMode("url")}
         >
-          <Link2 size={17} /> URL collector
+          <Link2 size={17} /> 链接采集
         </button>
         <button
           role="tab"
@@ -444,14 +435,14 @@ export function ImportPage({
           className={mode === "html" ? "selected" : ""}
           onClick={() => setMode("html")}
         >
-          <FileCode2 size={17} /> HTML snapshot
+          <FileCode2 size={17} /> HTML 快照
         </button>
       </div>
 
       <section className="surface import-source">
         <div className="form-grid two-col">
           <label>
-            {mode === "url" ? "Amazon product URLs" : "Amazon product URL"}
+            {mode === "url" ? "Amazon 商品链接" : "Amazon 商品链接"}
             {mode === "url" ? (
               <textarea
                 className="batch-url-input"
@@ -475,7 +466,7 @@ export function ImportPage({
             )}
           </label>
           <label>
-            Target Mercado Libre site
+            目标美客多站点
             <select
               value={targetSiteId}
               onChange={(event) => {
@@ -497,11 +488,11 @@ export function ImportPage({
           <>
             <div className="inline-warning import-warning">
               <AlertTriangle size={17} />
-              <span>Amazon challenges are stopped and moved to manual snapshot handling.</span>
+              <span>采集任务会自动运行；如 Amazon 返回验证页或内容不完整，请在任务中点击“HTML 快照”继续。</span>
             </div>
             <div className="batch-options">
               <span className={urlEntries.length > 100 ? "error" : ""}>
-                {urlEntries.length} / 100 URLs
+                {urlEntries.length} / 100 条链接
               </span>
               <label className="check-row">
                 <input
@@ -512,13 +503,13 @@ export function ImportPage({
                     setBatchResult(null);
                   }}
                 />
-                Queue previously imported URLs again
+                允许再次采集已有链接
               </label>
             </div>
             <div className="button-row">
               <button disabled={urlEntries.length !== 1 || isBusy} onClick={runUrlCollection}>
-                {busyAction === "collect" ? <LoaderCircle className="spin" size={17} /> : <Play size={17} />}
-                Collect now
+                {busyAction === "queue" ? <LoaderCircle className="spin" size={17} /> : <Play size={17} />}
+                开始采集
               </button>
               <button
                 className="secondary-button"
@@ -526,15 +517,15 @@ export function ImportPage({
                 onClick={queueCollectionJob}
               >
                 {busyAction === "queue" ? <LoaderCircle className="spin" size={17} /> : <ListPlus size={17} />}
-                {urlEntries.length > 1 ? `Add ${urlEntries.length} to queue` : "Add to queue"}
+                {urlEntries.length > 1 ? `加入 ${urlEntries.length} 个采集任务` : "加入采集队列"}
               </button>
               <label className={`secondary-button file-picker ${isBusy ? "disabled" : ""}`}>
                 <Upload size={17} />
-                {importFile?.name ?? "Choose CSV/XLSX"}
+                {importFile?.name ?? "选择 CSV/XLSX"}
                 <input
                   type="file"
                   accept=".csv,.xlsx"
-                  aria-label="Choose CSV or XLSX file"
+                  aria-label="选择 CSV 或 XLSX 文件"
                   disabled={isBusy}
                   onChange={(event) => {
                     setImportFile(event.target.files?.[0] ?? null);
@@ -549,16 +540,16 @@ export function ImportPage({
                 onClick={queueCollectionFile}
               >
                 {busyAction === "file" ? <LoaderCircle className="spin" size={17} /> : <FilePlus2 size={17} />}
-                Import file
+                导入文件
               </button>
             </div>
             {batchResult && (
               <div className="batch-result" aria-live="polite">
                 <div className="batch-result-summary">
-                  <strong>{batchResult.created_count} queued</strong>
-                  <span>{batchResult.existing_count} existing</span>
-                  <span>{batchResult.duplicate_count} duplicates</span>
-                  <span>{batchResult.invalid_count} invalid</span>
+                  <strong>{batchResult.created_count} 个已加入队列</strong>
+                  <span>{batchResult.existing_count} 个已有任务</span>
+                  <span>{batchResult.duplicate_count} 个重复</span>
+                  <span>{batchResult.invalid_count} 个无效</span>
                 </div>
                 <div className="batch-result-list">
                   {batchResult.items.map((item, index) => (
@@ -569,7 +560,7 @@ export function ImportPage({
                       </strong>
                       <small>
                         {item.job
-                          ? `Job #${item.job.id}`
+                          ? `任务 #${item.job.id}`
                           : BATCH_DETAILS[item.detail] || item.detail}
                       </small>
                     </div>
@@ -581,10 +572,10 @@ export function ImportPage({
         ) : (
           <>
             <label>
-              Amazon HTML snapshot
+              Amazon 页面 HTML 快照
               <textarea
                 className="snapshot-input"
-                placeholder="Paste the saved Amazon product page HTML"
+                placeholder="粘贴已保存的 Amazon 商品详情页 HTML 源码"
                 value={html}
                 onChange={(event) => setHtml(event.target.value)}
               />
@@ -597,11 +588,11 @@ export function ImportPage({
                   onChange={(event) => setPersist(event.target.checked)}
                   disabled={snapshotJobId !== null}
                 />
-                {snapshotJobId !== null ? `Resolve job #${snapshotJobId} and save draft` : "Save as product draft"}
+                {snapshotJobId !== null ? `处理任务 #${snapshotJobId} 并保存草稿` : "保存为商品草稿"}
               </label>
               <button disabled={!snapshotUrl.trim() || !html.trim() || isBusy} onClick={runHtmlImport}>
                 {busyAction === "html" ? <LoaderCircle className="spin" size={17} /> : <Upload size={17} />}
-                Import snapshot
+                导入 HTML 快照
               </button>
             </div>
           </>
@@ -614,15 +605,15 @@ export function ImportPage({
       <section className="saved-section" aria-labelledby="collection-queue-title">
         <div className="section-heading">
           <div>
-            <h3 id="collection-queue-title">Collection queue</h3>
-            <p>{displayedCollectionJobs.length} jobs</p>
+            <h3 id="collection-queue-title">采集任务</h3>
+            <p>{displayedCollectionJobs.length} 个任务</p>
           </div>
         </div>
 
         {displayedCollectionJobs.length === 0 ? (
           <div className="empty-state compact-empty">
             <Clock3 size={24} />
-            <strong>No collection jobs</strong>
+            <strong>暂无采集任务</strong>
           </div>
         ) : (
           <div className="collection-job-list">
@@ -661,7 +652,7 @@ export function ImportPage({
                     <span>#{job.id} · {job.target_site_id} · {new Date(job.created_at).toLocaleString()}</span>
                     {isDeferred && (
                       <span className="collection-job-schedule">
-                        Next attempt {new Date(job.next_attempt_at!).toLocaleString()}
+                        下次尝试：{new Date(job.next_attempt_at!).toLocaleString()}
                       </span>
                     )}
                     {job.message && <p>{job.message}</p>}
@@ -673,17 +664,17 @@ export function ImportPage({
                         <div className="source-snapshot-copy">
                           <strong>{job.source_product.title}</strong>
                           <span>
-                            {job.source_product.collection_method === "browser_page" ? "Page collected" : "Operator snapshot"}
+                            {job.source_product.collection_method === "browser_page" ? "页面自动采集" : "人工 HTML 快照"}
                             {job.source_product.brand ? ` · ${job.source_product.brand}` : ""}
                           </span>
                           <span>
                             {job.source_product.source_currency} {job.source_product.source_price ?? "-"}
-                            {` · ${job.source_product.image_count} images`}
-                            {` · ${job.source_product.variant_count} variants`}
+                            {` · ${job.source_product.image_count} 张图片`}
+                            {` · ${job.source_product.variant_count} 个变体`}
                           </span>
                           {!job.source_product.has_snapshot && (
                             <p className="source-unavailable">
-                              {job.source_product.collection_error || "Source details were not captured."}
+                              {job.source_product.collection_error || "未能获取商品页面素材。"}
                             </p>
                           )}
                           {expandedSourceId === job.source_product.id && sourceDetails[job.source_product.id]?.snapshot && (
@@ -716,8 +707,8 @@ export function ImportPage({
                               )}
                               <div className="source-variant-heading">
                                 <span>
-                                  <strong>Variants</strong>
-                                  <small>{missingVariantCount} missing collections</small>
+                                  <strong>变体</strong>
+                                  <small>{missingVariantCount} 个待采集</small>
                                 </span>
                                 <button
                                   className="icon-text-button"
@@ -733,10 +724,10 @@ export function ImportPage({
                                     <ListPlus size={14} />
                                   )}
                                   {variantBatchResult
-                                    ? `${variantBatchResult.created_count} queued · ${variantBatchResult.reused_count} existing`
-                                    : missingVariantCount > 0
-                                      ? `Collect ${missingVariantCount} missing`
-                                      : "All variants queued"}
+                                      ? `${variantBatchResult.created_count} 个已加入 · ${variantBatchResult.reused_count} 个已有`
+                                      : missingVariantCount > 0
+                                        ? `采集其余 ${missingVariantCount} 个`
+                                        : "所有变体已加入队列"}
                                 </button>
                               </div>
                               <div className="source-variant-list">
@@ -769,11 +760,11 @@ export function ImportPage({
                                         )}
                                         {variantJob
                                           ? `${JOB_LABELS[variantJob.status]} #${variantJob.id}`
-                                          : "Collect variant"}
+                                          : "采集该变体"}
                                       </button>
                                     )}
                                     {variant.selected && job.draft_id ? (
-                                      <span className="record-id">Draft #{job.draft_id}</span>
+                                      <span className="record-id">草稿 #{job.draft_id}</span>
                                     ) : variant.selected ? (
                                       <button
                                         className="icon-text-button"
@@ -790,11 +781,11 @@ export function ImportPage({
                                           <FilePlus2 size={14} />
                                         )}
                                         {variantDraftIds[`${job.source_product!.id}:${variant.asin}:${job.target_site_id}`]
-                                          ? `Draft #${variantDraftIds[`${job.source_product!.id}:${variant.asin}:${job.target_site_id}`]}`
-                                          : `Create ${job.target_site_id} draft`}
+                                          ? `草稿 #${variantDraftIds[`${job.source_product!.id}:${variant.asin}:${job.target_site_id}`]}`
+                                          : `创建 ${job.target_site_id} 草稿`}
                                       </button>
                                     ) : variantJob?.status === "completed" && variantJob.draft_id ? (
-                                      <span className="record-id">Draft #{variantJob.draft_id}</span>
+                                      <span className="record-id">草稿 #{variantJob.draft_id}</span>
                                     ) : null}
                                   </span>
                                   );
@@ -807,7 +798,7 @@ export function ImportPage({
                     )}
                   </div>
                   <div className="collection-job-actions">
-                    {job.draft_id && <span className="record-id">Draft #{job.draft_id}</span>}
+                    {job.draft_id && <span className="record-id">草稿 #{job.draft_id}</span>}
                     {job.source_product?.has_snapshot && (
                       <button
                         className="secondary-button"
@@ -819,7 +810,7 @@ export function ImportPage({
                         ) : (
                           <Search size={16} />
                         )}
-                        {expandedSourceId === job.source_product.id ? "Close source" : "Review source"}
+                        {expandedSourceId === job.source_product.id ? "收起素材" : "查看素材"}
                       </button>
                     )}
                     {needsSnapshot && (
@@ -828,7 +819,7 @@ export function ImportPage({
                         disabled={isBusy}
                         onClick={() => useSnapshotFallback(job)}
                       >
-                        <FileCode2 size={16} /> Snapshot
+                        <FileCode2 size={16} /> HTML 快照
                       </button>
                     )}
                     {canRun && !needsSnapshot && (
@@ -844,7 +835,7 @@ export function ImportPage({
                         ) : (
                           <Play size={16} />
                         )}
-                        {job.status === "failed" ? "Retry" : "Run"}
+                        {job.status === "failed" ? "重新采集" : "立即执行"}
                       </button>
                     )}
                   </div>

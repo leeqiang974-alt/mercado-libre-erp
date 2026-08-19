@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Layout } from "./components/Layout";
-import { importAmazonHtml, importAmazonUrl, type ProductDraft } from "./api/client";
+import { importAmazonHtml, type ProductDraft } from "./api/client";
 import { ImportPage } from "./pages/ImportPage";
 import { DraftsPage } from "./pages/DraftsPage";
 import { PublishingPage } from "./pages/PublishingPage";
@@ -61,22 +61,6 @@ export function App() {
     setPage("drafts");
   }
 
-  async function collectUrlAndReview(sourceUrl: string, targetSiteId: string) {
-    setStatus("正在采集 Amazon 页面");
-    const result = await importAmazonUrl(sourceUrl, targetSiteId);
-    if (result.status !== "collected" || !result.draft) {
-      setStatus(result.message);
-      setDraft(null);
-      setReview(null);
-      return;
-    }
-    setDraft(result.draft);
-    setDraftId(result.draft_id);
-    setReview(null);
-    setStatus("草稿已保存。请选择 Claude、NVIDIA 或组合审核。");
-    setPage("drafts");
-  }
-
   return (
     <Layout page={page} onPageChange={changePage}>
       {page === "dashboard" && <DashboardPage onNavigate={setPage} />}
@@ -85,7 +69,6 @@ export function App() {
       {page === "import" && (
         <ImportPage
           onImportHtml={importAndReview}
-          onCollectUrl={collectUrlAndReview}
           status={status}
         />
       )}
