@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from enum import Enum
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import DateTime, Enum as SqlEnum, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -25,7 +25,16 @@ class CollectionJob(Base):
     source_url: Mapped[str] = mapped_column(Text)
     source_identity: Mapped[str | None] = mapped_column(String(256), nullable=True)
     target_site_id: Mapped[str] = mapped_column(String(8), default="MLM")
-    status: Mapped[CollectionJobStatus] = mapped_column(default=CollectionJobStatus.PENDING)
+    # The migration stores this as VARCHAR, so do not ask PostgreSQL for a
+    # native enum type that is not present in existing deployments.
+    status: Mapped[CollectionJobStatus] = mapped_column(
+        SqlEnum(
+            CollectionJobStatus,
+            native_enum=False,
+            values_callable=lambda enum_type: [item.value for item in enum_type],
+        ),
+        default=CollectionJobStatus.PENDING,
+    )
     message: Mapped[str] = mapped_column(Text, default="")
     source_product_id: Mapped[int | None] = mapped_column(
         ForeignKey("source_products.id"), nullable=True
