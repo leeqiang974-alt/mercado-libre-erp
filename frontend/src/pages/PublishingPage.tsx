@@ -54,6 +54,7 @@ import {
   type SystemReadiness,
 } from "../api/client";
 import { currencyForSite, MERCADO_LIBRE_SITES } from "../domain/sites";
+import { CbtGlobalPublishingPanel } from "./CbtGlobalPublishingPanel";
 
 const COMMERCIAL_TYPES = [
   { id: "gold_special", label: "Classic", note: "Lower fee, standard visibility" },
@@ -122,6 +123,9 @@ export function PublishingPage({
   onDraftChange: (draft: ProductDraft) => void;
   onReviewInvalidated: () => void;
 }) {
+  const [publishingModel, setPublishingModel] = useState<"local" | "cbt">(
+    draft?.target_site_id === "CBT" ? "cbt" : "local",
+  );
   const [siteId, setSiteId] = useState(draft?.target_site_id ?? "MLM");
   const [listingTypes, setListingTypes] = useState<string[]>([]);
   const [listingTypesVerified, setListingTypesVerified] = useState(false);
@@ -1026,6 +1030,16 @@ export function PublishingPage({
     );
   }
 
+  if (publishingModel === "cbt") {
+    return <CbtGlobalPublishingPanel
+      draft={draft}
+      draftId={draftId}
+      onDraftChange={onDraftChange}
+      onReviewInvalidated={onReviewInvalidated}
+      onBack={() => setPublishingModel("local")}
+    />;
+  }
+
   const configReady = Boolean(
     savedConfig
       && savedConfig.site_id === siteId
@@ -1054,7 +1068,7 @@ export function PublishingPage({
           <h2>Publish workspace</h2>
           <p>{draft.title}</p>
         </div>
-        <span className="record-id">Draft #{draftId}</span>
+        <div className="page-header-actions"><button className="secondary-button" onClick={() => setPublishingModel("cbt")}>跨境店刊登（CBT）</button><span className="record-id">Draft #{draftId}</span></div>
       </header>
 
       <div className="publish-progress">

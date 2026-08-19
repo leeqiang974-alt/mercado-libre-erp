@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
@@ -23,6 +25,7 @@ from app.services.meli.metadata_cache import (
     available_listing_types_key,
     upsert_cached_metadata,
 )
+from app.services.meli.cbt import normalize_cbt_profile
 
 router = APIRouter(prefix="/api/stores", tags=["stores"])
 settings = get_settings()
@@ -156,6 +159,42 @@ def list_stores(db: Session = Depends(get_db)) -> list[dict[str, str]]:
         }
         for store in db.query(Store).order_by(Store.id.desc()).all()
     ]
+
+
+@router.get("/{store_id}/cbt-publishing-profile")
+async def get_cbt_publishing_profile(
+    store_id: int, db: Session = Depends(get_db)
+) -> dict[str, object]:
+    """Read the actual Global Selling publishing model and enabled markets."""
+    store = db.get(Store, store_id)
+    if store is None:
+        raise HTTPException(status_code=404, detail="Store not found.")
+    if store.site_id.strip().upper() != "CBT":
+        raise HTTPException(status_code=422, detail="This endpoint is only for CBT Global Selling stores.")
+    if store.oauth_status != "connected":
+        raise HTTPException(status_code=409, detail="Store is not connected.")
+    try:
+        access_token = await resolve_fresh_store_access_token(
+            db=db,
+            store=store,
+            encryption_key=settings.token_encryption_key,
+            oauth_client=create_oauth_client(db),
+        )
+        if not access_token:
+            raise HTTPException(status_code=409, detail="Store access token is unavailable.")
+        client = create_meli_client(access_token)
+        user, marketplaces, capacity = await asyncio.gather(
+            client.get(f"/users/{store.seller_id}"),
+            client.get(f"/marketplace/users/{store.seller_id}"),
+            client.get("/marketplace/users/cap"),
+        )
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Global Selling store profile is unavailable.") from exc
+    profile = normalize_cbt_profile(store.seller_id, user, marketplaces, capacity)
+    profile["store_id"] = store.id
+    return profile
 
 
 @router.get("/{store_id}/categories/{category_id}/listing-types")

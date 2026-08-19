@@ -16,6 +16,7 @@ from app.models.publish_job import PublishJob, PublishJobStatus
 from app.models.product_draft import ProductDraft
 from app.models.store import Store
 from app.schemas.drafts import ProductDraftCreate
+from app.schemas.cbt_listing_config import CbtListingConfigUpsert
 from app.schemas.publishing import (
     ListingChoice,
     PublishBatchEnqueueRequest,
@@ -31,6 +32,7 @@ from app.schemas.publishing import (
 from app.schemas.reviews import ReviewResponse
 from app.services.draft_approvals import is_product_draft_approved
 from app.services.draft_listing_configs import build_configured_draft
+from app.services.cbt_listing_configs import get_cbt_listing_config
 from app.services.integration_credentials import resolve_integration_credentials
 from app.services.audit_events import create_audit_event
 from app.services.meli.client import MercadoLibreClient
@@ -44,6 +46,7 @@ from app.services.meli.publisher import (
     validate_publish_request,
     validate_store_delivery,
 )
+from app.services.meli.payload_builder import build_cbt_global_item_payload
 from app.services.meli.listing_type_validation import validate_store_category_listing_type
 from app.services.meli.shipping import find_non_full_shipping_selection
 from app.services.meli.token_vault import resolve_fresh_store_access_token
@@ -94,6 +97,58 @@ class PublishFromDraftPreviewRequest(BaseModel):
 
 class PublishFromDraftExecuteRequest(PublishFromDraftPreviewRequest):
     store_id: int
+
+
+class CbtPublishPreview(BaseModel):
+    allowed: bool
+    errors: list[str] = []
+    payload: dict | None = None
+
+
+@router.post("/cbt/preview-from-draft", response_model=CbtPublishPreview)
+def preview_cbt_publish_from_draft(
+    product_draft_id: int,
+    db: Session = Depends(get_db),
+) -> CbtPublishPreview:
+    config = get_cbt_listing_config(db, product_draft_id)
+    draft = db.get(ProductDraft, product_draft_id)
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Product draft not found.")
+    store = db.get(Store, config.store_id)
+    errors: list[str] = []
+    if store is None or store.site_id.strip().upper() != "CBT" or store.oauth_status != "connected":
+        errors.append("connected_cbt_store_required")
+    raw_config = {
+        "store_id": config.store_id,
+        "category_id": config.category_id,
+        "family_name": config.family_name,
+        "global_title": config.global_title,
+        "description": config.description,
+        "price_usd": config.price_usd,
+        "available_quantity": config.available_quantity,
+        "attributes": config.attributes_json or [],
+        "sale_terms": config.sale_terms_json or [],
+        "sites_to_sell": config.sites_to_sell_json or [],
+    }
+    try:
+        payload = build_cbt_global_item_payload(
+            ProductDraftCreate(
+                title=draft.title,
+                description=draft.description,
+                brand=draft.brand,
+                target_site_id="CBT",
+                target_category_id=config.category_id,
+                price=config.price_usd,
+                currency="USD",
+                stock=config.available_quantity,
+                image_urls=draft.image_urls_json or [],
+            ),
+            CbtListingConfigUpsert.model_validate(raw_config),
+        )
+    except ValueError as exc:
+        errors.append(str(exc))
+        payload = None
+    return CbtPublishPreview(allowed=not errors, errors=errors, payload=payload)
 
 
 @dataclass(frozen=True)

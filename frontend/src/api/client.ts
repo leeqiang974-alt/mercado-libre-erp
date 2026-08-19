@@ -146,6 +146,50 @@ export type StoreRecord = {
   oauth_status: string;
 };
 
+export type CbtMarketplace = {
+  site_id: string;
+  seller_id: string;
+  logistic_type: string;
+  user_product: boolean;
+  listing_count: number | null;
+  listing_limit: number | null;
+  available: boolean;
+};
+
+export type CbtPublishingProfile = {
+  store_id: number;
+  seller_id: string;
+  site_id: "CBT";
+  model: "traditional_global" | "user_products";
+  tags: string[];
+  marketplaces: CbtMarketplace[];
+};
+
+export type CbtListingConfig = {
+  id: number;
+  product_draft_id: number;
+  store_id: number;
+  category_id: string;
+  family_name: string;
+  global_title: string;
+  description: string;
+  price_usd: number;
+  available_quantity: number;
+  attributes: { id: string; value_name: string; value_id?: string | null }[];
+  sale_terms: { id: string; value_name: string }[];
+  sites_to_sell: {
+    site_id: string;
+    title: string;
+    listing_type_id: "gold_special" | "gold_pro";
+    logistic_type: "remote";
+    picture_urls: string[];
+  }[];
+  draft_content_version: number;
+  draft: ProductDraftRead;
+  created_at: string;
+  updated_at: string;
+};
+
 export type IntegrationCredentialStatus = {
   meli_client_id_configured: boolean;
   meli_client_secret_configured: boolean;
@@ -850,6 +894,12 @@ export async function getStoreShippingOptions(storeId: number) {
   }>;
 }
 
+export async function getCbtPublishingProfile(storeId: number) {
+  const response = await fetch(`${API_BASE}/api/stores/${storeId}/cbt-publishing-profile`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<CbtPublishingProfile>;
+}
+
 export async function getStoreCategoryListingTypes(storeId: number, categoryId: string) {
   const response = await fetch(
     `${API_BASE}/api/stores/${storeId}/categories/${encodeURIComponent(categoryId)}/listing-types`,
@@ -986,6 +1036,33 @@ export async function getDraftListingConfig(productDraftId: number) {
   const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/listing-config?optional=true`);
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<DraftListingConfig | null>;
+}
+
+export async function saveCbtListingConfig(
+  productDraftId: number,
+  payload: Omit<CbtListingConfig, "id" | "product_draft_id" | "draft_content_version" | "draft" | "created_at" | "updated_at">,
+) {
+  const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/cbt-listing-config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<CbtListingConfig>;
+}
+
+export async function getCbtListingConfig(productDraftId: number) {
+  const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/cbt-listing-config?optional=true`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<CbtListingConfig | null>;
+}
+
+export async function previewCbtPublishFromDraft(productDraftId: number) {
+  const response = await fetch(`${API_BASE}/api/publishing/cbt/preview-from-draft?product_draft_id=${productDraftId}`, {
+    method: "POST",
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<{ allowed: boolean; errors: string[]; payload: Record<string, unknown> | null }>;
 }
 
 export async function approveDraft(productDraftId: number, approvedBy = "operator", note = "") {

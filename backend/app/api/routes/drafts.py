@@ -5,6 +5,7 @@ from app.db.session import get_db
 from app.models.product_draft import ProductDraft
 from app.schemas.draft_approvals import DraftApprovalCreate, DraftApprovalRead
 from app.schemas.draft_listing_config import DraftListingConfigRead, DraftListingConfigUpsert
+from app.schemas.cbt_listing_config import CbtListingConfigRead, CbtListingConfigUpsert
 from app.schemas.drafts import ProductDraftContentUpdate, ProductDraftRead
 from app.schemas.attribute_mapping import AttributeSuggestionRead
 from app.schemas.pricing import DraftPricingRead, DraftPricingUpsert
@@ -13,6 +14,11 @@ from app.services.draft_listing_configs import (
     get_draft_listing_config,
     to_listing_config_read,
     upsert_draft_listing_config,
+)
+from app.services.cbt_listing_configs import (
+    get_cbt_listing_config,
+    to_cbt_listing_config_read,
+    upsert_cbt_listing_config,
 )
 from app.services.drafts import list_product_drafts, save_product_draft_content, to_draft_read
 from app.services.draft_pricing import (
@@ -102,6 +108,34 @@ def read_listing_config(
         if draft is None:
             raise HTTPException(status_code=404, detail="Product draft not found.")
         return to_listing_config_read(config, to_draft_read(draft))
+    except HTTPException as exc:
+        if optional and exc.status_code == 404:
+            return None
+        raise
+
+
+@router.put("/{product_draft_id}/cbt-listing-config", response_model=CbtListingConfigRead)
+def save_cbt_listing_config(
+    product_draft_id: int,
+    payload: CbtListingConfigUpsert,
+    db: Session = Depends(get_db),
+) -> CbtListingConfigRead:
+    config, draft = upsert_cbt_listing_config(db, product_draft_id, payload)
+    return to_cbt_listing_config_read(config, draft)
+
+
+@router.get("/{product_draft_id}/cbt-listing-config", response_model=CbtListingConfigRead | None)
+def read_cbt_listing_config(
+    product_draft_id: int,
+    optional: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> CbtListingConfigRead | None:
+    try:
+        config = get_cbt_listing_config(db, product_draft_id)
+        draft = db.get(ProductDraft, product_draft_id)
+        if draft is None:
+            raise HTTPException(status_code=404, detail="Product draft not found.")
+        return to_cbt_listing_config_read(config, draft)
     except HTTPException as exc:
         if optional and exc.status_code == 404:
             return None

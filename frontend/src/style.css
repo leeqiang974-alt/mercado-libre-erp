@@ -1607,6 +1607,33 @@ input[readonly] { background: #eef1f4; color: #52606d; }
   justify-content: center;
 }
 
+/* CBT Global Selling */
+.page-header-actions { display: flex; align-items: center; gap: 10px; }
+.cbt-workspace { max-width: 1240px; }
+.cbt-profile-line, .cbt-image-note { display: flex; align-items: center; gap: 8px; color: #4b5563; font-size: 13px; }
+.cbt-profile-line { margin: 16px 0 12px; }
+.cbt-profile-line strong { color: #1f2937; }
+.cbt-market-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.cbt-market { display: flex; gap: 10px; min-height: 76px; padding: 12px; border: 1px solid #e4e7eb; border-radius: 7px; cursor: pointer; background: #fff; }
+.cbt-market:hover { border-color: #ea580c; background: #fffaf5; }
+.cbt-market.disabled { cursor: not-allowed; color: #9ca3af; background: #fafafa; }
+.cbt-market input { width: auto; margin-top: 2px; }
+.cbt-market span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cbt-market strong { color: #1f2937; }
+.cbt-market small { color: #6b7280; font-size: 12px; }
+.cbt-market em { margin-left: auto; align-self: center; color: #b45309; font-size: 12px; font-style: normal; white-space: nowrap; }
+.cbt-offer-row { display: grid; grid-template-columns: 22px 100px minmax(220px, 1fr) 140px; align-items: end; gap: 12px; padding: 14px 0; border-bottom: 1px solid #edf0f2; }
+.cbt-offer-row > svg { margin-bottom: 9px; color: #ea580c; }
+.cbt-offer-row > strong { margin-bottom: 10px; }
+.cbt-offer-row label { margin: 0; }
+.cbt-attributes { margin-top: 14px; }
+@media (max-width: 900px) {
+  .cbt-market-grid { grid-template-columns: 1fr; }
+  .cbt-offer-row { grid-template-columns: 22px 1fr; }
+  .cbt-offer-row label { grid-column: 1 / -1; }
+  .page-header-actions { align-items: flex-end; flex-direction: column; }
+}
+
 /* 使用指南 */
 .guide-steps {
   display: flex;

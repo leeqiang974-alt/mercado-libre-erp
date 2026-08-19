@@ -1,4 +1,5 @@
 from app.schemas.drafts import ProductDraftCreate
+from app.schemas.cbt_listing_config import CbtListingConfigUpsert
 from app.schemas.publishing import ListingChoice
 
 
@@ -94,3 +95,78 @@ def build_description_payload(draft: ProductDraftCreate) -> dict[str, str]:
     if not description:
         raise ValueError("Description is required.")
     return {"plain_text": description}
+
+
+CBT_REQUIRED_SHIPPING_ATTRIBUTES = {
+    "PACKAGE_HEIGHT",
+    "PACKAGE_LENGTH",
+    "PACKAGE_WIDTH",
+    "PACKAGE_WEIGHT",
+}
+
+
+def build_cbt_global_item_payload(
+    draft: ProductDraftCreate,
+    config: CbtListingConfigUpsert,
+) -> dict:
+    """Build the traditional Global Selling /global/items request body.
+
+    CBT is a parent seller account. Images and offer-specific data deliberately
+    live inside each sites_to_sell entry, rather than at root level as they do
+    for a local /items request.
+    """
+    if not config.category_id.startswith("CBT"):
+        raise ValueError("Global Selling category ID must start with CBT.")
+    if not config.family_name.strip():
+        raise ValueError("family_name is required for a traditional CBT seller.")
+    if not config.description.strip():
+        raise ValueError("Description is required.")
+    if not config.global_title.strip():
+        raise ValueError("Global title is required.")
+    if config.price_usd <= 0:
+        raise ValueError("USD price must be greater than zero.")
+    if config.available_quantity < 1:
+        raise ValueError("Available quantity must be at least one.")
+    if not config.sites_to_sell:
+        raise ValueError("At least one Remote marketplace is required.")
+
+    attributes = [attribute.model_dump(exclude_none=True) for attribute in config.attributes]
+    attribute_ids = {str(attribute.get("id", "")).upper() for attribute in attributes}
+    if "ITEM_CONDITION" not in attribute_ids:
+        raise ValueError("Verified ITEM_CONDITION attribute is required.")
+    missing_shipping = CBT_REQUIRED_SHIPPING_ATTRIBUTES - attribute_ids
+    if missing_shipping:
+        raise ValueError(
+            "CBT package attributes are required: " + ", ".join(sorted(missing_shipping))
+        )
+    if "SELLER_SKU" not in attribute_ids:
+        raise ValueError("SELLER_SKU attribute is required.")
+
+    default_pictures = list(draft.image_urls or [])
+    sites_to_sell: list[dict] = []
+    for offer in config.sites_to_sell:
+        picture_urls = offer.picture_urls or default_pictures
+        if not picture_urls:
+            raise ValueError(f"At least one picture is required for {offer.site_id}.")
+        sites_to_sell.append(
+            {
+                "site_id": offer.site_id,
+                "logistic_type": "remote",
+                "listing_type_id": offer.listing_type_id,
+                "title": offer.title,
+                "pictures": [{"source": url} for url in picture_urls],
+            }
+        )
+
+    return {
+        "title": config.global_title,
+        "family_name": config.family_name,
+        "category_id": config.category_id,
+        "currency_id": "USD",
+        "price": config.price_usd,
+        "available_quantity": config.available_quantity,
+        "description": config.description,
+        "attributes": attributes,
+        "sale_terms": [term.model_dump(exclude_none=True) for term in config.sale_terms],
+        "sites_to_sell": sites_to_sell,
+    }
