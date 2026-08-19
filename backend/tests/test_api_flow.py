@@ -86,11 +86,12 @@ def test_import_review_publish_preview_flow(monkeypatch):
             "source_price": draft["source_price"],
             "source_currency": draft["source_currency"],
             "target_currency": "MXN",
+            "cost_currency": "CNY",
+            "purchase_cost": 100,
+            "domestic_shipping_cost": 10,
             "exchange_rate": 18,
-            "shipping_cost": 40,
-            "platform_fee_rate": 0.15,
             "profit_margin_rate": 0.2,
-            "rounding_increment": 10,
+            "rounding_increment": 1,
         },
     )
     assert priced.status_code == 200

@@ -414,17 +414,12 @@ export type DraftPricingInput = {
   source_price: number;
   source_currency: string;
   target_currency: string;
+  cost_currency: string;
+  purchase_cost: number;
+  domestic_shipping_cost: number;
   exchange_rate: number;
-  purchase_extra_cost: number;
-  shipping_cost: number;
-  platform_fee_rate: number;
-  tax_rate: number;
   profit_margin_rate: number;
   rounding_increment: number;
-  // 步骤式刊登使用的直填字段
-  sale_price?: number;
-  quantity?: number;
-  product_cost_cny?: number;
 };
 
 export type DraftPricing = DraftPricingInput & {
@@ -436,11 +431,6 @@ export type DraftPricing = DraftPricingInput & {
   draft: ProductDraftRead;
   created_at: string;
   updated_at: string;
-  // 步骤式刊登使用的计算结果
-  product_cost_mxn?: number;
-  platform_fee?: number;
-  net_profit?: number;
-  net_margin?: number;
 };
 
 export async function importAmazonHtml(
@@ -600,16 +590,12 @@ export const EMPTY_PRICING: DraftPricingInput = {
   source_price: 0,
   source_currency: "CNY",
   target_currency: "MXN",
-  exchange_rate: 2.4,
-  purchase_extra_cost: 0,
-  shipping_cost: 0,
-  platform_fee_rate: 0.17,
-  tax_rate: 0.16,
+  cost_currency: "CNY",
+  purchase_cost: 0,
+  domestic_shipping_cost: 0,
+  exchange_rate: 1,
   profit_margin_rate: 0.3,
-  rounding_increment: 0,
-  sale_price: 0,
-  quantity: 0,
-  product_cost_cny: 0,
+  rounding_increment: 0.01,
 };
 
 export async function createCollectionJob(sourceUrl: string, targetSiteId: string) {

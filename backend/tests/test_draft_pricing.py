@@ -72,13 +72,12 @@ def test_pricing_is_calculated_saved_and_audited():
         "source_price": 10,
         "source_currency": "usd",
         "target_currency": "mxn",
-        "exchange_rate": 18,
-        "purchase_extra_cost": 20,
-        "shipping_cost": 50,
-        "platform_fee_rate": 0.15,
-        "tax_rate": 0.05,
-        "profit_margin_rate": 0.2,
-        "rounding_increment": 10,
+        "cost_currency": "cny",
+        "purchase_cost": 100,
+        "domestic_shipping_cost": 20,
+        "exchange_rate": 2,
+        "profit_margin_rate": 0.25,
+        "rounding_increment": 1,
     }
 
     response = client.put("/api/drafts/1/pricing", json=payload)
@@ -87,25 +86,28 @@ def test_pricing_is_calculated_saved_and_audited():
     body = response.json()
     assert body["source_currency"] == "USD"
     assert body["target_currency"] == "MXN"
-    assert body["landed_cost"] == 250
-    assert body["target_price"] == 420
+    assert body["cost_currency"] == "CNY"
+    assert body["purchase_cost"] == 100
+    assert body["domestic_shipping_cost"] == 20
+    assert body["landed_cost"] == 240
+    assert body["target_price"] == 300
     assert body["draft_content_version"] == 2
     assert body["draft"]["content_version"] == 2
-    assert body["draft"]["price"] == 420
+    assert body["draft"]["price"] == 300
 
     saved = client.get("/api/drafts/1/pricing")
     assert saved.status_code == 200
-    assert saved.json()["target_price"] == 420
+    assert saved.json()["target_price"] == 300
     assert saved.json()["draft_content_version"] == 2
     assert saved.json()["draft"]["content_version"] == 2
 
     with testing_session() as db:
         draft = db.get(ProductDraft, 1)
-        assert draft.price == 420
+        assert draft.price == 300
         assert draft.currency == "MXN"
         event = db.query(AuditEvent).one()
         assert event.action == "draft_pricing_updated"
-        assert event.after_json["price"] == 420
+        assert event.after_json["price"] == 300
 
 
 def test_existing_pricing_config_update_persists_new_calculation():
@@ -114,6 +116,9 @@ def test_existing_pricing_config_update_persists_new_calculation():
         "source_price": 10,
         "source_currency": "USD",
         "target_currency": "MXN",
+        "cost_currency": "CNY",
+        "purchase_cost": 100,
+        "domestic_shipping_cost": 10,
         "exchange_rate": 18,
         "rounding_increment": 10,
     }
@@ -129,7 +134,7 @@ def test_existing_pricing_config_update_persists_new_calculation():
     assert client.get("/api/drafts/1/pricing").json()["exchange_rate"] == 20
 
 
-def test_pricing_rejects_impossible_rate_total():
+def test_pricing_rejects_marketplace_cost_inputs():
     client, _ = make_client()
 
     response = client.put(
@@ -138,15 +143,16 @@ def test_pricing_rejects_impossible_rate_total():
             "source_price": 10,
             "source_currency": "USD",
             "target_currency": "MXN",
+            "cost_currency": "CNY",
+            "purchase_cost": 100,
+            "domestic_shipping_cost": 10,
             "exchange_rate": 18,
             "platform_fee_rate": 0.5,
-            "tax_rate": 0.2,
-            "profit_margin_rate": 0.3,
         },
     )
 
     assert response.status_code == 422
-    assert "must total less than 100%" in response.text
+    assert "not per-item Global Selling price inputs" in response.text
 
 
 def test_missing_pricing_can_be_read_as_optional():
@@ -164,6 +170,9 @@ def test_pricing_rejects_source_evidence_and_site_currency_changes():
         "source_price": 10,
         "source_currency": "USD",
         "target_currency": "MXN",
+        "cost_currency": "CNY",
+        "purchase_cost": 100,
+        "domestic_shipping_cost": 10,
         "exchange_rate": 18,
     }
 
@@ -220,13 +229,12 @@ def test_persisted_review_rejects_price_tampered_after_pricing_save():
         "source_price": 10,
         "source_currency": "USD",
         "target_currency": "MXN",
-        "exchange_rate": 18,
-        "purchase_extra_cost": 20,
-        "shipping_cost": 50,
-        "platform_fee_rate": 0.15,
-        "tax_rate": 0.05,
+        "cost_currency": "CNY",
+        "purchase_cost": 100,
+        "domestic_shipping_cost": 20,
+        "exchange_rate": 2,
         "profit_margin_rate": 0.2,
-        "rounding_increment": 10,
+        "rounding_increment": 1,
     }
     assert client.put("/api/drafts/1/pricing", json=pricing).status_code == 200
     with testing_session() as db:
@@ -252,6 +260,9 @@ def test_persisted_review_rejects_saved_source_price_drift():
         "source_price": 10,
         "source_currency": "USD",
         "target_currency": "MXN",
+        "cost_currency": "CNY",
+        "purchase_cost": 100,
+        "domestic_shipping_cost": 10,
         "exchange_rate": 18,
         "rounding_increment": 1,
     }

@@ -14,7 +14,7 @@
 2. Collect and review source data, including images, variants, source price/currency, and collection failures.
 3. Choose an authorized Mercado Libre store and its actual site.
 4. Map category, required attributes, condition, stock, listing type (classic/premium), and non-FULL fulfillment.
-5. Apply an explicit cost, exchange-rate, fee, margin, and rounding policy to calculate the target price.
+5. For Global Selling, calculate the target price from operator-confirmed CNY procurement cost, CNY domestic shipping, exchange rate, and intended profit margin. Do not include Mercado Libre marketplace fees, taxes, or international shipment as per-item pricing inputs.
 6. Run Claude planning/review and NVIDIA behavioral/compliance review with provider status visible; local fallback must be labeled as fallback.
 7. Approve, queue, publish, and inspect the returned item id, permalink, and error details.
 
@@ -23,6 +23,7 @@
 - The UI must show integration readiness for Mercado Libre, Claude, NVIDIA, live publishing, database, and workers.
 - Never silently substitute local review for Claude or NVIDIA and present it as provider output.
 - Keep Amazon source currency separate from Mercado Libre target currency; never relabel an unconverted source price.
+- Amazon source price is read-only collection evidence, not an operator procurement cost. Global Selling pricing must use separately confirmed CNY purchase cost and CNY domestic shipping; the formula is `(purchase cost + domestic shipping) * target-currency-per-CNY exchange rate * (1 + intended profit margin)`, rounded up. Marketplace fees, taxes, and Mercado Libre's consolidated international transport must not be exposed as per-item price inputs.
 - Treat Amazon source amount/currency as read-only evidence. A persisted pricing formula must match that evidence, the Mercado Libre site currency, and the current draft target price; enforce this before persisted AI review, preview, queue, retry, worker, and direct execution.
 - FULL fulfillment remains excluded. A site-level listing-type catalog is display metadata only; save and publish gates require fresh `available_listing_types` evidence for the exact authorized seller and category. Recheck the same store/category/type binding in direct execution and publish workers before `/items`.
 - Treat Mercado Libre category attributes as verified only when the cache explicitly records `verified: true`; cache presence, non-empty definitions, and legacy saved configurations must never bypass category validation at save, review, preview, queue, retry, worker, or execute boundaries.

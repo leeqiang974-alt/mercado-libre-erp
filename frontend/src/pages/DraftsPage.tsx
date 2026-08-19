@@ -46,13 +46,12 @@ const EMPTY_PRICING: DraftPricingInput = {
   source_price: 0,
   source_currency: "USD",
   target_currency: "MXN",
+  cost_currency: "CNY",
+  purchase_cost: 0,
+  domestic_shipping_cost: 0,
   exchange_rate: 1,
-  purchase_extra_cost: 0,
-  shipping_cost: 0,
-  platform_fee_rate: 0.15,
-  tax_rate: 0,
   profit_margin_rate: 0.2,
-  rounding_increment: 1,
+  rounding_increment: 0.01,
 };
 
 const MAX_REVIEW_BATCH_SIZE = 50;
@@ -728,36 +727,33 @@ export function DraftsPage({
           <div className="workflow-grid">
             <section className="surface">
               <div className="section-heading">
-                <div><span className="step-number">4</span><h3>价格设置 · {draft.target_site_id}</h3></div>
+                <div><span className="step-number">4</span><h3>售价与利润 · {draft.target_site_id}</h3></div>
                 <span className={`state-pill ${pricingReady ? "ready" : "blocked"}`}>
                   {pricingReady ? "已保存" : "必填"}
                 </span>
               </div>
+              <p className="section-note">只按你的成本和利润定价：采购成本 + 国内运费，再换算为目标站点币种。美客多跨境统一运输不在这里逐商品计费。</p>
               <div className="form-grid three-col">
-                <label>Amazon 成本<input type="number" value={draft.source_price ?? ""} readOnly /></label>
-                <label>成本币种<input value={draft.source_currency} readOnly /></label>
-                <label>汇率<input type="number" min="0" step="0.0001" value={pricing.exchange_rate} onChange={(event) => updatePricing("exchange_rate", event.target.value)} /></label>
-                <label>采购附加成本<input type="number" min="0" step="0.01" value={pricing.purchase_extra_cost} onChange={(event) => updatePricing("purchase_extra_cost", event.target.value)} /></label>
-                <label>运费<input type="number" min="0" step="0.01" value={pricing.shipping_cost} onChange={(event) => updatePricing("shipping_cost", event.target.value)} /></label>
-                <label>目标币种<input value={pricing.target_currency} readOnly /></label>
-                <label>平台费 %<input type="number" min="0" max="99" step="0.1" value={pricing.platform_fee_rate * 100} onChange={(event) => updatePricing("platform_fee_rate", String(Number(event.target.value) / 100))} /></label>
-                <label>税费 %<input type="number" min="0" max="99" step="0.1" value={pricing.tax_rate * 100} onChange={(event) => updatePricing("tax_rate", String(Number(event.target.value) / 100))} /></label>
-                <label>目标利润 %<input type="number" min="0" max="99" step="0.1" value={pricing.profit_margin_rate * 100} onChange={(event) => updatePricing("profit_margin_rate", String(Number(event.target.value) / 100))} /></label>
-                <label>价格取整<input type="number" min="0.01" step="0.01" value={pricing.rounding_increment} onChange={(event) => updatePricing("rounding_increment", event.target.value)} /></label>
+                <label>Amazon 参考价<input value={`${draft.source_currency} ${draft.source_price ?? "未采集"}`} readOnly /></label>
+                <label>实际采购成本（CNY）<input type="number" min="0" step="0.01" value={pricing.purchase_cost || ""} onChange={(event) => updatePricing("purchase_cost", event.target.value)} /></label>
+                <label>国内运费（CNY）<input type="number" min="0" step="0.01" value={pricing.domestic_shipping_cost || ""} onChange={(event) => updatePricing("domestic_shipping_cost", event.target.value)} /></label>
+                <label>期望利润率 %<input type="number" min="0" max="999" step="0.1" value={pricing.profit_margin_rate * 100} onChange={(event) => updatePricing("profit_margin_rate", String(Number(event.target.value) / 100))} /></label>
+                <label>换算汇率（1 CNY =）<input type="number" min="0" step="0.0001" value={pricing.exchange_rate} onChange={(event) => updatePricing("exchange_rate", event.target.value)} /></label>
+                <label>目标售价币种<input value={pricing.target_currency} readOnly /></label>
               </div>
               <div className="action-line">
-                <button disabled={!draftId || contentDirty || pricing.source_price <= 0 || pricing.exchange_rate <= 0 || busy === "pricing"} onClick={calculateAndSavePricing}>
-                  <Calculator size={16} /> 计算并保存价格
+                <button disabled={!draftId || contentDirty || pricing.purchase_cost <= 0 || pricing.exchange_rate <= 0 || busy === "pricing"} onClick={calculateAndSavePricing}>
+                  <Calculator size={16} /> 保存建议售价
                 </button>
                 {pricingResult && (
                   <div className="calculation-result">
-                    <span>落地成本 {pricingResult.target_currency} {pricingResult.landed_cost}</span>
+                    <span>总成本 {pricingResult.cost_currency} {pricingResult.purchase_cost + pricingResult.domestic_shipping_cost}</span>
                     <strong>建议售价 {pricingResult.target_currency} {pricingResult.target_price}</strong>
                   </div>
                 )}
               </div>
               {(!draft.source_price || !draft.source_currency) && (
-                <p className="inline-warning">未采集到 Amazon 原始价格，请重新采集商品页面后再核价。</p>
+                <p className="inline-warning">未采集到 Amazon 参考价，请重新采集商品页面后再保存定价。</p>
               )}
             </section>
 

@@ -11,6 +11,9 @@ class ReviewPricingContext(BaseModel):
     source_price: float
     source_currency: str
     target_currency: str
+    cost_currency: str
+    purchase_cost: float
+    domestic_shipping_cost: float
     exchange_rate: float
     purchase_extra_cost: float
     shipping_cost: float

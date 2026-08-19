@@ -16,17 +16,11 @@ from app.services.meli.sites import expected_currency
 
 
 def calculate_target_price(payload: DraftPricingUpsert) -> tuple[float, float]:
-    source = Decimal(str(payload.source_price))
     exchange = Decimal(str(payload.exchange_rate))
-    extra = Decimal(str(payload.purchase_extra_cost))
-    shipping = Decimal(str(payload.shipping_cost))
-    landed = source * exchange + extra + shipping
-    rate_total = (
-        Decimal(str(payload.platform_fee_rate))
-        + Decimal(str(payload.tax_rate))
-        + Decimal(str(payload.profit_margin_rate))
-    )
-    raw_price = landed / (Decimal("1") - rate_total)
+    purchase_cost = Decimal(str(payload.purchase_cost))
+    domestic_shipping = Decimal(str(payload.domestic_shipping_cost))
+    landed = (purchase_cost + domestic_shipping) * exchange
+    raw_price = landed * (Decimal("1") + Decimal(str(payload.profit_margin_rate)))
     increment = Decimal(str(payload.rounding_increment))
     rounded = (raw_price / increment).to_integral_value(rounding=ROUND_CEILING) * increment
     return float(landed.quantize(Decimal("0.01"))), float(rounded)
@@ -64,6 +58,11 @@ def upsert_draft_pricing(
     effective_formula["source_price"] = draft.source_price
     effective_formula["source_currency"] = draft.source_currency.strip().upper()
     effective_formula["target_currency"] = expected_currency(draft.target_site_id)
+    effective_formula["cost_currency"] = "CNY"
+    effective_formula["purchase_extra_cost"] = 0
+    effective_formula["shipping_cost"] = 0
+    effective_formula["platform_fee_rate"] = 0
+    effective_formula["tax_rate"] = 0
     effective_payload = DraftPricingUpsert(**effective_formula)
     landed_cost, target_price = calculate_target_price(effective_payload)
     for name, value in effective_formula.items():
@@ -133,6 +132,9 @@ def draft_pricing_errors(db: Session, draft: ProductDraft) -> list[str]:
                 source_price=config.source_price,
                 source_currency=config.source_currency,
                 target_currency=config.target_currency,
+                cost_currency=config.cost_currency,
+                purchase_cost=config.purchase_cost,
+                domestic_shipping_cost=config.domestic_shipping_cost,
                 exchange_rate=config.exchange_rate,
                 purchase_extra_cost=config.purchase_extra_cost,
                 shipping_cost=config.shipping_cost,
@@ -197,6 +199,9 @@ def to_pricing_read(config: DraftPricingConfig, draft: ProductDraftRead) -> Draf
         source_price=config.source_price,
         source_currency=config.source_currency,
         target_currency=config.target_currency,
+        cost_currency=config.cost_currency,
+        purchase_cost=config.purchase_cost,
+        domestic_shipping_cost=config.domestic_shipping_cost,
         exchange_rate=config.exchange_rate,
         purchase_extra_cost=config.purchase_extra_cost,
         shipping_cost=config.shipping_cost,

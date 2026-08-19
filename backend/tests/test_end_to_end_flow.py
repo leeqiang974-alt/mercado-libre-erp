@@ -149,11 +149,12 @@ async def test_amazon_to_pre_listing_queue_and_worker_flow(monkeypatch):
             "source_price": imported.json()["draft"]["source_price"],
             "source_currency": imported.json()["draft"]["source_currency"],
             "target_currency": "MXN",
+            "cost_currency": "CNY",
+            "purchase_cost": 100,
+            "domestic_shipping_cost": 10,
             "exchange_rate": 18,
-            "shipping_cost": 60,
-            "platform_fee_rate": 0.15,
             "profit_margin_rate": 0.2,
-            "rounding_increment": 10,
+            "rounding_increment": 1,
         },
     )
     assert priced.status_code == 200
