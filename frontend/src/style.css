@@ -598,14 +598,15 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .collection-job-state.completed { color: #126c33; }
 .collection-job-state.failed { color: #9b2c22; }
 .collection-job-state.needs_manual_action { color: #8a4b08; }
-.collection-job-copy { display: grid; gap: 4px; min-width: 0; }
+.collection-job-copy { display: grid; gap: 4px; min-width: 0; width: 100%; }
 .collection-job-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .collection-job-copy span { color: #697586; font-size: 12px; }
 .collection-job-copy .collection-job-schedule { color: #8a4b08; font-weight: 600; }
 .collection-job-copy p { margin: 2px 0 0; color: #52606d; font-size: 13px; overflow-wrap: anywhere; }
-.source-snapshot-review { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #e4e8ed; }
+.source-snapshot-review { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; margin-top: 10px; min-width: 0; padding-top: 10px; width: 100%; border-top: 1px solid #e4e8ed; }
+.source-snapshot-review.without-image { grid-template-columns: minmax(0, 1fr); }
 .source-snapshot-review > img { width: 64px; height: 64px; object-fit: contain; background: #f5f7fa; }
-.source-snapshot-copy { display: grid; gap: 3px; min-width: 0; max-width: 100%; }
+.source-snapshot-copy { display: grid; gap: 3px; min-width: 0; max-width: 100%; width: 100%; }
 .source-snapshot-copy > strong { white-space: normal; overflow-wrap: anywhere; }
 .source-snapshot-copy span,
 .source-detail li,

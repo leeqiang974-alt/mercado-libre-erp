@@ -99,6 +99,16 @@ function shortSource(sourceUrl: string) {
   }
 }
 
+function collectionMessage(message: string) {
+  const translations: Record<string, string> = {
+    "Amazon product page is incomplete; manual action required.": "Amazon 返回的商品页内容不完整，请使用 HTML 快照继续。",
+    "Amazon challenge detected; manual action required.": "Amazon 要求验证，请使用 HTML 快照继续。",
+    "Collection timed out; retry is safe.": "采集超时，可以重新采集。",
+    "Collection worker interrupted; retry is safe.": "采集服务中断，可以重新采集。",
+  };
+  return translations[message] ?? message;
+}
+
 function findVariantCollectionJob(
   jobs: CollectionJobRecord[],
   sourceUrl: string,
@@ -655,9 +665,9 @@ export function ImportPage({
                         下次尝试：{new Date(job.next_attempt_at!).toLocaleString()}
                       </span>
                     )}
-                    {job.message && <p>{job.message}</p>}
+                    {job.message && <p>{collectionMessage(job.message)}</p>}
                     {job.source_product && (
-                      <div className="source-snapshot-review">
+                      <div className={`source-snapshot-review ${job.source_product.primary_image_url ? "" : "without-image"}`}>
                         {job.source_product.primary_image_url && (
                           <img src={job.source_product.primary_image_url} alt="" />
                         )}
@@ -674,7 +684,7 @@ export function ImportPage({
                           </span>
                           {!job.source_product.has_snapshot && (
                             <p className="source-unavailable">
-                              {job.source_product.collection_error || "未能获取商品页面素材。"}
+                              {collectionMessage(job.source_product.collection_error || "未能获取商品页面素材。")}
                             </p>
                           )}
                           {expandedSourceId === job.source_product.id && sourceDetails[job.source_product.id]?.snapshot && (
