@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import {
   createCollectionJobsBatch,
+  discoverAmazonProducts,
   createCollectionJobsFile,
   createSourceVariantCollectionJob,
   createSourceVariantCollectionJobs,
@@ -33,7 +34,7 @@ import {
 } from "../api/client";
 import { MERCADO_LIBRE_SITES } from "../domain/sites";
 
-type ImportMode = "url" | "html";
+type ImportMode = "discover" | "url" | "html";
 
 const JOB_LABELS: Record<CollectionJobRecord["status"], string> = {
   pending: "待处理",
@@ -103,6 +104,8 @@ function collectionMessage(message: string) {
   const translations: Record<string, string> = {
     "Amazon product page is incomplete; manual action required.": "Amazon 返回的商品页内容不完整，请使用 HTML 快照继续。",
     "Amazon challenge detected; manual action required.": "Amazon 要求验证，请使用 HTML 快照继续。",
+    "Amazon redirected this link away from the requested product; verify the ASIN.": "Amazon 已将该链接跳转到非商品页面，请检查 ASIN 是否正确。",
+    "Amazon redirected this link to a different ASIN; the requested product was not collected.": "Amazon 已将该链接跳转到另一个 ASIN，原商品未被采集。",
     "Collection timed out; retry is safe.": "采集超时，可以重新采集。",
     "Collection worker interrupted; retry is safe.": "采集服务中断，可以重新采集。",
   };
@@ -150,6 +153,9 @@ export function ImportPage({
 }) {
   const [mode, setMode] = useState<ImportMode>("url");
   const [sourceUrls, setSourceUrls] = useState("");
+  const [discoveryKeyword, setDiscoveryKeyword] = useState("");
+  const [discoveryDomain, setDiscoveryDomain] = useState("amazon.com");
+  const [discoveryLimit, setDiscoveryLimit] = useState("20");
   const [snapshotUrl, setSnapshotUrl] = useState("");
   const [targetSiteId, setTargetSiteId] = useState("MLM");
   const [html, setHtml] = useState("");
@@ -243,6 +249,20 @@ export function ImportPage({
     // Every collection goes through a persisted job so an Amazon challenge has
     // a visible "HTML snapshot" recovery action instead of leaving the page busy.
     await queueCollectionJob();
+  }
+
+  async function discoverAndQueue() {
+    setError("");
+    setBusyAction("discover");
+    try {
+      const result = await discoverAmazonProducts(
+        discoveryKeyword.trim(), discoveryDomain, targetSiteId, Number(discoveryLimit),
+      );
+      setBatchResult(result);
+      await refreshCollectionJobs(false);
+    } catch (discoveryError) {
+      setError(discoveryError instanceof Error ? discoveryError.message : "Amazon 搜索发现失败");
+    } finally { setBusyAction(""); }
   }
 
   async function runHtmlImport() {
@@ -433,6 +453,14 @@ export function ImportPage({
       <div className="import-mode-switch" role="tablist" aria-label="Amazon 采集方式">
         <button
           role="tab"
+          aria-selected={mode === "discover"}
+          className={mode === "discover" ? "selected" : ""}
+          onClick={() => setMode("discover")}
+        >
+          <ScanSearch size={17} /> 智能选品
+        </button>
+        <button
+          role="tab"
           aria-selected={mode === "url"}
           className={mode === "url" ? "selected" : ""}
           onClick={() => setMode("url")}
@@ -452,8 +480,10 @@ export function ImportPage({
       <section className="surface import-source">
         <div className="form-grid two-col">
           <label>
-            {mode === "url" ? "Amazon 商品链接" : "Amazon 商品链接"}
-            {mode === "url" ? (
+            {mode === "discover" ? "选品关键词" : "Amazon 商品链接"}
+            {mode === "discover" ? (
+              <input value={discoveryKeyword} placeholder="例如 silicone mold for resin" onChange={(event) => setDiscoveryKeyword(event.target.value)} />
+            ) : mode === "url" ? (
               <textarea
                 className="batch-url-input"
                 placeholder={"https://www.amazon.com/dp/...\nhttps://www.amazon.ca/dp/..."}
@@ -476,25 +506,33 @@ export function ImportPage({
             )}
           </label>
           <label>
-            目标美客多站点
+            {mode === "discover" ? "Amazon 站点" : "目标美客多站点"}
             <select
-              value={targetSiteId}
+              value={mode === "discover" ? discoveryDomain : targetSiteId}
               onChange={(event) => {
-                setTargetSiteId(event.target.value);
+                if (mode === "discover") setDiscoveryDomain(event.target.value);
+                else setTargetSiteId(event.target.value);
                 setSnapshotJobId(null);
                 setBatchResult(null);
               }}
             >
-              {MERCADO_LIBRE_SITES.map((site) => (
-                <option key={site.id} value={site.id}>
-                  {site.country} ({site.id}) · {site.currency}
+              {(mode === "discover" ? ["amazon.com", "amazon.com.mx", "amazon.ca", "amazon.co.uk", "amazon.de", "amazon.co.jp"] : MERCADO_LIBRE_SITES.map((site) => site.id)).map((value) => (
+                <option key={value} value={value}>
+                  {mode === "discover" ? value : (() => { const site = MERCADO_LIBRE_SITES.find((item) => item.id === value)!; return `${site.country} (${site.id}) · ${site.currency}`; })()}
                 </option>
               ))}
             </select>
           </label>
         </div>
 
-        {mode === "url" ? (
+        {mode === "discover" ? (
+          <>
+            <div className="inline-warning import-warning"><ScanSearch size={17} /><span>按关键词从 Amazon 搜索结果发现 ASIN，自动加入采集队列；详情图片、规格与价格仍会从每个商品页独立核验。</span></div>
+            <div className="batch-options"><label>发现数量 <select value={discoveryLimit} onChange={(event) => setDiscoveryLimit(event.target.value)}><option value="10">10 个</option><option value="20">20 个</option><option value="50">50 个</option></select></label><label>目标美客多站点 <select value={targetSiteId} onChange={(event) => setTargetSiteId(event.target.value)}>{MERCADO_LIBRE_SITES.map((site) => <option key={site.id} value={site.id}>{site.country} ({site.id})</option>)}</select></label></div>
+            <div className="button-row"><button disabled={discoveryKeyword.trim().length < 2 || isBusy} onClick={discoverAndQueue}>{busyAction === "discover" ? <LoaderCircle className="spin" size={17} /> : <ScanSearch size={17} />} 发现并采集</button></div>
+            {batchResult && <div className="batch-result" aria-live="polite"><div className="batch-result-summary"><strong>{batchResult.created_count} 个已加入采集队列</strong><span>{batchResult.existing_count} 个已有任务</span><span>{batchResult.duplicate_count} 个重复</span><span>{batchResult.invalid_count} 个无效</span></div><div className="batch-result-list">{batchResult.items.map((item, index) => <div className={`batch-result-row ${item.outcome}`} key={`${item.input_url}-${index}`}><span>{BATCH_LABELS[item.outcome]}</span><strong title={item.normalized_url || item.input_url}>{shortSource(item.normalized_url || item.input_url)}</strong><small>{item.job ? `任务 #${item.job.id}` : BATCH_DETAILS[item.detail] || item.detail}</small></div>)}</div></div>}
+          </>
+        ) : mode === "url" ? (
           <>
             <div className="inline-warning import-warning">
               <AlertTriangle size={17} />
@@ -674,7 +712,13 @@ export function ImportPage({
                         <div className="source-snapshot-copy">
                           <strong>{job.source_product.title}</strong>
                           <span>
-                            {job.source_product.collection_method === "browser_page" ? "页面自动采集" : "人工 HTML 快照"}
+                            {job.source_product.collection_method === "operator_snapshot"
+                              ? "人工 HTML 快照"
+                              : job.source_product.collection_method === "server_browser_headed"
+                                ? "服务器浏览器采集"
+                                : job.source_product.collection_method === "server_browser_headless"
+                                  ? "服务器无头浏览器采集"
+                                  : "页面自动采集"}
                             {job.source_product.brand ? ` · ${job.source_product.brand}` : ""}
                           </span>
                           <span>

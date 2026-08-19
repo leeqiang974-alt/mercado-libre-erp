@@ -15,12 +15,17 @@ import {
   getCategoryPredictions,
   getCbtListingConfig,
   getCbtPublishingProfile,
+  approveDraft,
+  executeCbtPublishFromDraft,
+  getSystemReadiness,
   listStores,
   previewCbtPublishFromDraft,
   saveCbtListingConfig,
   type CbtListingConfig,
   type CbtPublishingProfile,
   type ProductDraft,
+  type PublishExecutionResult,
+  type SystemReadiness,
   type StoreRecord,
 } from "../api/client";
 
@@ -69,6 +74,10 @@ export function CbtGlobalPublishingPanel({
   const [warranty, setWarranty] = useState("");
   const [saved, setSaved] = useState<CbtListingConfig | null>(null);
   const [preview, setPreview] = useState<{ allowed: boolean; errors: string[]; payload: Record<string, unknown> | null } | null>(null);
+  const [approved, setApproved] = useState(false);
+  const [publishConfirmed, setPublishConfirmed] = useState(false);
+  const [execution, setExecution] = useState<PublishExecutionResult | null>(null);
+  const [readiness, setReadiness] = useState<SystemReadiness | null>(null);
   const [busy, setBusy] = useState("");
   const [status, setStatus] = useState("");
 
@@ -94,10 +103,11 @@ export function CbtGlobalPublishingPanel({
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([listStores(), getCbtListingConfig(draftId)])
-      .then(([storeRows, config]) => {
+    Promise.all([listStores(), getCbtListingConfig(draftId), getSystemReadiness()])
+      .then(([storeRows, config, system]) => {
         if (cancelled) return;
         setStores(storeRows);
+        setReadiness(system);
         const defaultStore = config?.store_id
           ? String(config.store_id)
           : storeRows.find((store) => store.site_id === "CBT" && store.oauth_status === "connected")?.id ?? "";
@@ -153,7 +163,7 @@ export function CbtGlobalPublishingPanel({
 
   function setAttribute(id: string, value: string) {
     setAttributes((current) => ({ ...current, [id]: value }));
-    setSaved(null); setPreview(null);
+    setSaved(null); setPreview(null); setApproved(false); setPublishConfirmed(false); setExecution(null);
   }
 
   function toggleMarket(siteId: string) {
@@ -161,18 +171,18 @@ export function CbtGlobalPublishingPanel({
       if (current.some((offer) => offer.site_id === siteId)) return current.filter((offer) => offer.site_id !== siteId);
       return [...current, { site_id: siteId, title: globalTitle, listing_type_id: "gold_pro", logistic_type: "remote", picture_urls: [] }];
     });
-    setSaved(null); setPreview(null);
+    setSaved(null); setPreview(null); setApproved(false); setPublishConfirmed(false); setExecution(null);
   }
 
   function updateOffer(siteId: string, key: "title" | "listing_type_id", value: string) {
     setOffers((current) => current.map((offer) => offer.site_id === siteId
       ? { ...offer, [key]: value } as Offer : offer));
-    setSaved(null); setPreview(null);
+    setSaved(null); setPreview(null); setApproved(false); setPublishConfirmed(false); setExecution(null);
   }
 
   async function saveConfig() {
     if (!canSave) return;
-    setBusy("save"); setStatus(""); setPreview(null);
+    setBusy("save"); setStatus(""); setPreview(null); setApproved(false); setPublishConfirmed(false); setExecution(null);
     try {
       const config = await saveCbtListingConfig(draftId, {
         store_id: Number(storeId), category_id: categoryId, family_name: familyName,
@@ -193,6 +203,26 @@ export function CbtGlobalPublishingPanel({
     try {
       setPreview(await previewCbtPublishFromDraft(draftId));
     } catch (error) { setStatus(error instanceof Error ? error.message : "生成官方请求预检失败"); }
+    finally { setBusy(""); }
+  }
+
+  async function approveForPublish() {
+    setBusy("approval"); setStatus("");
+    try {
+      await approveDraft(draftId, "operator", "Approved for CBT Global Selling publication");
+      setApproved(true);
+      setStatus("已记录人工批准。发布前仍会重新校验店铺、审核和素材。");
+    } catch (error) {
+      setApproved(false);
+      setStatus(error instanceof Error ? error.message : "人工批准失败：请先完成当前商品的 AI 审核。");
+    } finally { setBusy(""); }
+  }
+
+  async function executePublish() {
+    setBusy("execute"); setStatus("");
+    try {
+      setExecution(await executeCbtPublishFromDraft(draftId));
+    } catch (error) { setStatus(error instanceof Error ? error.message : "跨境发布请求失败"); }
     finally { setBusy(""); }
   }
 
@@ -261,7 +291,11 @@ export function CbtGlobalPublishingPanel({
       {offers.length === 0 && <p className="inline-warning">请先从第一步勾选至少一个 Remote 市场。</p>}
       {offers.map((offer) => <div className="cbt-offer-row" key={offer.site_id}><Globe2 size={18} /><strong>{MARKET_NAMES[offer.site_id] ?? offer.site_id}</strong><label>当地标题<input value={offer.title} onChange={(event) => updateOffer(offer.site_id, "title", event.target.value)} /></label><label>刊登类型<select value={offer.listing_type_id} onChange={(event) => updateOffer(offer.site_id, "listing_type_id", event.target.value)}><option value="gold_pro">Premium</option><option value="gold_special">Classic</option></select></label></div>)}
       <div className="button-row"><button disabled={!canSave || busy === "save"} onClick={saveConfig}><Save size={16} /> 保存跨境刊登配置</button><button className="secondary-button" disabled={!saved || busy === "preview"} onClick={previewPayload}><ListChecks size={16} /> 生成官方请求预检</button></div>
-      {preview && <div className={`validation-result ${preview.allowed ? "ready" : "blocked"}`}><strong>{preview.allowed ? "官方 Global Selling 请求已通过结构校验" : "刊登请求未通过"}</strong>{preview.errors.map((error) => <span key={error}>{error}</span>)}{preview.allowed && <span>下一步将接入人工审批和受控发布队列；本操作没有向美客多创建商品。</span>}</div>}
+      {preview && <div className={`validation-result ${preview.allowed ? "ready" : "blocked"}`}><strong>{preview.allowed ? "官方 Global Selling 请求已通过结构校验" : "刊登请求未通过"}</strong>{preview.errors.map((error) => <span key={error}>{error}</span>)}</div>}
+      <div className="release-summary"><div><span>商品素材</span><strong>{draft.image_urls.length} 张图片</strong></div><div><span>预检</span><strong>{preview?.allowed ? "通过" : "未完成"}</strong></div><div><span>人工批准</span><strong>{approved ? "已批准" : "未批准"}</strong></div><div><span>线上发布</span><strong>{readiness?.mercado_libre.live_publish_enabled ? "已开启" : "未开启"}</strong></div></div>
+      <div className="button-row"><button className="secondary-button" disabled={!preview?.allowed || busy === "approval"} onClick={approveForPublish}><CheckCircle2 size={16} /> 记录人工批准</button><label className="check-row"><input type="checkbox" checked={publishConfirmed} disabled={!approved || !preview?.allowed || !readiness?.mercado_libre.live_publish_enabled} onChange={(event) => setPublishConfirmed(event.target.checked)} />确认向美客多创建商品</label><button disabled={!publishConfirmed || !approved || !preview?.allowed || !readiness?.mercado_libre.live_publish_enabled || busy === "execute"} onClick={executePublish}><Globe2 size={16} /> 提交跨境发布</button></div>
+      {!readiness?.mercado_libre.live_publish_enabled && <p className="inline-warning">服务器尚未开启真实发布；可先完成配置、审核、批准和预检。</p>}
+      {execution && <div className={`validation-result ${execution.status === "published" ? "ready" : "blocked"}`}><strong>{execution.status === "published" ? "已提交并创建商品" : "未创建商品"}</strong>{execution.item_id && <span>商品 ID：{execution.item_id}</span>}{execution.permalink && <a href={execution.permalink} target="_blank" rel="noreferrer">打开商品页</a>}{execution.errors.map((error) => <span key={error}>{error}</span>)}</div>}
       {status && <p className="status-line">{status}</p>}
     </section>
   </section>;

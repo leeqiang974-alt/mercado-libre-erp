@@ -1,6 +1,7 @@
 import pytest
 
 from app.services.amazon.collector import (
+    AmazonPageFetch,
     CollectionStatus,
     amazon_browser_language,
     collect_amazon_page,
@@ -117,3 +118,42 @@ async def test_collect_amazon_page_does_not_immediately_retry_incomplete_page():
     assert attempts == 1
     assert result.status == CollectionStatus.NEEDS_MANUAL_ACTION
     assert "incomplete" in result.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_collect_amazon_page_rejects_navigation_away_from_requested_product():
+    async def fake_fetcher(url: str) -> AmazonPageFetch:
+        return AmazonPageFetch(
+            html="<html><title>Amazon.com</title></html>",
+            final_url="https://www.amazon.com/",
+            collection_method="server_browser_headed",
+        )
+
+    result = await collect_amazon_page(
+        "https://www.amazon.com/dp/B000TEST01",
+        target_site_id="MLM",
+        html_fetcher=fake_fetcher,
+    )
+
+    assert result.status == CollectionStatus.FAILED
+    assert "redirected" in result.message.lower()
+    assert result.collection_method == "server_browser_headed"
+
+
+@pytest.mark.asyncio
+async def test_collect_amazon_page_rejects_navigation_to_different_asin():
+    async def fake_fetcher(url: str) -> AmazonPageFetch:
+        return AmazonPageFetch(
+            html=NORMAL_HTML,
+            final_url="https://www.amazon.com/dp/B000TEST02",
+            collection_method="server_browser_headed",
+        )
+
+    result = await collect_amazon_page(
+        "https://www.amazon.com/dp/B000TEST01",
+        target_site_id="MLM",
+        html_fetcher=fake_fetcher,
+    )
+
+    assert result.status == CollectionStatus.FAILED
+    assert "different asin" in result.message.lower()

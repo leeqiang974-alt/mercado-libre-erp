@@ -1,4 +1,5 @@
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from enum import Enum
 import os
 from urllib.parse import urlparse
@@ -33,9 +34,17 @@ class CollectionResult(BaseModel):
     source_product_id: int | None = None
     draft_id: int | None = None
     source_snapshot: AmazonSourceSnapshot | None = None
+    collection_method: str = "browser_page"
 
 
-HtmlFetcher = Callable[[str], Awaitable[str]]
+@dataclass(frozen=True)
+class AmazonPageFetch:
+    html: str
+    final_url: str
+    collection_method: str
+
+
+HtmlFetcher = Callable[[str], Awaitable[str | AmazonPageFetch]]
 
 
 CHALLENGE_MARKERS = [
@@ -159,6 +168,25 @@ def requires_manual_action(html: str) -> bool:
     return any(marker in lowered for marker in CHALLENGE_MARKERS)
 
 
+def amazon_browser_headless() -> bool:
+    """Use headed Chromium by default when a virtual display is available."""
+    value = os.getenv("AMAZON_BROWSER_HEADLESS", "false").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def validate_amazon_navigation(source_url: str, final_url: str) -> str | None:
+    """Reject redirects before interpreting an Amazon landing page as product HTML."""
+    expected_asin = extract_amazon_asin(source_url)
+    if not expected_asin:
+        return "amazon_navigation_requested_asin_missing"
+    if not is_allowed_amazon_url(final_url):
+        return "amazon_navigation_not_product"
+    final_asin = extract_amazon_asin(final_url)
+    if final_asin != expected_asin:
+        return "amazon_navigation_asin_mismatch"
+    return None
+
+
 def validate_amazon_snapshot(source_url: str, html: str) -> dict:
     if not is_allowed_amazon_url(source_url):
         raise ValueError("only_public_amazon_product_urls_allowed")
@@ -185,16 +213,17 @@ def validate_amazon_snapshot(source_url: str, html: str) -> dict:
     return parsed
 
 
-async def fetch_amazon_html_with_playwright(url: str) -> str:
+async def fetch_amazon_html_with_playwright(url: str) -> AmazonPageFetch:
     from playwright.async_api import TimeoutError as PlaywrightTimeoutError
     from playwright.async_api import async_playwright
 
     async with async_playwright() as playwright:
         profile_dir = os.getenv("AMAZON_BROWSER_PROFILE_DIR", "").strip()
         locale, accept_language = amazon_browser_language(url)
+        headless = amazon_browser_headless()
         context = await playwright.chromium.launch_persistent_context(
             profile_dir or None,
-            headless=True,
+            headless=headless,
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -207,11 +236,15 @@ async def fetch_amazon_html_with_playwright(url: str) -> str:
         page = context.pages[0] if context.pages else await context.new_page()
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-            if not is_allowed_amazon_url(page.url):
-                raise ValueError("Amazon navigation redirected to a disallowed host.")
             initial_html = await page.content()
             if requires_manual_action(initial_html):
-                return initial_html
+                return AmazonPageFetch(
+                    html=initial_html,
+                    final_url=page.url,
+                    collection_method=(
+                        "server_browser_headless" if headless else "server_browser_headed"
+                    ),
+                )
             try:
                 await page.wait_for_load_state("load", timeout=8_000)
             except PlaywrightTimeoutError:
@@ -221,7 +254,13 @@ async def fetch_amazon_html_with_playwright(url: str) -> str:
             except PlaywrightTimeoutError:
                 pass
             await page.wait_for_timeout(1_000)
-            return await page.content()
+            return AmazonPageFetch(
+                html=await page.content(),
+                final_url=page.url,
+                collection_method=(
+                    "server_browser_headless" if headless else "server_browser_headed"
+                ),
+            )
         finally:
             await context.close()
 
@@ -239,18 +278,42 @@ async def collect_amazon_page(
         )
     fetcher = html_fetcher or fetch_amazon_html_with_playwright
     try:
-        html = await fetcher(source_url)
+        fetched = await fetcher(source_url)
     except Exception as exc:
         return CollectionResult(
             status=CollectionStatus.FAILED,
             source_url=source_url,
             message=f"Amazon page collection failed; explicit retry is safe: {exc}",
         )
+    if isinstance(fetched, AmazonPageFetch):
+        html = fetched.html
+        final_url = fetched.final_url
+        collection_method = fetched.collection_method
+    else:
+        html = fetched
+        final_url = source_url
+        collection_method = "browser_page"
     if requires_manual_action(html):
         return CollectionResult(
             status=CollectionStatus.NEEDS_MANUAL_ACTION,
             source_url=source_url,
             message="Amazon challenge detected; manual action required.",
+            collection_method=collection_method,
+        )
+    navigation_error = validate_amazon_navigation(source_url, final_url)
+    if navigation_error == "amazon_navigation_not_product":
+        return CollectionResult(
+            status=CollectionStatus.FAILED,
+            source_url=source_url,
+            message="Amazon redirected this link away from the requested product; verify the ASIN.",
+            collection_method=collection_method,
+        )
+    if navigation_error == "amazon_navigation_asin_mismatch":
+        return CollectionResult(
+            status=CollectionStatus.FAILED,
+            source_url=source_url,
+            message="Amazon redirected this link to a different ASIN; the requested product was not collected.",
+            collection_method=collection_method,
         )
     try:
         parsed = validate_amazon_snapshot(source_url, html)
@@ -260,11 +323,13 @@ async def collect_amazon_page(
                 status=CollectionStatus.NEEDS_MANUAL_ACTION,
                 source_url=source_url,
                 message="Amazon product page is incomplete; manual action required.",
+                collection_method=collection_method,
             )
         return CollectionResult(
             status=CollectionStatus.FAILED,
             source_url=source_url,
             message=f"Amazon page identity validation failed: {exc}",
+            collection_method=collection_method,
         )
     draft = normalize_amazon_product(parsed, target_site_id=target_site_id)
     source_snapshot = AmazonSourceSnapshot.model_validate(parsed)
@@ -274,4 +339,5 @@ async def collect_amazon_page(
         message="collected",
         draft=draft,
         source_snapshot=source_snapshot,
+        collection_method=collection_method,
     )

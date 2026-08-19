@@ -175,6 +175,33 @@ def test_publish_execute_route_blocks_by_default(monkeypatch):
     assert "meli:seller-1" not in response.text
 
 
+def test_cbt_publish_requires_explicit_acknowledgement_before_any_store_lookup():
+    client = make_client()
+
+    response = client.post(
+        "/api/publishing/cbt/execute-from-draft",
+        json={"product_draft_id": 1, "acknowledge_publish": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "blocked"
+    assert response.json()["errors"] == ["publish_acknowledgement_required"]
+
+
+def test_cbt_publish_stays_blocked_when_live_publishing_is_disabled(monkeypatch):
+    monkeypatch.setattr(publishing.settings, "allow_live_publish", False)
+    client = make_client()
+
+    response = client.post(
+        "/api/publishing/cbt/execute-from-draft",
+        json={"product_draft_id": 1, "acknowledge_publish": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "blocked"
+    assert response.json()["errors"] == ["live_publish_disabled"]
+
+
 def test_publish_execute_route_uses_store_token_reference_without_echoing_it(monkeypatch):
     async def fake_execute_publish(**kwargs):
         assert kwargs["client"].access_token == "access-token"

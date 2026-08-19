@@ -35,6 +35,8 @@ RUN sed -i 's|http://deb.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sourc
         libxfixes3 \
         libxkbcommon0 \
         libxrandr2 \
+        xauth \
+        xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./

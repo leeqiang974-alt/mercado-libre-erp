@@ -613,6 +613,21 @@ export async function createCollectionJobsBatch(
   return response.json() as Promise<CollectionBatchResult>;
 }
 
+export async function discoverAmazonProducts(
+  keyword: string,
+  domain: string,
+  targetSiteId: string,
+  limit: number,
+) {
+  const response = await fetch(`${API_BASE}/api/imports/amazon-search/discover`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ keyword, domain, target_site_id: targetSiteId, limit }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<CollectionBatchResult>;
+}
+
 export async function createCollectionJobsFile(
   file: File,
   targetSiteId: string,
@@ -1122,6 +1137,16 @@ export async function previewCbtPublishFromDraft(productDraftId: number) {
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<{ allowed: boolean; errors: string[]; payload: Record<string, unknown> | null }>;
+}
+
+export async function executeCbtPublishFromDraft(productDraftId: number) {
+  const response = await fetch(`${API_BASE}/api/publishing/cbt/execute-from-draft`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ product_draft_id: productDraftId, acknowledge_publish: true }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<PublishExecutionResult>;
 }
 
 export async function approveDraft(productDraftId: number, approvedBy = "operator", note = "") {

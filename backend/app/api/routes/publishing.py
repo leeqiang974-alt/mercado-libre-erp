@@ -1,13 +1,16 @@
 import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import hashlib
+import json
 from uuid import uuid4
 from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -30,7 +33,10 @@ from app.schemas.publishing import (
     PublishValidationResult,
 )
 from app.schemas.reviews import ReviewResponse
-from app.services.draft_approvals import is_product_draft_approved
+from app.services.draft_approvals import (
+    get_product_draft_approval,
+    is_product_draft_approved,
+)
 from app.services.draft_listing_configs import build_configured_draft
 from app.services.cbt_listing_configs import get_cbt_listing_config
 from app.services.integration_credentials import resolve_integration_credentials
@@ -59,7 +65,11 @@ from app.services.publish_jobs import (
     replay_publish_result,
     to_publish_job_read,
 )
-from app.services.reviews import get_latest_behavioral_review, get_publish_review
+from app.services.reviews import (
+    get_latest_behavioral_review,
+    get_publish_review,
+    provider_review_context_errors,
+)
 
 router = APIRouter(prefix="/api/publishing", tags=["publishing"])
 settings = get_settings()
@@ -105,6 +115,11 @@ class CbtPublishPreview(BaseModel):
     payload: dict | None = None
 
 
+class CbtPublishExecuteRequest(BaseModel):
+    product_draft_id: int
+    acknowledge_publish: bool = False
+
+
 @router.post("/cbt/preview-from-draft", response_model=CbtPublishPreview)
 def preview_cbt_publish_from_draft(
     product_draft_id: int,
@@ -118,6 +133,7 @@ def preview_cbt_publish_from_draft(
     errors: list[str] = []
     if store is None or store.site_id.strip().upper() != "CBT" or store.oauth_status != "connected":
         errors.append("connected_cbt_store_required")
+    errors.extend(provider_review_context_errors(db, draft))
     raw_config = {
         "store_id": config.store_id,
         "category_id": config.category_id,
@@ -149,6 +165,219 @@ def preview_cbt_publish_from_draft(
         errors.append(str(exc))
         payload = None
     return CbtPublishPreview(allowed=not errors, errors=errors, payload=payload)
+
+
+@router.post("/cbt/execute-from-draft", response_model=PublishExecutionResult)
+async def execute_cbt_publish_from_draft(
+    request: CbtPublishExecuteRequest,
+    db: Session = Depends(get_db),
+) -> PublishExecutionResult:
+    """Create one traditional Global Selling item after all approval gates pass."""
+    if not request.acknowledge_publish:
+        return PublishExecutionResult(status="blocked", errors=["publish_acknowledgement_required"])
+    if not settings.allow_live_publish:
+        return PublishExecutionResult(status="blocked", errors=["live_publish_disabled"])
+
+    config = get_cbt_listing_config(db, request.product_draft_id)
+    draft = db.scalar(
+        select(ProductDraft)
+        .where(ProductDraft.id == request.product_draft_id)
+        .with_for_update()
+    )
+    store = db.scalar(select(Store).where(Store.id == config.store_id).with_for_update())
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Product draft not found.")
+    if store is None:
+        raise HTTPException(status_code=404, detail="Store not found.")
+    if store.site_id.strip().upper() != "CBT" or store.oauth_status != "connected":
+        return PublishExecutionResult(status="blocked", errors=["connected_cbt_store_required"])
+    if config.draft_content_version != draft.content_version:
+        return PublishExecutionResult(
+            status="blocked", errors=["cbt_listing_config_stale_save_again_required"]
+        )
+    if not is_product_draft_approved(db, draft.id):
+        return PublishExecutionResult(
+            status="blocked", errors=["current_claude_nvidia_pass_and_human_approval_required"]
+        )
+
+    raw_config = {
+        "store_id": config.store_id,
+        "category_id": config.category_id,
+        "family_name": config.family_name,
+        "global_title": config.global_title,
+        "description": config.description,
+        "price_usd": config.price_usd,
+        "available_quantity": config.available_quantity,
+        "attributes": config.attributes_json or [],
+        "sale_terms": config.sale_terms_json or [],
+        "sites_to_sell": config.sites_to_sell_json or [],
+    }
+    try:
+        payload = build_cbt_global_item_payload(
+            ProductDraftCreate(
+                title=draft.title,
+                description=draft.description,
+                brand=draft.brand,
+                target_site_id="CBT",
+                target_category_id=config.category_id,
+                price=config.price_usd,
+                currency="USD",
+                stock=config.available_quantity,
+                image_urls=draft.image_urls_json or [],
+            ),
+            CbtListingConfigUpsert.model_validate(raw_config),
+        )
+    except ValueError as exc:
+        return PublishExecutionResult(status="blocked", errors=[str(exc)])
+
+    approval = get_product_draft_approval(db, draft.id)
+    if approval is None:
+        return PublishExecutionResult(
+            status="blocked", errors=["current_claude_nvidia_pass_and_human_approval_required"]
+        )
+    idempotency_key = hashlib.sha256(
+        json.dumps(
+            {
+                "model": "traditional_global",
+                "draft_id": draft.id,
+                "draft_version": draft.content_version,
+                "store_id": store.id,
+                "review_result_id": approval.review_result_id,
+                "payload": payload,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_name))"),
+            {"lock_name": f"publish_subject:{draft.id}:{store.id}"},
+        )
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_name))"),
+            {"lock_name": f"publish_job:{idempotency_key}"},
+        )
+    unresolved_job = next(
+        (
+            candidate
+            for candidate in db.query(PublishJob)
+            .filter(
+                PublishJob.product_draft_id == draft.id,
+                PublishJob.store_id == store.id,
+                PublishJob.status.in_([PublishJobStatus.PENDING, PublishJobStatus.VALIDATING, PublishJobStatus.BLOCKED]),
+            )
+            .order_by(PublishJob.id.desc())
+            .all()
+            if candidate.status in {PublishJobStatus.PENDING, PublishJobStatus.VALIDATING}
+            or "global_publish_outcome_unknown_manual_reconciliation_required"
+            in (candidate.response_summary_json or {}).get("errors", [])
+        ),
+        None,
+    )
+    if unresolved_job is not None:
+        return replay_publish_result(unresolved_job)
+    job = db.query(PublishJob).filter(PublishJob.idempotency_key == idempotency_key).one_or_none()
+    if job is not None:
+        return replay_publish_result(job)
+    job = PublishJob(
+        product_draft_id=draft.id,
+        store_id=store.id,
+        requested_by="operator",
+        idempotency_key=idempotency_key,
+        status=PublishJobStatus.VALIDATING,
+        started_at=datetime.now(UTC),
+        request_summary_json={
+            "publication_model": "traditional_global",
+            "draft_version": draft.content_version,
+            "review_result_id": approval.review_result_id,
+            "category_id": config.category_id,
+            "marketplaces": [offer["site_id"] for offer in payload["sites_to_sell"]],
+        },
+    )
+    db.add(job)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = db.query(PublishJob).filter(PublishJob.idempotency_key == idempotency_key).one_or_none()
+        if existing is None:
+            raise
+        return replay_publish_result(existing)
+    db.refresh(job)
+
+    try:
+        access_token = await resolve_fresh_store_access_token(
+            db=db,
+            store=store,
+            encryption_key=settings.token_encryption_key,
+            oauth_client=create_oauth_client(db),
+        )
+        if not access_token:
+            result = PublishExecutionResult(status="blocked", errors=["store_access_token_required"])
+        else:
+            client = MercadoLibreClient(access_token=access_token)
+            user = await client.get("/users/me")
+            user_data = user if isinstance(user, dict) else {}
+            tags = user_data.get("tags", [])
+            if (
+                str(user_data.get("site_id", "")).upper() != "CBT"
+                or "user_products_seller" in tags
+            ):
+                result = PublishExecutionResult(
+                    status="blocked", errors=["traditional_cbt_seller_required"]
+                )
+            else:
+                response = await client.post("/global/items", payload)
+                response_data = response if isinstance(response, dict) else {}
+                item_id = str(response_data.get("id", "")).strip()
+                permalink = str(response_data.get("permalink", "")).strip()
+                result = (
+                    PublishExecutionResult(status="published", item_id=item_id, permalink=permalink)
+                    if item_id
+                    else PublishExecutionResult(
+                        status="blocked",
+                        permalink=permalink,
+                        errors=[
+                            "global_publish_outcome_unknown_manual_reconciliation_required",
+                            "meli_publish_response_missing_item_id",
+                        ],
+                    )
+                )
+    except httpx.HTTPStatusError as exc:
+        result = (
+            PublishExecutionResult(
+                status="blocked",
+                errors=["global_publish_outcome_unknown_manual_reconciliation_required"],
+            )
+            if exc.response.status_code == 408 or exc.response.status_code >= 500
+            else PublishExecutionResult(
+                status="failed", errors=[f"meli_global_publish_failed:{exc.response.status_code}"]
+            )
+        )
+    except Exception:
+        result = PublishExecutionResult(
+            status="blocked",
+            errors=["global_publish_outcome_unknown_manual_reconciliation_required"],
+        )
+
+    complete_publish_job(db, job, result)
+    create_audit_event(
+        db=db,
+        actor_type="operator",
+        actor_id="operator",
+        action="cbt_global_publish.executed",
+        entity_type="publish_job",
+        entity_id=str(job.id),
+        after={
+            "product_draft_id": draft.id,
+            "store_id": store.id,
+            "status": result.status,
+            "item_id": result.item_id,
+            "errors": result.errors,
+        },
+    )
+    return result.model_copy(update={"job_id": job.id})
 
 
 @dataclass(frozen=True)

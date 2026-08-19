@@ -25,5 +25,6 @@ class CbtListingConfig(Base):
     attributes_json: Mapped[list[dict]] = mapped_column(JSON, default=list)
     sale_terms_json: Mapped[list[dict]] = mapped_column(JSON, default=list)
     sites_to_sell_json: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    draft_content_version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))

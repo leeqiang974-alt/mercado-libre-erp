@@ -5,6 +5,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.product_draft import ProductDraft
+from app.models.cbt_listing_config import CbtListingConfig
 from app.models.draft_listing_config import DraftListingConfig
 from app.models.review_result import ReviewDecision, ReviewResult
 from app.models.store import Store
@@ -16,6 +17,7 @@ from app.services.meli.payload_builder import (
     SUPPORTED_NON_FULL_LOGISTIC_TYPES,
     SUPPORTED_SHIPPING_MODES,
 )
+from app.services.meli.cbt import SUPPORTED_CBT_REMOTE_SITES
 from app.services.audit_events import create_audit_event
 from app.services.provider_pricing import ReviewCostSnapshot, estimate_review_cost
 
@@ -334,6 +336,9 @@ def get_latest_behavioral_review(db: Session, draft: ProductDraft) -> ReviewResu
 def provider_review_context_errors(
     db: Session, draft: ProductDraft, *, lock_store: bool = False
 ) -> list[str]:
+    if draft.target_site_id.strip().upper() == "CBT":
+        return _cbt_review_context_errors(db, draft, lock_store=lock_store)
+
     config = db.scalar(
         select(DraftListingConfig).where(
             DraftListingConfig.product_draft_id == draft.id
@@ -378,6 +383,83 @@ def provider_review_context_errors(
             require_item_condition=True,
         )
     )
+    return list(dict.fromkeys(errors))
+
+
+def _cbt_review_context_errors(
+    db: Session, draft: ProductDraft, *, lock_store: bool
+) -> list[str]:
+    """Validate the saved traditional Global Selling configuration for a CBT draft."""
+    config = db.scalar(
+        select(CbtListingConfig).where(CbtListingConfig.product_draft_id == draft.id)
+    )
+    if config is None:
+        return ["saved_cbt_listing_configuration_required"]
+
+    errors: list[str] = []
+    if config.draft_content_version != draft.content_version:
+        errors.append("cbt_listing_config_stale_save_again_required")
+    if config.category_id.strip().upper() != draft.target_category_id.strip().upper():
+        errors.append("listing_category_mismatch")
+    if config.available_quantity < 1 or draft.stock < 1:
+        errors.append("available_quantity_confirmation_required")
+
+    store_statement = select(Store).where(Store.id == config.store_id)
+    if lock_store:
+        store_statement = store_statement.with_for_update()
+    store = db.scalar(store_statement)
+    if store is None:
+        errors.append("authorized_store_not_found")
+    else:
+        if store.oauth_status != "connected":
+            errors.append("store_not_connected")
+        if store.site_id.strip().upper() != "CBT":
+            errors.append("store_site_mismatch")
+
+    attribute_ids = {
+        str(attribute.get("id", "")).strip().upper()
+        for attribute in config.attributes_json or []
+        if isinstance(attribute, dict)
+    }
+    for attribute_id in {
+        "ITEM_CONDITION",
+        "SELLER_SKU",
+        "PACKAGE_HEIGHT",
+        "PACKAGE_LENGTH",
+        "PACKAGE_WIDTH",
+        "PACKAGE_WEIGHT",
+    }:
+        if attribute_id not in attribute_ids:
+            errors.append(f"required_category_attribute_missing:{attribute_id}")
+    errors.extend(
+        validate_category_attributes(
+            db,
+            config.category_id,
+            config.attributes_json or [],
+            require_verified_metadata=True,
+            require_item_condition=True,
+        )
+    )
+
+    marketplaces: set[str] = set()
+    for offer in config.sites_to_sell_json or []:
+        if not isinstance(offer, dict):
+            errors.append("cbt_marketplace_offer_malformed")
+            continue
+        site_id = str(offer.get("site_id", "")).strip().upper()
+        logistic_type = str(offer.get("logistic_type", "")).strip().lower()
+        listing_type_id = str(offer.get("listing_type_id", "")).strip().lower()
+        if site_id in marketplaces:
+            errors.append(f"cbt_marketplace_duplicate:{site_id}")
+        marketplaces.add(site_id)
+        if site_id not in SUPPORTED_CBT_REMOTE_SITES:
+            errors.append(f"cbt_remote_marketplace_invalid:{site_id or 'missing'}")
+        if logistic_type != "remote":
+            errors.append(f"cbt_remote_logistics_required:{site_id or 'missing'}")
+        if listing_type_id not in {"gold_special", "gold_pro"}:
+            errors.append(f"cbt_listing_type_not_supported:{site_id or 'missing'}")
+    if not marketplaces:
+        errors.append("cbt_remote_marketplace_required")
     return list(dict.fromkeys(errors))
 
 

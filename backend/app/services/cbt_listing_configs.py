@@ -69,6 +69,8 @@ def upsert_cbt_listing_config(
         currency="USD",
         stock=payload.available_quantity,
     )
+    db.refresh(draft)
+    config.draft_content_version = draft.content_version
     create_audit_event(
         db=db,
         actor_type="human",
@@ -109,7 +111,7 @@ def to_cbt_listing_config_read(config: CbtListingConfig, draft: object) -> CbtLi
         attributes=config.attributes_json or [],
         sale_terms=config.sale_terms_json or [],
         sites_to_sell=config.sites_to_sell_json or [],
-        draft_content_version=draft.content_version,
+        draft_content_version=config.draft_content_version,
         draft=to_draft_read(draft),
         created_at=config.created_at,
         updated_at=config.updated_at,
@@ -124,6 +126,7 @@ def _audit_snapshot(config: CbtListingConfig) -> dict:
         "global_title": config.global_title,
         "price_usd": config.price_usd,
         "available_quantity": config.available_quantity,
+        "draft_content_version": config.draft_content_version,
         "attribute_ids": [item.get("id") for item in config.attributes_json or []],
         "marketplaces": [item.get("site_id") for item in config.sites_to_sell_json or []],
     }

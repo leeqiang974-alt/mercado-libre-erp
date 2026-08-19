@@ -245,7 +245,7 @@ async def run_collection_job(
             status=status_map[result.status.value],
             collection_error="" if result.status.value == "collected" else result.message,
             snapshot=result.source_snapshot,
-            collection_method="browser_page",
+            collection_method=result.collection_method,
         )
         draft = None
         if result.draft is not None:

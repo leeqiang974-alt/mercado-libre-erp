@@ -40,6 +40,7 @@ services:
       ALLOW_LIVE_PUBLISH: ${ALLOW_LIVE_PUBLISH:-false}
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
       AMAZON_BROWSER_PROFILE_DIR: /data/amazon-browser/backend
+      AMAZON_BROWSER_HEADLESS: ${AMAZON_BROWSER_HEADLESS:-false}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -52,7 +53,9 @@ services:
       - ./backend/alembic:/app/alembic:ro
       - ./backend/alembic.ini:/app/alembic.ini:ro
       - ./data/amazon-browser:/data/amazon-browser
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    command: >-
+      sh -c 'exec xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24 -nolisten tcp"
+      uvicorn app.main:app --host 0.0.0.0 --port 8000'
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8000/health"]
@@ -68,6 +71,7 @@ services:
       DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
       AMAZON_BROWSER_PROFILE_DIR: /data/amazon-browser/worker
+      AMAZON_BROWSER_HEADLESS: ${AMAZON_BROWSER_HEADLESS:-false}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -76,7 +80,9 @@ services:
     volumes:
       - ./backend/app:/app/app:ro
       - ./data/amazon-browser:/data/amazon-browser
-    command: python -m app.worker --queue collection --loop --interval 30 --limit 10
+    command: >-
+      sh -c 'exec xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24 -nolisten tcp"
+      python -m app.worker --queue collection --loop --interval 30 --limit 10'
     restart: unless-stopped
 
   publish_worker:

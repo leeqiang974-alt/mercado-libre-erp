@@ -20,6 +20,7 @@ from app.services.amazon.collector import (
 )
 from app.services.amazon.normalizer import normalize_amazon_product
 from app.services.amazon.import_file import MAX_IMPORT_FILE_BYTES, parse_amazon_url_file
+from app.services.amazon.discovery import discover_amazon_products
 from app.services.amazon.throttle import record_domain_outcome, reserve_domain_request
 from app.services.drafts import create_product_draft, to_draft_read
 from app.services.audit_events import create_audit_event
@@ -77,6 +78,13 @@ class AmazonUrlBatchImport(BaseModel):
     source_urls: list[AmazonProductUrl] = Field(min_length=1, max_length=100)
     target_site_id: str = "MLM"
     allow_existing: bool = False
+
+
+class AmazonDiscoveryImport(BaseModel):
+    keyword: str = Field(min_length=2, max_length=160)
+    domain: str = Field(default="amazon.com")
+    target_site_id: str = "CBT"
+    limit: int = Field(default=20, ge=1, le=50)
 
 
 @router.post("/amazon-html")
@@ -230,7 +238,7 @@ async def import_amazon_url(
         status=status_map[result.status.value],
         collection_error="" if result.status.value == "collected" else result.message,
         snapshot=result.source_snapshot,
-        collection_method="browser_page",
+        collection_method=result.collection_method,
     )
     draft_model = None
     if result.draft:
@@ -279,6 +287,29 @@ def create_amazon_url_collection_jobs_batch(
     payload: AmazonUrlBatchImport, db: Session = Depends(get_db)
 ) -> CollectionBatchRead:
     return _create_amazon_url_collection_jobs_batch(payload, db)
+
+
+@router.post("/amazon-search/discover", response_model=CollectionBatchRead)
+async def discover_amazon_search_products(
+    payload: AmazonDiscoveryImport, db: Session = Depends(get_db)
+) -> CollectionBatchRead:
+    target_site_id = _target_site_or_422(payload.target_site_id)
+    try:
+        discovered = await discover_amazon_products(payload.domain, payload.keyword, payload.limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if discovered.challenge_detected:
+        raise HTTPException(status_code=409, detail="amazon_search_challenge_manual_action_required")
+    if not discovered.product_urls:
+        raise HTTPException(status_code=404, detail="amazon_search_no_products_found")
+    return _create_amazon_url_collection_jobs_batch(
+        AmazonUrlBatchImport(
+            source_urls=discovered.product_urls,
+            target_site_id=target_site_id,
+            allow_existing=False,
+        ),
+        db,
+    )
 
 
 @router.post("/amazon-url/jobs/file", response_model=CollectionBatchRead)
