@@ -127,7 +127,11 @@ function selectListingImages(urls: string[], limit = 12) {
 function categoryPathLabel(value: unknown) {
   if (!Array.isArray(value)) return "官方候选分类";
   return value
-    .map((item) => (item && typeof item === "object" ? String((item as Record<string, unknown>).name ?? "") : String(item)))
+    .map((item) => {
+      if (!item || typeof item !== "object") return String(item);
+      const record = item as Record<string, unknown>;
+      return String(record.name_zh ?? record.name ?? "");
+    })
     .filter(Boolean)
     .join(" > ") || "官方候选分类";
 }
@@ -295,8 +299,8 @@ export function DraftsPage({
       getCategoryDetails(draft.target_category_id)
         .then((result) => {
           setCategoryLeafVerified(result.verified && result.leaf);
-          setCategoryLabel(result.name);
-          setCategoryPath(result.path_from_root.map((item) => item.name).filter(Boolean));
+          setCategoryLabel(result.name_zh || result.name);
+          setCategoryPath((result.path_from_root_zh ?? result.path_from_root).map((item) => item.name_zh || item.name).filter(Boolean));
         })
         .catch(() => setCategoryLeafVerified(false));
       getCategoryAttributes(draft.target_category_id)
@@ -412,7 +416,9 @@ export function DraftsPage({
           const details = await getCategoryDetails(categoryId);
           return {
             ...prediction,
+            category_name_zh: details.name_zh,
             path_from_root: details.path_from_root,
+            path_from_root_zh: details.path_from_root_zh,
             is_leaf: details.leaf,
           };
         } catch {
@@ -452,8 +458,8 @@ export function DraftsPage({
       setCategoryAttributes(attributes);
       setCategoryVerified(verified);
       setCategoryLeafVerified(true);
-      setCategoryLabel(details.name);
-      setCategoryPath(details.path_from_root.map((item) => item.name).filter(Boolean));
+      setCategoryLabel(details.name_zh || details.name);
+      setCategoryPath((details.path_from_root_zh ?? details.path_from_root).map((item) => item.name_zh || item.name).filter(Boolean));
       setCategoryPredictions([]);
       setListingConfigured(false);
       onReviewChange(null);
@@ -717,7 +723,7 @@ export function DraftsPage({
             <div className="category-search-line">
               <input
                 value={categoryQuery}
-                placeholder="用英文标题搜索分类"
+                placeholder="输入中文或英文关键词搜索分类"
                 onChange={(event) => setCategoryQuery(event.target.value)}
               />
               <button className="secondary-button" disabled={!categoryQuery.trim() || busy === "category-search"} onClick={searchCategories}>
@@ -736,11 +742,12 @@ export function DraftsPage({
                 {categoryPredictions.slice(0, 8).map((prediction, index) => {
                   const categoryId = String(prediction.category_id ?? prediction.id ?? "");
                   const categoryName = String(prediction.category_name ?? prediction.name ?? categoryId);
+                  const categoryNameZh = String(prediction.category_name_zh ?? categoryName);
                   const isLeaf = prediction.is_leaf === true ? true : prediction.is_leaf === false ? false : null;
-                  const path = categoryPathLabel(prediction.path_from_root);
+                  const path = categoryPathLabel(prediction.path_from_root_zh ?? prediction.path_from_root);
                   return (
                     <button className={`category-prediction-item ${isLeaf === false ? "is-parent" : ""}`} key={`${categoryId}-${index}`} disabled={!categoryId || isLeaf === false || busy === "category-confirm"} onClick={() => confirmCategory(categoryId)}>
-                      <span className="category-prediction-copy"><strong>{categoryName}</strong><small>{path}</small><small>分类 ID：{categoryId}</small></span>
+                      <span className="category-prediction-copy"><strong>{categoryNameZh}</strong><small>{path}</small><small className="category-official-label">官方：{categoryName} · {categoryId}</small></span>
                       <span className="category-prediction-action">{busy === "category-confirm" ? "验证中" : isLeaf === true ? "叶子分类 · 验证并确认" : isLeaf === false ? "还有下级分类" : "验证分类"}</span>
                     </button>
                   );

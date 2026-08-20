@@ -67,7 +67,7 @@ def test_metadata_routes_proxy_category_prediction(monkeypatch):
     async def fake_predict(client, site_id: str, query: str):
         assert site_id == "MLM"
         assert query == "water bottle"
-        return [{"category_id": "MLM123", "category_name": "Bottles"}]
+        return [{"category_id": "MLM123", "category_name": "Moldes"}]
 
     monkeypatch.setattr(metadata, "predict_category", fake_predict)
     client = make_client()
@@ -76,6 +76,7 @@ def test_metadata_routes_proxy_category_prediction(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["predictions"][0]["category_id"] == "MLM123"
+    assert response.json()["predictions"][0]["category_name_zh"] == "模具"
 
 
 def test_metadata_routes_expose_upstream_prediction_failure_as_503(monkeypatch):
@@ -143,3 +144,5 @@ def test_metadata_routes_verify_leaf_category(monkeypatch):
     assert response.status_code == 200
     assert response.json()["leaf"] is True
     assert response.json()["path_from_root"][-1]["name"] == "Muffin Pans"
+    assert response.json()["name_zh"] == "玛芬烤盘"
+    assert response.json()["path_from_root_zh"][-1]["name_zh"] == "玛芬烤盘"

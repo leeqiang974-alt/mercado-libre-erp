@@ -13,6 +13,7 @@ from app.services.meli.metadata import (
     fetch_listing_type_ids,
     predict_category,
 )
+from app.services.meli.category_i18n import add_category_translations, translate_category_text
 from app.services.meli.metadata_cache import (
     category_attributes_key,
     category_details_key,
@@ -90,7 +91,17 @@ async def get_category_predictions(site_id: str, q: str = Query(...)) -> dict[st
         )
     except (httpx.HTTPError, TimeoutError) as exc:
         raise _metadata_unavailable("category prediction", exc) from exc
-    return {"predictions": predictions}
+    return {
+        "predictions": [
+            {
+                **prediction,
+                "category_name_zh": translate_category_text(
+                    prediction.get("category_name") or prediction.get("name")
+                ),
+            }
+            for prediction in predictions
+        ]
+    }
 
 
 @router.get("/categories/{category_id}/attributes")
@@ -121,7 +132,7 @@ async def get_category_details(
     normalized_category_id = category_id.strip().upper()
     cached = get_cached_metadata(db, category_details_key(normalized_category_id))
     if cached:
-        return cached
+        return add_category_translations(cached)
     try:
         details = await asyncio.wait_for(
             fetch_category_details(create_metadata_client(), normalized_category_id), timeout=3.5
@@ -130,7 +141,7 @@ async def get_category_details(
         raise _metadata_unavailable("category details", exc) from exc
     payload = {**details, "verified": True}
     upsert_cached_metadata(db, category_details_key(normalized_category_id), payload)
-    return payload
+    return add_category_translations(payload)
 
 
 @router.post("/categories/{category_id}/attributes/refresh")

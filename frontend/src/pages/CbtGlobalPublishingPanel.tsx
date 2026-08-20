@@ -151,7 +151,7 @@ export function CbtGlobalPublishingPanel({
           .then((details) => {
             if (!cancelled) {
               setCategoryLeafVerified(details.verified && details.leaf);
-              setCategoryPath(details.path_from_root.map((item) => item.name).filter(Boolean).join(" > "));
+              setCategoryPath((details.path_from_root_zh ?? details.path_from_root).map((item) => item.name_zh || item.name).filter(Boolean).join(" > "));
             }
           })
           .catch(() => !cancelled && setCategoryLeafVerified(false));
@@ -199,7 +199,7 @@ export function CbtGlobalPublishingPanel({
         throw new Error("请确认最底层叶子分类，父分类不能直接上架。");
       }
       setCategoryLeafVerified(true);
-      setCategoryPath(details.path_from_root.map((item) => item.name).filter(Boolean).join(" > "));
+      setCategoryPath((details.path_from_root_zh ?? details.path_from_root).map((item) => item.name_zh || item.name).filter(Boolean).join(" > "));
       const result = await getCategoryAttributes(categoryId);
       setAttributeDefinitions(result.attributes);
       setStatus(result.verified ? "已读取美客多官方类目属性" : "属性尚未验证");
@@ -332,7 +332,7 @@ export function CbtGlobalPublishingPanel({
       <div className="section-heading"><div><span className="step-number">3</span><h3>CBT 类目、属性与质保</h3></div></div>
       <div className="category-controls"><label>CBT 最终类目 ID *<input value={categoryId} placeholder="CBT..." onChange={(event) => { setCategoryId(event.target.value.toUpperCase()); setCategoryLeafVerified(false); setCategoryPath(""); setSaved(null); setPreview(null); }} /></label><button onClick={predictCategory} disabled={!globalTitle.trim() || busy === "category"}><Search size={16} /> 官方类目预测</button><button className="secondary-button" onClick={loadAttributes} disabled={!categoryId.startsWith("CBT") || busy === "attributes"}><ListChecks size={16} /> 验证叶子类目并读取属性</button></div>
       {categoryPath && <p className="category-path-label">{categoryPath} · {categoryLeafVerified ? "叶子类目已验证" : "待验证"}</p>}
-      {predictions.length > 0 && <div className="prediction-list">{predictions.map((item) => { const id = String(item.category_id ?? ""); return <button key={id} onClick={() => { setCategoryId(id); setCategoryLeafVerified(false); setCategoryPath(""); setAttributeDefinitions([]); setPreview(null); }}>{String(item.category_name ?? item.domain_name ?? id)}<small>{id}</small></button>; })}</div>}
+      {predictions.length > 0 && <div className="prediction-list">{predictions.map((item) => { const id = String(item.category_id ?? ""); const officialName = String(item.category_name ?? item.domain_name ?? id); const chineseName = String(item.category_name_zh ?? officialName); return <button key={id} onClick={() => { setCategoryId(id); setCategoryLeafVerified(false); setCategoryPath(""); setAttributeDefinitions([]); setPreview(null); }}>{chineseName}<small>官方：{officialName} · {id}</small></button>; })}</div>}
       <div className="form-grid two-col cbt-attributes">{requiredIds.map((id) => {
         const definition = attributeDefinitions.find((item) => String(item.id).toUpperCase() === id);
         return <label key={id}>{String(definition?.name ?? id)} *<input value={attributes[id] ?? ""} placeholder={id === "ITEM_CONDITION" ? "New" : id === "SELLER_SKU" ? "内部 SKU" : "例如 10 cm / 250 g"} onChange={(event) => setAttribute(id, event.target.value)} /></label>;

@@ -1083,7 +1083,9 @@ export async function getCategoryDetails(categoryId: string) {
   return response.json() as Promise<{
     id: string;
     name: string;
-    path_from_root: Array<{ id: string; name: string }>;
+    name_zh?: string;
+    path_from_root: Array<{ id: string; name: string; name_zh?: string }>;
+    path_from_root_zh?: Array<{ id: string; name: string; name_zh?: string }>;
     leaf: boolean;
     verified: boolean;
   }>;

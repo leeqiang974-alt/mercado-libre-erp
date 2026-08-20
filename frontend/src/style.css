@@ -831,6 +831,11 @@ input[readonly] { background: #eef1f4; color: #52606d; }
   font-size: 12px;
 }
 
+.category-prediction-copy .category-official-label {
+  color: #98a2b3;
+  font-size: 11px;
+}
+
 .category-prediction-action {
   flex: 0 0 auto;
   color: #c2410c;
