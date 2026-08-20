@@ -405,7 +405,21 @@ export function DraftsPage({
     setError("");
     try {
       const result = await getCategoryPredictions(draft.target_site_id, query);
-      setCategoryPredictions(result.predictions);
+      const enrichedPredictions = await Promise.all(result.predictions.slice(0, 8).map(async (prediction) => {
+        const categoryId = String(prediction.category_id ?? prediction.id ?? "");
+        if (!categoryId) return prediction;
+        try {
+          const details = await getCategoryDetails(categoryId);
+          return {
+            ...prediction,
+            path_from_root: details.path_from_root,
+            is_leaf: details.leaf,
+          };
+        } catch {
+          return prediction;
+        }
+      }));
+      setCategoryPredictions(enrichedPredictions);
     } catch (categoryError) {
       setError(readableDraftError(categoryError, "分类搜索失败"));
     } finally {
@@ -722,10 +736,12 @@ export function DraftsPage({
                 {categoryPredictions.slice(0, 8).map((prediction, index) => {
                   const categoryId = String(prediction.category_id ?? prediction.id ?? "");
                   const categoryName = String(prediction.category_name ?? prediction.name ?? categoryId);
+                  const isLeaf = prediction.is_leaf === true ? true : prediction.is_leaf === false ? false : null;
+                  const path = categoryPathLabel(prediction.path_from_root);
                   return (
-                    <button className="category-prediction-item" key={`${categoryId}-${index}`} disabled={!categoryId || busy === "category-confirm"} onClick={() => confirmCategory(categoryId)}>
-                      <span><strong>{categoryName}</strong><small>{categoryPathLabel(prediction.path_from_root)} · {categoryId}</small></span>
-                      <span>{busy === "category-confirm" ? "验证中" : "验证并确认"}</span>
+                    <button className={`category-prediction-item ${isLeaf === false ? "is-parent" : ""}`} key={`${categoryId}-${index}`} disabled={!categoryId || isLeaf === false || busy === "category-confirm"} onClick={() => confirmCategory(categoryId)}>
+                      <span className="category-prediction-copy"><strong>{categoryName}</strong><small>{path}</small><small>分类 ID：{categoryId}</small></span>
+                      <span className="category-prediction-action">{busy === "category-confirm" ? "验证中" : isLeaf === true ? "叶子分类 · 验证并确认" : isLeaf === false ? "还有下级分类" : "验证分类"}</span>
                     </button>
                   );
                 })}
