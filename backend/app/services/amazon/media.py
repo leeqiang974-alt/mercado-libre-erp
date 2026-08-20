@@ -1,0 +1,59 @@
+import re
+from urllib.parse import urlsplit, urlunsplit
+
+from app.schemas.drafts import MARKETING_TERMS
+
+
+AMAZON_RENDER_SIZE_PATTERN = re.compile(
+    r"\._AC(?:_[A-Z]+\d*)*_(?=\.[A-Za-z0-9]+(?:$|[?#]))",
+    re.IGNORECASE,
+)
+AMAZON_RENDER_DIMENSION_PATTERN = re.compile(
+    r"\._AC_(?:SL|SX|SY|US)(\d+)_",
+    re.IGNORECASE,
+)
+
+
+def _image_identity(url: str) -> str:
+    parts = urlsplit(url.strip())
+    normalized_path = AMAZON_RENDER_SIZE_PATTERN.sub("", parts.path)
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), normalized_path, "", ""))
+
+
+def _image_resolution(url: str) -> int:
+    match = AMAZON_RENDER_DIMENSION_PATTERN.search(url)
+    return int(match.group(1)) if match else 10_000
+
+
+def select_listing_images(image_urls: list[object], limit: int = 12) -> list[str]:
+    """Keep one highest-resolution URL per Amazon source image."""
+    selected: dict[str, tuple[int, int, str]] = {}
+    for index, raw_url in enumerate(image_urls):
+        url = str(raw_url or "").strip()
+        if not url.startswith(("https://", "http://")):
+            continue
+        identity = _image_identity(url)
+        candidate = (_image_resolution(url), -index, url)
+        existing = selected.get(identity)
+        if existing is None or candidate[:2] > existing[:2]:
+            selected[identity] = candidate
+    return [candidate[2] for candidate in selected.values()][:limit]
+
+
+def prepare_listing_title(source_title: object, source_brand: str) -> str:
+    title = " ".join(str(source_title or "").split())
+    if source_brand.strip():
+        title = re.sub(
+            rf"(?<![A-Za-z0-9]){re.escape(source_brand.strip())}(?![A-Za-z0-9])",
+            "",
+            title,
+            flags=re.IGNORECASE,
+        )
+    for term in MARKETING_TERMS:
+        title = re.sub(
+            rf"(?<![A-Za-z0-9]){re.escape(term)}(?![A-Za-z0-9])",
+            "",
+            title,
+            flags=re.IGNORECASE,
+        )
+    return " ".join(title.split()).strip(" -,:;")[:60].rstrip()

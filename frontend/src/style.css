@@ -728,6 +728,60 @@ input[readonly] { background: #eef1f4; color: #52606d; }
   text-transform: uppercase;
 }
 
+/* 上架库采用左侧固定选择、右侧单商品编辑，避免在长编辑页底部寻找草稿。 */
+.drafts-layout {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.drafts-sidebar {
+  position: sticky;
+  top: 20px;
+  padding: 14px;
+  max-height: calc(100vh - 40px);
+  overflow: hidden;
+}
+
+.drafts-sidebar-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.drafts-sidebar-heading h3 { margin: 0; }
+.drafts-sidebar-heading span { color: #697586; font-size: 12px; }
+.draft-rail-list { display: grid; gap: 6px; max-height: calc(100vh - 160px); overflow-y: auto; }
+.draft-rail-item {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 9px;
+  width: 100%;
+  padding: 7px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: #1f2933;
+  text-align: left;
+}
+.draft-rail-item:hover { background: #fff7ed; border-color: #fed7aa; }
+.draft-rail-item.selected { background: #fff7ed; border-color: #ea580c; box-shadow: inset 3px 0 #ea580c; }
+.draft-rail-item .product-image { width: 44px; height: 44px; object-fit: contain; background: #fafaf9; }
+.draft-rail-item > span { display: grid; gap: 2px; min-width: 0; }
+.draft-rail-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.draft-rail-item small { color: #697586; font-size: 11px; }
+.drafts-library-footer { margin-top: 20px; }
+.media-normalization-note { margin: 0 0 12px; }
+
+@media (max-width: 900px) {
+  .drafts-layout { grid-template-columns: 1fr; }
+  .drafts-sidebar { position: static; max-height: none; }
+  .draft-rail-list { display: flex; max-height: none; overflow-x: auto; padding-bottom: 4px; }
+  .draft-rail-item { min-width: 220px; }
+}
+
 .sidebar-group {
   margin-bottom: 20px;
 }

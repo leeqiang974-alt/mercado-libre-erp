@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.models.product_draft import ProductDraft
 from app.schemas.drafts import UNBRANDED, ProductDraftContentUpdate, ProductDraftCreate, ProductDraftRead
 from app.services.audit_events import create_audit_event
+from app.services.amazon.media import prepare_listing_title, select_listing_images
 
 
 _BRAND_LABEL_PATTERN = re.compile(r"^\s*(?:brand|brand name|marca)\s*[:\-].*$", re.IGNORECASE)
@@ -83,13 +84,13 @@ def save_product_draft_content(
 
         source = db.get(SourceProduct, draft.source_product_id)
         source_brand = source.brand if source else ""
-    normalized_title = normalize_listing_title(payload.title, source_brand)
+    normalized_title = normalize_listing_title(prepare_listing_title(payload.title, source_brand), source_brand)
     normalized_description = sanitize_unbranded_description(payload.description, source_brand)
     values = {
         "title": normalized_title,
         "description": normalized_description,
         "brand": UNBRANDED,
-        "image_urls_json": payload.image_urls,
+        "image_urls_json": select_listing_images(payload.image_urls),
         "video_urls_json": payload.video_urls,
     }
     before_values = {

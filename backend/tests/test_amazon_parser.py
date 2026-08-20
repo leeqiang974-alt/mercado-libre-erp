@@ -1,6 +1,7 @@
 import pytest
 
 from app.services.amazon.collector import validate_amazon_snapshot
+from app.services.amazon.media import prepare_listing_title, select_listing_images
 from app.services.amazon.normalizer import normalize_amazon_product
 from app.services.amazon.parser import _normalize_measurement_label, parse_amazon_html
 
@@ -261,6 +262,44 @@ def test_normalize_amazon_product_creates_draft_defaults():
     assert draft.currency == "MXN"
     assert draft.stock == 0
     assert draft.condition == ""
+
+
+def test_normalize_amazon_product_removes_source_brand_and_gallery_sizes():
+    parsed = {
+        "title": "CAKETIME Silicone Muffin Pan, Best Sale",
+        "brand": "CAKETIME",
+        "description": "",
+        "bullets": ["CAKETIME silicone pan"],
+        "technical_details": {},
+        "images": [
+            "https://m.media-amazon.com/images/I/hero._AC_SL1500_.jpg",
+            "https://m.media-amazon.com/images/I/hero._AC_SY450_.jpg",
+            "https://m.media-amazon.com/images/I/side._AC_SL1200_.jpg",
+            "https://m.media-amazon.com/images/I/side._AC_US100_.jpg",
+        ],
+        "price": {"amount": 10, "currency": "USD"},
+    }
+
+    draft = normalize_amazon_product(parsed, target_site_id="MLM")
+
+    assert draft.title == "Silicone Muffin Pan"
+    assert "CAKETIME" not in draft.description
+    assert draft.image_urls == [
+        "https://m.media-amazon.com/images/I/hero._AC_SL1500_.jpg",
+        "https://m.media-amazon.com/images/I/side._AC_SL1200_.jpg",
+    ]
+
+
+def test_select_listing_images_limits_and_prefers_high_resolution():
+    images = [
+        "https://example.com/a._AC_US100_.jpg",
+        "https://example.com/b._AC_SL1200_.jpg",
+        "https://example.com/a._AC_SY450_.jpg",
+        "https://example.com/b._AC_SX500_.jpg",
+    ]
+
+    assert select_listing_images(images, limit=1) == ["https://example.com/a._AC_SY450_.jpg"]
+    assert prepare_listing_title("CAKETIME Best Silicone Pan", "CAKETIME") == "Silicone Pan"
 
 
 def test_parse_amazon_price_handles_grouping_and_site_currency():

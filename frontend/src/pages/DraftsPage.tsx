@@ -58,17 +58,70 @@ const EMPTY_PRICING: DraftPricingInput = {
 const MAX_REVIEW_BATCH_SIZE = 50;
 const UNBRANDED = "Unbranded";
 
-function normalizeListingTitle(value: string) {
-  return value.replace(/\s+/g, " ").trim().slice(0, 60);
+const MARKETING_TERMS = [
+  "best", "top", "hot", "sale", "discount", "free shipping", "limited",
+  "premium", "buy now", "deal", "clearance", "guaranteed",
+];
+
+function removePhrase(value: string, phrase: string) {
+  if (!phrase.trim()) return value;
+  return value.replace(
+    new RegExp(`(?<![A-Za-z0-9])${phrase.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9])`, "ig"),
+    "",
+  );
 }
 
-function sanitizeUnbrandedDescription(value: string) {
+function normalizeListingTitle(value: string, sourceBrand = "") {
+  let title = value.replace(/\s+/g, " ").trim();
+  title = removePhrase(title, sourceBrand);
+  MARKETING_TERMS.forEach((term) => { title = removePhrase(title, term); });
+  return title.replace(/\s+/g, " ").trim().slice(0, 60).trimEnd();
+}
+
+function sanitizeUnbrandedDescription(value: string, sourceBrand = "") {
   return value
     .split("\n")
     .filter((line) => !/^\s*(brand|brand name|marca)\s*[:\-]/i.test(line))
     .join("\n")
+    .split(sourceBrand ? new RegExp(`(?<![A-Za-z0-9])${sourceBrand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9])`, "ig") : /$^/)
+    .join("")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function sourceBrandFromDraft(draft: ProductDraft) {
+  const match = draft.description.match(/^\s*Brand\s*:\s*(.+?)\s*$/im);
+  return match?.[1]?.trim() ?? "";
+}
+
+function imageIdentity(url: string) {
+  try {
+    const parsed = new URL(url);
+    parsed.pathname = parsed.pathname.replace(/\._AC(?:_[A-Z]+\d*)*_(?=\.[A-Za-z0-9]+$)/i, "");
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().toLowerCase();
+  } catch {
+    return url.trim().toLowerCase();
+  }
+}
+
+function imageResolution(url: string) {
+  const match = url.match(/\._AC_(?:SL|SX|SY|US)(\d+)_/i);
+  return match ? Number(match[1]) : 10000;
+}
+
+function selectListingImages(urls: string[], limit = 12) {
+  const selected = new Map<string, { url: string; resolution: number; index: number }>();
+  urls.forEach((rawUrl, index) => {
+    const url = rawUrl.trim();
+    if (!url) return;
+    const identity = imageIdentity(url);
+    const candidate = { url, resolution: imageResolution(url), index };
+    const current = selected.get(identity);
+    if (!current || candidate.resolution > current.resolution) selected.set(identity, candidate);
+  });
+  return [...selected.values()].slice(0, limit).map((item) => item.url);
 }
 
 function categoryPathLabel(value: unknown) {
@@ -205,12 +258,13 @@ export function DraftsPage({
       setContentForm(null);
       return;
     }
+    const sourceBrand = sourceBrandFromDraft(draft);
     setContentForm({
       expected_content_version: draft.content_version,
-      title: normalizeListingTitle(draft.title),
-      description: sanitizeUnbrandedDescription(draft.description),
+      title: normalizeListingTitle(draft.title, sourceBrand),
+      description: sanitizeUnbrandedDescription(draft.description, sourceBrand),
       brand: UNBRANDED,
-      image_urls: draft.image_urls.length > 0 ? draft.image_urls : [""],
+      image_urls: selectListingImages(draft.image_urls).length > 0 ? selectListingImages(draft.image_urls) : [""],
       video_urls: draft.video_urls ?? [],
     });
   }, [draftId, draft?.content_version]);
@@ -293,7 +347,10 @@ export function DraftsPage({
     setContentForm((current) => {
       if (!current) return current;
       if (name === "brand") return { ...current, brand: UNBRANDED };
-      return { ...current, [name]: name === "title" ? normalizeListingTitle(value) : value };
+      return {
+        ...current,
+        [name]: name === "title" ? normalizeListingTitle(value, draft ? sourceBrandFromDraft(draft) : "") : value,
+      };
     });
   }
 
@@ -424,22 +481,23 @@ export function DraftsPage({
     setBusy("content");
     setError("");
     try {
+      const selectedImages = selectListingImages(contentForm.image_urls);
       const updated = await saveDraftContent(draftId, {
         ...contentForm,
         expected_content_version: draft.content_version,
-        title: normalizeListingTitle(contentForm.title),
+        title: normalizeListingTitle(contentForm.title, sourceBrandFromDraft(draft)),
         brand: UNBRANDED,
-        image_urls: contentForm.image_urls.map((url) => url.trim()).filter(Boolean),
-        description: sanitizeUnbrandedDescription(contentForm.description),
+        image_urls: selectedImages,
+        description: sanitizeUnbrandedDescription(contentForm.description, sourceBrandFromDraft(draft)),
         video_urls: (contentForm.video_urls ?? []).map((url) => url.trim()).filter(Boolean),
       });
       onDraftChange(updated);
       setContentForm({
         expected_content_version: updated.content_version,
-        title: normalizeListingTitle(updated.title),
-        description: sanitizeUnbrandedDescription(updated.description),
+        title: normalizeListingTitle(updated.title, sourceBrandFromDraft(draft)),
+        description: sanitizeUnbrandedDescription(updated.description, sourceBrandFromDraft(draft)),
         brand: UNBRANDED,
-        image_urls: updated.image_urls.length > 0 ? updated.image_urls : [""],
+        image_urls: selectListingImages(updated.image_urls).length > 0 ? selectListingImages(updated.image_urls) : [""],
         video_urls: updated.video_urls ?? [],
       });
       if (updated.content_version !== draft.content_version) {
@@ -554,6 +612,8 @@ export function DraftsPage({
   const decision = typeof review?.decision === "string" ? review.decision : "not reviewed";
   const normalizedContentImages = contentForm?.image_urls.map((url) => url.trim()).filter(Boolean) ?? [];
   const normalizedContentVideos = contentForm?.video_urls?.map((url) => url.trim()).filter(Boolean) ?? [];
+  const sourceBrand = draft ? sourceBrandFromDraft(draft) : "";
+  const selectedDraftImages = draft ? selectListingImages(draft.image_urls) : [];
   const categoryConfirmed = Boolean(draft?.target_category_id && categoryVerified && categoryLeafVerified);
   const titleValid = Boolean(contentForm?.title.trim() && contentForm.title.length <= 60);
   const contentDirty = Boolean(
@@ -593,14 +653,28 @@ export function DraftsPage({
         {draftId && <span className="record-id">上架单 #{draftId}</span>}
       </header>
 
+      <div className="drafts-layout">
+        <aside className="drafts-sidebar surface">
+          <div className="drafts-sidebar-heading"><h3>上架库</h3><span>{savedDrafts.length} 个</span></div>
+          <p className="section-note">选择商品后，在右侧按顺序完成分类、内容、素材、价格和审核。</p>
+          <div className="draft-rail-list">
+            {savedDrafts.map((savedDraft) => (
+              <button className={`draft-rail-item ${draftId === savedDraft.id ? "selected" : ""}`} key={savedDraft.id} onClick={() => selectSavedDraft(savedDraft)}>
+                <ProductImage src={selectListingImages(savedDraft.image_urls)[0] ?? savedDraft.image_urls[0]} alt="" />
+                <span><strong>{savedDraft.title || "未命名商品"}</strong><small>#{savedDraft.id} · {savedDraft.target_site_id}</small><small>{savedDraft.risk_status}</small></span>
+              </button>
+            ))}
+          </div>
+        </aside>
+        <div className="drafts-main">
       {!draft && <div className="empty-state">请先选择草稿，或去商品采集页面导入 Amazon 商品</div>}
       {draft && (
         <>
           <div className="product-summary">
-            <ProductImage src={draft.image_urls[0]} alt={draft.title || "Product"} />
+            <ProductImage src={selectedDraftImages[0] ?? draft.image_urls[0]} alt={draft.title || "Product"} />
             <div>
-              <h3>{draft.title || "未命名商品"}</h3>
-              <p>{draft.brand || "未识别品牌"}</p>
+              <h3>{contentForm?.title || normalizeListingTitle(draft.title, sourceBrand) || "未命名商品"}</h3>
+              <p>品牌：{UNBRANDED} · 来源素材已隔离</p>
               {draft.source_variant_asin && (
                 <div className="variant-provenance">
                   <span>Amazon 变体 · {draft.source_variant_asin}</span>
@@ -705,9 +779,10 @@ export function DraftsPage({
               </div>
               <div className="image-url-editor">
                  <div className="section-heading compact">
-                   <div><h4>图片素材库</h4><p className="section-note">这里保存的是原图地址；大、中、小只是页面预览尺寸，不是三套要分别上传的图片。发布 API 使用原图地址。</p></div>
+                   <div><h4>图片素材库</h4><p className="section-note">同一张 Amazon 图片的大、中、小规格已自动合并，只保留最高分辨率版本；发布时最多使用 12 张。</p></div>
                   <span>{contentForm.image_urls.filter(Boolean).length} / 12</span>
                 </div>
+                {draft.image_urls.length > selectedDraftImages.length && <p className="inline-warning media-normalization-note">已从 {draft.image_urls.length} 条采集资源中去重，当前保留 {selectedDraftImages.length} 张可上架图片。</p>}
                 <div className="media-library-grid">
                   {contentForm.image_urls.map((url, index) => (
                    <div className={`media-tile ${index === 0 ? "is-cover" : ""}`} key={`${index}-${contentForm.expected_content_version}`}>
@@ -754,10 +829,10 @@ export function DraftsPage({
                   disabled={!contentDirty || busy === "content"}
                   onClick={() => setContentForm({
                     expected_content_version: draft.content_version ?? 1,
-                    title: normalizeListingTitle(draft.title),
-                    description: sanitizeUnbrandedDescription(draft.description),
+                    title: normalizeListingTitle(draft.title, sourceBrand),
+                    description: sanitizeUnbrandedDescription(draft.description, sourceBrand),
                     brand: UNBRANDED,
-                    image_urls: draft.image_urls.length > 0 ? draft.image_urls : [""],
+                    image_urls: selectedDraftImages.length > 0 ? selectedDraftImages : [""],
                     video_urls: draft.video_urls ?? [],
                   })}
                 >
@@ -883,24 +958,10 @@ export function DraftsPage({
       )}
 
       {error && <p className="error">{error}</p>}
-      <section className="saved-section">
-        <div className="section-heading"><div><h3>上架库</h3><p>每个采集商品都是一张上架单。打开后编辑，处理完成即可发布。</p></div><span>{savedDrafts.length}</span></div>
-        {savedDrafts.length === 0 && <p>暂无待上架商品，请先使用智能采集。</p>}
-        {savedDrafts.length > 0 && (
-          <div className="draft-list">
-            {savedDrafts.map((savedDraft) => (
-              <button className={`draft-row ${draftId === savedDraft.id ? "selected" : ""}`} key={savedDraft.id} onClick={() => selectSavedDraft(savedDraft)}>
-                <ProductImage src={savedDraft.image_urls[0]} alt={savedDraft.title || "商品图片"} />
-                <span className="draft-copy">
-                  <strong>{savedDraft.title || "未命名商品"}</strong>
-                  <small>上架单 #{savedDraft.id} · {savedDraft.target_site_id} · 采集价 {savedDraft.source_currency} {savedDraft.source_price ?? "-"} · 售价 {savedDraft.currency} {savedDraft.price ?? "未定价"}</small>
-                  {savedDraft.source_variant_asin && <small>{savedDraft.source_variant_asin}{Object.entries(savedDraft.source_variant_attributes).slice(0, 2).map(([name, value]) => ` · ${name}: ${value}`)}</small>}
-                </span>
-                <span className="draft-state">{savedDraft.risk_status}</span>
-              </button>
-            ))}
-          </div>
-        )}
+        </div>
+      </div>
+      <section className="saved-section drafts-library-footer">
+        <div className="section-heading"><div><h3>批量自动处理</h3><p>商品积累后，可在这里批量发起 AI 合规审核。</p></div></div>
         {savedDrafts.length > 0 && <details className="advanced-section">
           <summary>批量自动处理（商品积累后使用）</summary>
           <p className="section-note">先在这里选择多张已完成编辑的上架单，再批量发起 AI 合规审核。未完成的商品会被系统拦截。</p>
