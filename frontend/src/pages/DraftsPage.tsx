@@ -5,6 +5,8 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Edit3,
+  GripVertical,
   ImageOff,
   ListPlus,
   Plus,
@@ -12,6 +14,7 @@ import {
   Save,
   ShieldCheck,
   Sparkles,
+  Star,
   Trash2,
   Video,
 } from "lucide-react";
@@ -208,9 +211,11 @@ export function DraftsPage({
   const [categoryPath, setCategoryPath] = useState<string[]>([]);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [draggingImageIndex, setDraggingImageIndex] = useState<number | null>(null);
   const draftEpochRef = useRef(0);
   const historyEpochRef = useRef(0);
   const currentDraftIdRef = useRef(draftId);
+  const imageInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
   currentDraftIdRef.current = draftId;
 
   useEffect(() => {
@@ -384,6 +389,28 @@ export function DraftsPage({
       [imageUrls[index], imageUrls[nextIndex]] = [imageUrls[nextIndex], imageUrls[index]];
       return { ...current, image_urls: imageUrls };
     });
+  }
+
+  function setCoverImage(index: number) {
+    if (index === 0) return;
+    setContentForm((current) => {
+      if (!current || index < 0 || index >= current.image_urls.length) return current;
+      const imageUrls = [...current.image_urls];
+      const [cover] = imageUrls.splice(index, 1);
+      imageUrls.unshift(cover);
+      return { ...current, image_urls: imageUrls };
+    });
+  }
+
+  function dropContentImage(targetIndex: number) {
+    setContentForm((current) => {
+      if (!current || draggingImageIndex === null || draggingImageIndex === targetIndex) return current;
+      const imageUrls = [...current.image_urls];
+      const [moved] = imageUrls.splice(draggingImageIndex, 1);
+      imageUrls.splice(targetIndex, 0, moved);
+      return { ...current, image_urls: imageUrls };
+    });
+    setDraggingImageIndex(null);
   }
 
   function updateContentVideo(index: number, value: string) {
@@ -801,25 +828,37 @@ export function DraftsPage({
                 </button>
               </div>
               <div className="image-url-editor">
-                 <div className="section-heading compact">
-                   <div><h4>图片素材库</h4><p className="section-note">同一张 Amazon 图片的大、中、小规格已自动合并，只保留最高分辨率版本；发布时最多使用 12 张。</p></div>
-                  <span>{contentForm.image_urls.filter(Boolean).length} / 12</span>
+                 <div className="section-heading compact media-library-heading">
+                   <div><h4>图片素材库</h4><p className="section-note">拖动图片调整顺序，第一张为主图；系统会合并同一张 Amazon 图片的不同尺寸，保留最高分辨率版本。</p></div>
+                  <strong className="media-count">{contentForm.image_urls.filter(Boolean).length} / 12</strong>
                 </div>
                 {draft.image_urls.length > selectedDraftImages.length && <p className="inline-warning media-normalization-note">已从 {draft.image_urls.length} 条采集资源中去重，当前保留 {selectedDraftImages.length} 张可上架图片。</p>}
                 <div className="media-library-grid">
                   {contentForm.image_urls.map((url, index) => (
-                   <div className={`media-tile ${index === 0 ? "is-cover" : ""}`} key={`${index}-${contentForm.expected_content_version}`}>
+                   <div
+                     className={`media-tile ${index === 0 ? "is-cover" : ""} ${draggingImageIndex === index ? "is-dragging" : ""}`}
+                     key={`${index}-${contentForm.expected_content_version}`}
+                     draggable
+                     onDragStart={() => setDraggingImageIndex(index)}
+                     onDragOver={(event) => event.preventDefault()}
+                     onDrop={() => dropContentImage(index)}
+                     onDragEnd={() => setDraggingImageIndex(null)}
+                   >
+                      <div className="media-tile-topline"><span><GripVertical size={15} /> 图片 {index + 1}</span><span>{index === 0 ? "主图" : `排序 ${index + 1}`}</span></div>
                       <MediaImage src={url} alt={`商品图片 ${index + 1}`} />
                       {index === 0 && <span className="cover-label">主图</span>}
-                      <input aria-label={`商品图片链接 ${index + 1}`} placeholder="粘贴图片地址" value={url} onChange={(event) => updateContentImage(index, event.target.value)} />
+                      <input ref={(element) => { imageInputRefs.current[index] = element; }} aria-label={`商品图片链接 ${index + 1}`} placeholder="粘贴图片地址" value={url} onChange={(event) => updateContentImage(index, event.target.value)} />
                       <div className="media-tile-actions">
+                        <button className="media-tool-button" title="设为主图" aria-label={`图片 ${index + 1} 设为主图`} disabled={index === 0} onClick={() => setCoverImage(index)}><Star size={14} /> 主图</button>
+                        <button className="media-tool-button" title="编辑图片地址" aria-label={`编辑图片 ${index + 1} 地址`} onClick={() => imageInputRefs.current[index]?.focus()}><Edit3 size={14} /> 编辑</button>
                         <button className="icon-button secondary-button" title="上移" aria-label={`图片 ${index + 1} 上移`} disabled={index === 0} onClick={() => moveContentImage(index, -1)}><ChevronUp size={14} /></button>
                         <button className="icon-button secondary-button" title="下移" aria-label={`图片 ${index + 1} 下移`} disabled={index === contentForm.image_urls.length - 1} onClick={() => moveContentImage(index, 1)}><ChevronDown size={14} /></button>
-                        <button className="icon-button secondary-button" title="删除图片" aria-label={`删除图片 ${index + 1}`} onClick={() => removeContentImage(index)}><Trash2 size={14} /></button>
+                        <button className="icon-button secondary-button media-delete-button" title="删除图片" aria-label={`删除图片 ${index + 1}`} onClick={() => removeContentImage(index)}><Trash2 size={14} /></button>
                       </div>
                     </div>
                   ))}
                 </div>
+                <div className="media-library-toolbar"><span><GripVertical size={15} /> 可拖动排序</span><span>图片必须为公开 HTTPS 地址</span><span>发布最多 12 张</span></div>
                 <button
                   className="secondary-button"
                   disabled={contentForm.image_urls.length >= 12}
