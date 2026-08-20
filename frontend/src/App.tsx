@@ -25,7 +25,8 @@ const HASH_PAGE_ALIASES: Record<string, string> = {
   listing: "drafts",
   products: "products",
   "store-products": "products",
-  publishing: "publishing",
+  // Historical links keep working, but publication configuration now lives in the same one-page editor.
+  publishing: "drafts",
 };
 
 function pageFromLocation() {
@@ -152,24 +153,6 @@ export function App() {
         />
       )}
       {page === "drafts" && (
-        <DraftsPage
-          draft={draft}
-          draftId={draftId}
-          review={review}
-          onReviewChange={setReview}
-          onDraftChange={setDraft}
-          onContentDirtyChange={setDraftContentDirty}
-          onSelectDraft={(selectedDraft) => {
-            openDraftForListing(selectedDraft);
-          }}
-          onContinueListing={() => {
-            setPage("publishing");
-            setLocationPage("publishing", draftId);
-          }}
-        />
-      )}
-      {page === "products" && <StoreProductsPage onOpenListingLibrary={() => changePage("drafts")} />}
-      {page === "publishing" && (
         <PublishingPage
           draft={draft}
           draftId={draftId}
@@ -182,6 +165,8 @@ export function App() {
           }}
         />
       )}
+      {page === "products" && <StoreProductsPage onOpenListingLibrary={() => changePage("drafts")} />}
+
 
       {/* 订单管理 */}
       {page === "orders" && <OrdersPage />}
