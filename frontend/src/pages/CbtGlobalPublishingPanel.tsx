@@ -230,7 +230,7 @@ export function CbtGlobalPublishingPanel({
         setDescription(sanitizeCbtDescription(config.description));
         setPriceUsd(String(config.price_usd));
         setQuantity(String(config.available_quantity));
-        setAttributes({ BRAND: "Unbranded", ...Object.fromEntries(config.attributes.map((item) => [item.id, item.value_name])), BRAND: "Unbranded" });
+        setAttributes({ ...Object.fromEntries(config.attributes.map((item) => [item.id, item.value_name])), BRAND: "Unbranded" });
         setOffers(config.sites_to_sell);
         setWarranty(config.sale_terms.find((term) => term.id === "WARRANTY_TYPE")?.value_name ?? "");
       })
@@ -447,3 +447,4 @@ export function CbtGlobalPublishingPanel({
     <footer className="wf-action-bar"><span>{status || (saved ? "配置已保存" : "请先完成必填内容")}</span><div><button className="secondary-button" onClick={onBackToEditing}>取消</button><button disabled={!canSave || busy === "save"} onClick={saveConfig}><Save size={16} /> 保存</button><button className="secondary-button" disabled={!saved || busy === "preview"} onClick={previewPayload}><ListChecks size={16} /> 预检</button><label className="check-row"><input type="checkbox" checked={publishConfirmed} disabled={!preview?.allowed || !readiness?.mercado_libre.live_publish_enabled} onChange={(event) => setPublishConfirmed(event.target.checked)} />确认发布</label><button disabled={!publishConfirmed || !preview?.allowed || !readiness?.mercado_libre.live_publish_enabled || busy === "execute"} onClick={executePublish}><Globe2 size={16} /> 立即发布</button></div></footer>
   </section>;
 }
+
