@@ -166,7 +166,7 @@ def create_product_draft(
         currency=draft.currency,
         stock=draft.stock,
         listing_type_id=draft.listing_type_id,
-        image_urls_json=draft.image_urls,
+        image_urls_json=select_listing_images(draft.image_urls),
         video_urls_json=draft.video_urls,
     )
     db.add(model)

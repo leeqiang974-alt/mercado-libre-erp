@@ -298,7 +298,7 @@ def test_select_listing_images_limits_and_prefers_high_resolution():
         "https://example.com/b._AC_SX500_.jpg",
     ]
 
-    assert select_listing_images(images, limit=1) == ["https://example.com/a._AC_SY450_.jpg"]
+    assert select_listing_images(images, limit=1) == ["https://example.com/b._AC_SL1200_.jpg"]
     assert prepare_listing_title("CAKETIME Best Silicone Pan", "CAKETIME") == "Silicone Pan"
 
 

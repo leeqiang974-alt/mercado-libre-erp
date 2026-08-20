@@ -11,6 +11,7 @@ from app.schemas.source_products import (
     SourceProductSummaryRead,
 )
 from app.services.amazon.parser import extract_amazon_asin
+from app.services.amazon.media import select_listing_images
 from app.services.amazon.normalizer import normalize_amazon_product
 from app.services.drafts import create_product_draft
 
@@ -48,9 +49,19 @@ def create_source_product(
         source_currency=normalized_snapshot.price.currency if normalized_snapshot else "",
         description=normalized_snapshot.description if normalized_snapshot else "",
         bullets_json=normalized_snapshot.bullets if normalized_snapshot else [],
-        image_urls_json=normalized_snapshot.images if normalized_snapshot else [],
+        image_urls_json=(
+            select_listing_images(normalized_snapshot.images)
+            if normalized_snapshot
+            else []
+        ),
         variants_json=(
-            [variant.model_dump() for variant in normalized_snapshot.variants]
+            [
+                {
+                    **variant.model_dump(),
+                    "image_urls": select_listing_images(variant.image_urls),
+                }
+                for variant in normalized_snapshot.variants
+            ]
             if normalized_snapshot
             else []
         ),

@@ -60,6 +60,7 @@ const EMPTY_PRICING: DraftPricingInput = {
 
 const MAX_REVIEW_BATCH_SIZE = 50;
 const UNBRANDED = "Unbranded";
+const MIN_LISTING_IMAGE_EDGE = 500;
 
 const MARKETING_TERMS = [
   "best", "top", "hot", "sale", "discount", "free shipping", "limited",
@@ -121,6 +122,7 @@ function selectListingImages(urls: string[], limit = 12) {
     if (!url) return;
     const identity = imageIdentity(url);
     const candidate = { url, resolution: imageResolution(url), index };
+    if (candidate.resolution < MIN_LISTING_IMAGE_EDGE) return;
     const current = selected.get(identity);
     if (!current || candidate.resolution > current.resolution) selected.set(identity, candidate);
   });

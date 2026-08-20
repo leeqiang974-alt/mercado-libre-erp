@@ -12,6 +12,7 @@ AMAZON_RENDER_DIMENSION_PATTERN = re.compile(
     r"\._AC_(?:SL|SX|SY|US)(\d+)_",
     re.IGNORECASE,
 )
+MIN_LISTING_IMAGE_EDGE = 500
 
 
 def _image_identity(url: str) -> str:
@@ -32,8 +33,14 @@ def select_listing_images(image_urls: list[object], limit: int = 12) -> list[str
         url = str(raw_url or "").strip()
         if not url.startswith(("https://", "http://")):
             continue
+        resolution = _image_resolution(url)
+        # Amazon carousel thumbnails such as _AC_US100_ are navigation assets,
+        # not listing media. Keep unknown-size originals and reject known small
+        # render variants before they reach the database or publish payload.
+        if resolution < MIN_LISTING_IMAGE_EDGE:
+            continue
         identity = _image_identity(url)
-        candidate = (_image_resolution(url), -index, url)
+        candidate = (resolution, -index, url)
         existing = selected.get(identity)
         if existing is None or candidate[:2] > existing[:2]:
             selected[identity] = candidate

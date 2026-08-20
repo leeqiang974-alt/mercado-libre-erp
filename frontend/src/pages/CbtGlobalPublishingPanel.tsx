@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -25,6 +25,7 @@ import {
   saveDraftPricing,
   saveCbtListingConfig,
   type CbtListingConfig,
+  type CbtMarketplace,
   type CbtPublishingProfile,
   type DraftPricing,
   type DraftPricingInput,
@@ -60,6 +61,26 @@ function sanitizeCbtDescription(value: string) {
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function createRemoteOffer(market: CbtMarketplace, title: string): Offer {
+  return {
+    site_id: market.site_id,
+    title: normalizeCbtTitle(title),
+    listing_type_id: "gold_pro",
+    logistic_type: "remote",
+    picture_urls: [],
+  };
+}
+
+function remoteMarketsForProfile(profile: CbtPublishingProfile): CbtMarketplace[] {
+  return Array.from(
+    new Map(
+      profile.marketplaces
+        .filter((market) => market.available && market.logistic_type === "remote")
+        .map((market) => [market.site_id, market]),
+    ).values(),
+  );
 }
 
 export function CbtGlobalPublishingPanel({
@@ -101,9 +122,29 @@ export function CbtGlobalPublishingPanel({
   const [pricing, setPricing] = useState<DraftPricing | null>(null);
   const [busy, setBusy] = useState("");
   const [status, setStatus] = useState("");
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const [hasSavedConfig, setHasSavedConfig] = useState(false);
+  const offersInitializedRef = useRef(false);
 
   const cbtStores = stores.filter((store) => store.site_id === "CBT" && store.oauth_status === "connected");
-  const remoteMarkets = (profile?.marketplaces ?? []).filter((market) => market.available);
+  const remoteMarkets = useMemo(
+    () => (profile ? remoteMarketsForProfile(profile) : []),
+    [profile],
+  );
+  const fullMarkets = useMemo(() => {
+    const configured = (profile?.marketplaces ?? []).filter(
+      (market) => market.site_id === "MLM" && market.logistic_type === "fulfillment",
+    );
+    return configured.length > 0 ? configured : [{
+      site_id: "MLM",
+      seller_id: "",
+      logistic_type: "fulfillment",
+      user_product: false,
+      listing_count: null,
+      listing_limit: null,
+      available: false,
+    } satisfies CbtMarketplace];
+  }, [profile]);
   const requiredIds = useMemo(() => {
     const fromMetadata = attributeDefinitions
       .filter((attribute) => {
@@ -115,6 +156,8 @@ export function CbtGlobalPublishingPanel({
     return [...new Set([...REQUIRED_ATTRIBUTE_IDS, ...fromMetadata])];
   }, [attributeDefinitions]);
   const missing = requiredIds.filter((id) => !attributes[id]?.trim());
+  const allRemoteSelected = remoteMarkets.length > 0
+    && remoteMarkets.every((market) => offers.some((offer) => offer.site_id === market.site_id));
   const unitCostUsd = pricing
     ? (pricing.purchase_cost + pricing.domestic_shipping_cost) * pricing.exchange_rate
     : null;
@@ -144,6 +187,9 @@ export function CbtGlobalPublishingPanel({
           ? String(config.store_id)
           : storeRows.find((store) => store.site_id === "CBT" && store.oauth_status === "connected")?.id ?? "";
         setStoreId(defaultStore);
+        setHasSavedConfig(Boolean(config));
+        setConfigLoaded(true);
+        offersInitializedRef.current = Boolean(config);
         if (!config) return;
         setSaved(config);
         setCategoryId(config.category_id);
@@ -173,11 +219,18 @@ export function CbtGlobalPublishingPanel({
     let cancelled = false;
     setBusy("profile");
     getCbtPublishingProfile(Number(storeId))
-      .then((data) => { if (!cancelled) setProfile(data); })
+      .then((data) => {
+        if (cancelled) return;
+        setProfile(data);
+        if (configLoaded && !hasSavedConfig && data.model === "traditional_global" && !offersInitializedRef.current) {
+          setOffers(remoteMarketsForProfile(data).map((market) => createRemoteOffer(market, globalTitle)));
+          offersInitializedRef.current = true;
+        }
+      })
       .catch((error) => !cancelled && setStatus(error instanceof Error ? error.message : "无法读取店铺跨境能力"))
       .finally(() => !cancelled && setBusy(""));
     return () => { cancelled = true; };
-  }, [storeId, profileReloadKey]);
+  }, [storeId, profileReloadKey, configLoaded, hasSavedConfig]);
 
   async function predictCategory() {
     setBusy("category"); setStatus("");
@@ -214,10 +267,17 @@ export function CbtGlobalPublishingPanel({
   }
 
   function toggleMarket(siteId: string) {
+    offersInitializedRef.current = true;
     setOffers((current) => {
       if (current.some((offer) => offer.site_id === siteId)) return current.filter((offer) => offer.site_id !== siteId);
       return [...current, { site_id: siteId, title: globalTitle, listing_type_id: "gold_pro", logistic_type: "remote", picture_urls: [] }];
     });
+    setSaved(null); setPreview(null); setApproved(false); setPublishConfirmed(false); setExecution(null);
+  }
+
+  function toggleAllRemoteMarkets() {
+    offersInitializedRef.current = true;
+    setOffers(allRemoteSelected ? [] : remoteMarkets.map((market) => createRemoteOffer(market, globalTitle)));
     setSaved(null); setPreview(null); setApproved(false); setPublishConfirmed(false); setExecution(null);
   }
 
@@ -305,7 +365,7 @@ export function CbtGlobalPublishingPanel({
     <section className="surface publish-section">
       <div className="section-heading"><div><span className="step-number">1</span><h3>跨境店与商品基础资料</h3></div><button className="icon-button" title="刷新店铺能力" disabled={!storeId || busy === "profile"} onClick={() => setProfileReloadKey((value) => value + 1)}><RefreshCw size={17} /></button></div>
       <label>已授权跨境店
-        <select value={storeId} onChange={(event) => { setStoreId(event.target.value); setOffers([]); setPreview(null); }}>
+        <select value={storeId} onChange={(event) => { setStoreId(event.target.value); setOffers([]); setHasSavedConfig(false); offersInitializedRef.current = false; setPreview(null); }}>
           <option value="">选择 CBT 店铺</option>
           {cbtStores.map((store) => <option key={store.id} value={store.id}>{store.display_name} · 卖家 {store.seller_id}</option>)}
         </select>
@@ -314,7 +374,11 @@ export function CbtGlobalPublishingPanel({
       {profile && <>
         <div className="cbt-profile-line"><Store size={16} /><strong>{profile.seller_id}</strong><span>发布模型：{profile.model === "traditional_global" ? "传统 Global Selling" : "User Products"}</span></div>
         {profile.model !== "traditional_global" && <p className="inline-warning">此账号已启用 User Products，不能使用本页的传统 `/global/items` 流程。</p>}
-        <p className="section-note">可销售国家和 Remote 物流能力来自已授权店铺；在销售配置表中启用需要发布的国家。</p>
+        <p className="section-note">系统默认选择全部可用 Remote 站点；墨西哥 FULL 不参与本流程，保持灰色禁用。</p>
+        <div className="cbt-market-selection">
+          <div><strong>同时发布到站点</strong><small>已默认选择 {offers.filter((offer) => remoteMarkets.some((market) => market.site_id === offer.site_id)).length} 个 Remote 站点</small></div>
+          <label><input type="checkbox" checked={allRemoteSelected} disabled={profile.model !== "traditional_global" || remoteMarkets.length === 0} onChange={toggleAllRemoteMarkets} /> 全选非 FULL 站点</label>
+        </div>
       </>}
     </section>
 
@@ -342,7 +406,7 @@ export function CbtGlobalPublishingPanel({
     </section>
 
     <section className="surface publish-section">
-      <div className="section-heading"><div><span className="step-number">4</span><h3>销售配置</h3><p>先设置全球售价，再逐个启用销售国家并确认标题和刊登类型。</p></div></div>
+      <div className="section-heading"><div><span className="step-number">4</span><h3>销售配置</h3><p>只填写一次全球售价；各站点显示该售价，并分别选择刊登类型。</p></div></div>
       <div className="cbt-pricing-rule">非 FULL 跨境商品按“售价 - 采购成本 - 国内运费”显示预估净收益；国际运输由美客多统一处理，不作为单品成本输入。</div>
       <div className="cbt-sales-table-wrap">
         <table className="cbt-sales-table">
@@ -367,6 +431,15 @@ export function CbtGlobalPublishingPanel({
                 <td><div className="cbt-title-input"><input disabled={!enabled} maxLength={60} value={offer?.title ?? globalTitle} onChange={(event) => updateOffer(market.site_id, "title", event.target.value)} /><small>{(offer?.title ?? globalTitle).length}/60</small></div></td>
               </tr>;
             })}
+            {fullMarkets.map((market) => (
+              <tr className="disabled cbt-full-row" key={`${market.site_id}-${market.logistic_type}`}>
+                <th><label className="cbt-site-toggle"><input type="checkbox" disabled checked={false} readOnly /><span><strong>墨西哥（FULL）</strong><small>MLM · FULL 履约不参与本次发布</small></span></label></th>
+                <td><span className="cbt-derived-value">不发布</span></td>
+                <td><span className="cbt-derived-value">-</span></td>
+                <td><span className="cbt-derived-value">已排除</span></td>
+                <td><span className="cbt-derived-value">由店铺 FULL 流程单独管理</span></td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
