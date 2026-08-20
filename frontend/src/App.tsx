@@ -42,9 +42,14 @@ function setLocationPage(page: string, draftId?: number | null) {
   window.history.replaceState({}, "", `${window.location.pathname}${search ? `?${search}` : ""}${hash}`);
 }
 
+function draftIdFromLocation(): number | null {
+  const value = Number(new URLSearchParams(window.location.search).get("draft_id"));
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
 export function App() {
   const [draft, setDraft] = useState<ProductDraft | null>(null);
-  const [draftId, setDraftId] = useState<number | null>(null);
+  const [draftId, setDraftId] = useState<number | null>(draftIdFromLocation);
   const [review, setReview] = useState<Record<string, unknown> | null>(null);
   const [page, setPage] = useState(pageFromLocation);
   const [status, setStatus] = useState("");
@@ -54,7 +59,7 @@ export function App() {
     const openLocationRoute = async () => {
       const nextPage = pageFromLocation();
       const draftValue = Number(new URLSearchParams(window.location.search).get("draft_id"));
-      if (nextPage === "drafts" && Number.isInteger(draftValue) && draftValue > 0) {
+      if ((nextPage === "drafts" || nextPage === "publishing") && Number.isInteger(draftValue) && draftValue > 0) {
         try {
           const selectedDraft = await getDraft(draftValue);
           setDraft(selectedDraft);
@@ -71,6 +76,24 @@ export function App() {
     window.addEventListener("hashchange", openLocationRoute);
     return () => window.removeEventListener("hashchange", openLocationRoute);
   }, []);
+
+  // Direct Global Selling links must be self-contained. The publishing page
+  // cannot rely on the editor having been opened in this browser session.
+  useEffect(() => {
+    if (page !== "publishing" || !draftId || draft) return;
+    let cancelled = false;
+    getDraft(draftId)
+      .then((selectedDraft) => {
+        if (!cancelled) {
+          setDraft(selectedDraft);
+          setReview(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setStatus(`无法读取上架单 #${draftId}`);
+      });
+    return () => { cancelled = true; };
+  }, [page, draftId, draft]);
 
   function changePage(nextPage: string) {
     if (
@@ -139,7 +162,10 @@ export function App() {
           onSelectDraft={(selectedDraft) => {
             openDraftForListing(selectedDraft);
           }}
-          onContinueListing={() => setPage("publishing")}
+          onContinueListing={() => {
+            setPage("publishing");
+            setLocationPage("publishing", draftId);
+          }}
         />
       )}
       {page === "products" && <StoreProductsPage onOpenListingLibrary={() => changePage("drafts")} />}
@@ -150,7 +176,10 @@ export function App() {
           review={review}
           onDraftChange={setDraft}
           onReviewInvalidated={() => setReview(null)}
-          onBackToEditing={() => setPage("drafts")}
+          onBackToEditing={() => {
+            setPage("drafts");
+            setLocationPage("drafts", draftId);
+          }}
         />
       )}
 

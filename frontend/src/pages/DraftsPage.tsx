@@ -902,7 +902,7 @@ export function DraftsPage({
                 >
                   恢复已保存内容
                 </button>
-                <span>保存后必须重新进行合规审核。</span>
+                  <span>保存后可进入跨境发布站点配置。</span>
               </div>
             </section>
           )}
@@ -915,7 +915,7 @@ export function DraftsPage({
                 ["属性与变体", categoryConfirmed && categoryAttributes.length > 0],
                 ["内容与素材", Boolean(contentForm && !contentDirty && contentForm.title.length <= 60)],
                 ["价格", pricingReady],
-                ["审核与发布", decision === "pass" && listingConfigured],
+                ["跨境发布站点", listingConfigured],
               ].map(([label, done], index) => (
                 <div className={`draft-flow-step ${done ? "done" : "pending"}`} key={String(label)}>
                   <span>{done ? <CheckCircle2 size={16} /> : index + 1}</span><strong>{label}</strong>
@@ -924,13 +924,13 @@ export function DraftsPage({
             </div>
             {!categoryConfirmed && <p className="inline-warning">请先在上方确认分类，官方属性和变体才能继续。</p>}
             <div className="action-line listing-next-action">
-              <span>完成内容和素材后，在下一步确认属性、站点和价格，再提交发布。</span>
-              <button disabled={!categoryConfirmed || contentDirty} onClick={onContinueListing}>继续配置并发布</button>
+              <span>进入下一步设置发布站点、USD 售价、Classic/Premium 和最终提交。</span>
+              <button disabled={!categoryConfirmed || contentDirty} onClick={onContinueListing}>进入跨境发布站点配置</button>
             </div>
           </section>
 
           <div className="workflow-grid">
-            <section className="surface">
+          <section className="surface">
               <div className="section-heading">
                 <div><span className="step-number">4</span><h3>售价与利润 · {draft.target_site_id}</h3></div>
                 <span className={`state-pill ${pricingReady ? "ready" : "blocked"}`}>
@@ -960,63 +960,8 @@ export function DraftsPage({
               {(!draft.source_price || !draft.source_currency) && (
                 <p className="inline-warning">未采集到 Amazon 参考价，请重新采集商品页面后再保存定价。</p>
               )}
-            </section>
+          </section>
 
-            <section className="surface">
-              <div className="section-heading">
-                <div><span className="step-number">5</span><h3>AI 合规审核与提交</h3></div>
-                <span className={`state-pill ${decision === "pass" ? "ready" : "blocked"}`}>{decision}</span>
-              </div>
-              <div className="provider-status">
-                <div><Bot size={18} /><span>Claude</span><strong>{claudeReady ? "已配置" : "需要 API 密钥"}</strong></div>
-                <div><ShieldCheck size={18} /><span>NVIDIA</span><strong>{nvidiaReady ? "已配置" : "需要 API 密钥"}</strong></div>
-              </div>
-              <div className="button-row">
-                <label className="check-row">
-                  <input
-                    type="checkbox"
-                    checked={providerCostAcknowledged}
-                    onChange={(event) => setProviderCostAcknowledged(event.target.checked)}
-                  />
-                  我确认本次会消耗 Claude 和 NVIDIA 的用量费用
-                </label>
-                <button disabled={!draftId || contentDirty || !pricingReady || !listingConfigured || !claudeReady || !nvidiaReady || !providerCostAcknowledged || Boolean(busy)} onClick={queueCurrentReview}><ShieldCheck size={16} /> 发起 AI 合规审核</button>
-                <button className="secondary-button" disabled={!draftId} onClick={refreshReviewHistory}><RefreshCw size={16} /> 查看历史</button>
-              </div>
-              {!pricingReady && <p className="inline-warning">请先保存价格，再发起 AI 合规审核。</p>}
-              {pricingReady && !listingConfigured && <p className="inline-warning">请在下一步保存店铺、刊登方式和必填属性后，再发起 AI 合规审核。</p>}
-              {providerReview && <ReviewSummary value={providerReview} />}
-              {reviewHistory.length > 0 && (
-                <div className="review-history-list">
-                  {reviewHistory.map((result) => (
-                    <div className="review-history-row" key={result.id}>
-                      <span>
-                        <strong>{result.provider}</strong>
-                        <small>{result.model || "Unspecified model"} · {result.prompt_version || "legacy prompt"}</small>
-                        {result.provider_status !== "completed" && (
-                          <small className="warning-text">Historical evidence · draft changed</small>
-                        )}
-                        {result.provider_request_id && <small>Request {result.provider_request_id}</small>}
-                      </span>
-                      <span className="review-telemetry">
-                        <small>{result.duration_ms > 0 ? `${result.duration_ms} ms` : "Time unavailable"}</small>
-                        <small>
-                          {result.total_tokens !== null
-                            ? `${result.total_tokens} tokens · ${result.input_tokens ?? "?"} in / ${result.output_tokens ?? "?"} out`
-                            : "Tokens unavailable"}
-                        </small>
-                        <small>
-                          {result.estimated_cost_amount !== null
-                            ? `${result.estimated_cost_currency} ${formatCost(result.estimated_cost_amount)}${result.price_config_id ? ` · price #${result.price_config_id}` : " · combined"}`
-                            : result.price_config_id ? `Cost unavailable · price #${result.price_config_id}` : "Cost unavailable"}
-                        </small>
-                      </span>
-                      <strong className={result.decision === "pass" && result.provider_status === "completed" ? "success-text" : ""}>{result.decision}</strong>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
           </div>
         </>
       )}
@@ -1024,72 +969,6 @@ export function DraftsPage({
       {error && <p className="error">{error}</p>}
         </div>
       </div>
-      <section className="saved-section drafts-library-footer">
-        <div className="section-heading"><div><h3>批量自动处理</h3><p>商品积累后，可在这里批量发起 AI 合规审核。</p></div></div>
-        {savedDrafts.length > 0 && <details className="advanced-section">
-          <summary>批量自动处理（商品积累后使用）</summary>
-          <p className="section-note">先在这里选择多张已完成编辑的上架单，再批量发起 AI 合规审核。未完成的商品会被系统拦截。</p>
-          <div className="batch-review-controls">
-            <div className="action-line">
-              <span>已选 {selectedDraftIds.size} / {MAX_REVIEW_BATCH_SIZE}</span>
-              <label className="check-row"><input type="checkbox" checked={providerCostAcknowledged} onChange={(event) => setProviderCostAcknowledged(event.target.checked)} />我确认本次会消耗 Claude 和 NVIDIA 的用量费用</label>
-              <button disabled={selectedDraftIds.size === 0 || Boolean(contentDirty && draftId && selectedDraftIds.has(draftId)) || !providerCostAcknowledged || !claudeReady || !nvidiaReady || Boolean(busy)} onClick={queueBatchReview}><ListPlus size={16} /> 批量发起 AI 审核</button>
-            </div>
-            {batchReviewResult && <div className="batch-result-summary" aria-live="polite"><strong>已加入 {batchReviewResult.queued_count} 个</strong><span>进行中 {batchReviewResult.existing_count} 个</span><span>未就绪 {batchReviewResult.not_ready_count} 个</span><span>不存在 {batchReviewResult.not_found_count} 个</span></div>}
-            {batchReviewResult?.items.some((item) => item.errors.length > 0) && <div className="batch-review-errors">{batchReviewResult.items.filter((item) => item.errors.length > 0).map((item) => <span key={item.draft_id}>上架单 #{item.draft_id}: {item.errors.join(", ")}</span>)}</div>}
-          </div>
-          <div className="draft-list">
-            {savedDrafts.map((savedDraft) => (
-              <div className="draft-selection-row" key={savedDraft.id}>
-              <label className="draft-selector">
-                <input
-                  type="checkbox" aria-label={`选择上架单 ${savedDraft.id} 进行批量审核`}
-                  checked={selectedDraftIds.has(savedDraft.id)}
-                  disabled={
-                    Boolean(contentDirty && savedDraft.id === draftId)
-                    || (
-                      !selectedDraftIds.has(savedDraft.id)
-                      && selectedDraftIds.size >= MAX_REVIEW_BATCH_SIZE
-                    )
-                  }
-                  onChange={() => toggleBatchDraft(savedDraft.id)}
-                />
-              </label>
-              <button className={`draft-row ${draftId === savedDraft.id ? "selected" : ""}`} onClick={() => selectSavedDraft(savedDraft)}>
-                <ProductImage src={savedDraft.image_urls[0]} alt={savedDraft.title || "商品图片"} />
-                <span className="draft-copy">
-                  <strong>{savedDraft.title}</strong>
-                  <small>上架单 #{savedDraft.id} · {savedDraft.target_site_id} · 采集价 {savedDraft.source_currency} {savedDraft.source_price ?? "-"} · 售价 {savedDraft.currency} {savedDraft.price ?? "未定价"}</small>
-                  {savedDraft.source_variant_asin && (
-                    <small>
-                      {savedDraft.source_variant_asin}
-                      {Object.entries(savedDraft.source_variant_attributes).slice(0, 2).map(
-                        ([name, value]) => ` · ${name}: ${value}`,
-                      )}
-                    </small>
-                  )}
-                </span>
-                <span className="draft-state">{savedDraft.risk_status}</span>
-              </button>
-            </div>
-          ))}
-          </div>
-        {reviewJobs.length > 0 && (
-          <div className="review-job-list">
-            {reviewJobs.slice(0, 20).map((job) => (
-              <div key={job.id}>
-                <span>审核任务 #{job.id} · 上架单 #{job.product_draft_id}</span>
-                <strong>{job.status}</strong>
-                {job.error_code && <small>{job.error_code}</small>}
-                {job.next_attempt_at && (
-                  <small>可执行时间：{new Date(job.next_attempt_at).toLocaleString()}</small>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-        </details>}
-      </section>
     </section>
   );
 }

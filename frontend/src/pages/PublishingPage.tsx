@@ -216,6 +216,24 @@ export function PublishingPage({
     return () => { cancelled = true; };
   }, []);
 
+  // Global Selling must not wait for a local-site metadata request. A CBT
+  // connection is authoritative and should immediately open its multi-market
+  // publishing workflow for every selected draft.
+  useEffect(() => {
+    if (!draftId) return;
+    let cancelled = false;
+    listStores()
+      .then((storeRows) => {
+        if (cancelled) return;
+        setStores(storeRows);
+        if (storeRows.some((store) => store.site_id === "CBT" && store.oauth_status === "connected")) {
+          setPublishingModel("cbt");
+        }
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [draftId]);
+
   useEffect(() => {
     publishJobsMountedRef.current = true;
     void refreshPublishJobs(false);
