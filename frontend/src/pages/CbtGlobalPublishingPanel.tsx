@@ -50,6 +50,21 @@ const MARKET_NAMES: Record<string, string> = {
   MLA: "阿根廷", MLB: "巴西", MLC: "智利", MCO: "哥伦比亚", MLM: "墨西哥", MLU: "乌拉圭",
 };
 
+const ATTRIBUTE_NAMES_ZH: Record<string, string> = {
+  ITEM_CONDITION: "商品状况", SELLER_SKU: "卖家 SKU", PACKAGE_LENGTH: "包装长度",
+  PACKAGE_WIDTH: "包装宽度", PACKAGE_HEIGHT: "包装高度", PACKAGE_WEIGHT: "包装重量",
+  BRAND: "品牌", MODEL: "型号", WARRANTY_TYPE: "质保类型", COLOR: "颜色",
+  MATERIAL: "材质", GTIN: "商品条码", EAN: "商品条码", UPC: "商品条码",
+};
+
+function defaultSku(draftId: number) {
+  return `xy${String(draftId).padStart(6, "0")}`;
+}
+
+function attributeNameZh(attribute: Record<string, unknown> | undefined, id: string) {
+  return ATTRIBUTE_NAMES_ZH[id] ?? String(attribute?.name_zh ?? attribute?.name ?? id);
+}
+
 type Offer = CbtListingConfig["sites_to_sell"][number];
 
 function normalizeCbtTitle(value: string) {
@@ -108,11 +123,13 @@ export function CbtGlobalPublishingPanel({
   const [categoryPath, setCategoryPath] = useState("");
   const [predictions, setPredictions] = useState<Record<string, unknown>[]>([]);
   const [globalTitle, setGlobalTitle] = useState(normalizeCbtTitle(draft.title));
-  const [familyName, setFamilyName] = useState("");
+  const [familyName, setFamilyName] = useState(defaultSku(draftId));
   const [description, setDescription] = useState(sanitizeCbtDescription(draft.description));
   const [priceUsd, setPriceUsd] = useState(draft.currency === "USD" && draft.price ? String(draft.price) : "");
-  const [quantity, setQuantity] = useState(draft.stock > 0 ? String(draft.stock) : "");
-  const [attributes, setAttributes] = useState<Record<string, string>>({ BRAND: "Unbranded" });
+  const [quantity, setQuantity] = useState("999");
+  const [attributes, setAttributes] = useState<Record<string, string>>({
+    BRAND: "Unbranded", ITEM_CONDITION: "new", SELLER_SKU: defaultSku(draftId),
+  });
   const [attributeDefinitions, setAttributeDefinitions] = useState<Record<string, unknown>[]>([]);
   const [offers, setOffers] = useState<Offer[]>([]);
   const [warranty, setWarranty] = useState("");
@@ -225,12 +242,12 @@ export function CbtGlobalPublishingPanel({
             }
           })
           .catch(() => !cancelled && setCategoryLeafVerified(false));
-        setFamilyName(config.family_name);
+        setFamilyName(config.family_name || defaultSku(draftId));
         setGlobalTitle(normalizeCbtTitle(config.global_title));
         setDescription(sanitizeCbtDescription(config.description));
         setPriceUsd(String(config.price_usd));
-        setQuantity(String(config.available_quantity));
-        setAttributes({ ...Object.fromEntries(config.attributes.map((item) => [item.id, item.value_name])), BRAND: "Unbranded" });
+        setQuantity(String(config.available_quantity || 999));
+        setAttributes({ ITEM_CONDITION: "new", SELLER_SKU: defaultSku(draftId), ...Object.fromEntries(config.attributes.map((item) => [item.id, item.value_name])), BRAND: "Unbranded" });
         setOffers(config.sites_to_sell);
         setWarranty(config.sale_terms.find((term) => term.id === "WARRANTY_TYPE")?.value_name ?? "");
       })
@@ -439,7 +456,7 @@ export function CbtGlobalPublishingPanel({
 
       <section id="description" className="surface wf-section"><div className="wf-section-title"><span>4</span><div><h3>描述</h3><p>英文、基于采集信息；不出现品牌。末尾保留 7 天店铺保修说明。</p></div></div><label>英文商品描述 *<textarea rows={10} value={description} onChange={(event) => { setDescription(sanitizeCbtDescription(event.target.value)); setSaved(null); setPreview(null); }} /></label></section>
 
-      <section id="variants" className="surface wf-section"><div className="wf-section-title"><span>5</span><div><h3>变体与 SKU</h3><p>当前为采集到的 SKU 信息；选择分类后才可确认官方变体属性。</p></div></div><div className="wf-sku-row"><div><span>来源 ASIN</span><strong>{draft.source_variant_asin || "未提供"}</strong></div><div><span>已采集规格</span><strong>{Object.entries(draft.source_variant_attributes ?? {}).map(([key,value]) => `${key}: ${value}`).join(" · ") || "单品，无变体"}</strong></div><div><span>卖家 SKU *</span><input value={attributes.SELLER_SKU ?? ""} placeholder="内部 SKU" onChange={(event) => setAttribute("SELLER_SKU", event.target.value)} /></div></div><div className="form-grid two-col cbt-attributes">{requiredIds.filter((id) => id !== "SELLER_SKU" && id !== "BRAND").map((id) => { const definition = attributeDefinitions.find((item) => String(item.id).toUpperCase() === id); return <label key={id}>{String(definition?.name ?? id)} *<input value={attributes[id] ?? ""} placeholder={id === "ITEM_CONDITION" ? "New" : "例如 10 cm / 250 g"} onChange={(event) => setAttribute(id, event.target.value)} /></label>; })}</div><label>质保条款<input value={warranty} placeholder="例如 No warranty" onChange={(event) => { setWarranty(event.target.value); setSaved(null); setPreview(null); }} /></label>{missing.length > 0 && <p className="inline-warning">还缺少官方必填字段：{missing.join("、")}。</p>}</section>
+      <section id="variants" className="surface wf-section"><div className="wf-section-title"><span>5</span><div><h3>变体与 SKU</h3><p>当前为采集到的 SKU 信息；选择分类后才可确认官方变体属性。</p></div></div><div className="wf-sku-row"><div><span>来源 ASIN</span><strong>{draft.source_variant_asin || "未提供"}</strong></div><div><span>已采集规格</span><strong>{Object.entries(draft.source_variant_attributes ?? {}).map(([key,value]) => `${key}: ${value}`).join(" · ") || "单品，无变体"}</strong></div><div><span>卖家 SKU *</span><input value={attributes.SELLER_SKU ?? ""} placeholder="内部 SKU" onChange={(event) => setAttribute("SELLER_SKU", event.target.value)} /></div></div><div className="form-grid two-col cbt-attributes">{requiredIds.filter((id) => id !== "SELLER_SKU" && id !== "BRAND").map((id) => { const definition = attributeDefinitions.find((item) => String(item.id).toUpperCase() === id); return <label key={id}>{attributeNameZh(definition, id)} *<input value={attributes[id] ?? ""} placeholder={id === "ITEM_CONDITION" ? "new" : "例如 10 cm / 250 g"} onChange={(event) => setAttribute(id, event.target.value)} /></label>; })}</div><label>质保条款<input value={warranty} placeholder="例如 No warranty" onChange={(event) => { setWarranty(event.target.value); setSaved(null); setPreview(null); }} /></label>{missing.length > 0 && <p className="inline-warning">还缺少官方必填字段：{missing.join("、")}。</p>}</section>
 
       <section id="sales" className="surface wf-section"><div className="wf-section-title"><span>6</span><div><h3>销售配置</h3><p>只填写一次全球 USD 售价；净收益只扣采购成本和国内运费。</p></div></div><div className="cbt-pricing-rule">全球销售统一运输不进入单品成本。预估净收益 = USD 售价 −（采购成本 + 国内运费）× USD 汇率。</div><div className="cbt-sales-table-wrap"><table className="cbt-sales-table"><thead><tr><th>站点</th><th>售价（USD）</th><th>预估净收益</th><th>刊登类型</th><th>标题</th></tr></thead><tbody><tr className="cbt-global-row"><th><Globe2 size={16} /> 全球</th><td><input type="number" min="0.01" step="0.01" value={priceUsd} onChange={(event) => { setPriceUsd(event.target.value); setSaved(null); setPreview(null); }} /></td><td><strong>{estimatedProfitUsd === null ? "请先填写成本" : estimatedProfitUsd.toFixed(2)}</strong></td><td><span className="cbt-derived-value">按站点配置</span></td><td><div className="cbt-title-input"><input maxLength={60} value={globalTitle} onChange={(event) => setGlobalTitle(normalizeCbtTitle(event.target.value))} /><small>{globalTitle.length}/60</small></div></td></tr>{remoteMarkets.map((market) => { const offer = offers.find((item) => item.site_id === market.site_id); const enabled = Boolean(offer); return <tr className={enabled ? "" : "disabled"} key={market.site_id}><th><label className="cbt-site-toggle"><input type="checkbox" checked={enabled} onChange={() => toggleMarket(market.site_id)} /><span><strong>{MARKET_NAMES[market.site_id] ?? market.site_id}</strong><small>{market.site_id} · Remote</small></span></label></th><td><span className="cbt-derived-value">{priceUsd || "-"}</span></td><td><span className="cbt-derived-value">{estimatedProfitUsd === null ? "-" : estimatedProfitUsd.toFixed(2)}</span></td><td><select disabled={!enabled} value={offer?.listing_type_id ?? "gold_pro"} onChange={(event) => updateOffer(market.site_id, "listing_type_id", event.target.value)}><option value="gold_pro">Premium（优质）</option><option value="gold_special">Classic（经典）</option></select></td><td><div className="cbt-title-input"><input disabled={!enabled} maxLength={60} value={offer?.title ?? globalTitle} onChange={(event) => updateOffer(market.site_id, "title", event.target.value)} /><small>{(offer?.title ?? globalTitle).length}/60</small></div></td></tr>; })}{fullMarkets.map((market) => <tr className="disabled cbt-full-row" key={`${market.site_id}-${market.logistic_type}`}><th><label className="cbt-site-toggle"><input type="checkbox" disabled /><span><strong>墨西哥（FULL）</strong><small>MLM · FULL 履约不参与本次发布</small></span></label></th><td>不发布</td><td>-</td><td>已排除</td><td>由 FULL 流程单独管理</td></tr>)}</tbody></table></div>{pricing && pricing.target_currency !== "USD" && <p className="inline-warning">请补充 USD 成本定价后保存；当前草稿的本地站价格不能用于 CBT 发布。</p>}{preview && <div className={`validation-result ${preview.allowed ? "ready" : "blocked"}`}><strong>{preview.allowed ? "官方请求预检通过" : "刊登请求未通过"}</strong>{preview.errors.map((error) => <span key={error}>{error}</span>)}</div>}{execution && <div className={`validation-result ${execution.status === "published" ? "ready" : "blocked"}`}><strong>{execution.status === "published" ? "已提交并创建商品" : "未创建商品"}</strong>{execution.item_id && <span>商品 ID：{execution.item_id}</span>}{execution.permalink && <a href={execution.permalink} target="_blank" rel="noreferrer">打开商品页</a>}{execution.errors.map((error) => <span key={error}>{error}</span>)}</div>}</section>
       </main>
