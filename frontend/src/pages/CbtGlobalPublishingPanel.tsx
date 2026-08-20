@@ -10,6 +10,7 @@ import {
   Store,
 } from "lucide-react";
 import {
+  confirmDraftCategory,
   getCategoryAttributes,
   getCategoryDetails,
   getCategoryPredictions,
@@ -20,6 +21,7 @@ import {
   getSystemReadiness,
   listStores,
   previewCbtPublishFromDraft,
+  saveDraftContent,
   saveDraftPricing,
   saveCbtListingConfig,
   type CbtListingConfig,
@@ -248,6 +250,12 @@ export function CbtGlobalPublishingPanel({
         setCategoryLeafVerified(false);
         throw new Error("请确认最底层叶子分类，父分类不能直接上架。");
       }
+      const confirmed = await confirmDraftCategory(draftId, {
+        expected_content_version: draft.content_version ?? 1,
+        target_site_id: "CBT",
+        category_id: categoryId,
+      });
+      onDraftChange(confirmed.draft);
       setCategoryLeafVerified(true);
       setCategoryPath((details.path_from_root_zh ?? details.path_from_root).map((item) => item.name_zh || item.name).filter(Boolean).join(" > "));
       const result = await getCategoryAttributes(categoryId);
@@ -284,10 +292,46 @@ export function CbtGlobalPublishingPanel({
     setSaved(null); setPreview(null); setPublishConfirmed(false); setExecution(null);
   }
 
+  async function saveProductContent() {
+    const updated = await saveDraftContent(draftId, {
+      expected_content_version: draft.content_version ?? 1,
+      title: normalizeCbtTitle(globalTitle),
+      description: sanitizeCbtDescription(description),
+      brand: "Unbranded",
+      image_urls: draft.image_urls.filter(Boolean),
+      video_urls: draft.video_urls ?? [],
+    });
+    onDraftChange(updated);
+    return updated;
+  }
+
+  async function setCoverImage(url: string) {
+    const image_urls = [url, ...draft.image_urls.filter((item) => item !== url)];
+    try {
+      setBusy("media");
+      const updated = await saveDraftContent(draftId, { expected_content_version: draft.content_version ?? 1, title: normalizeCbtTitle(globalTitle), description: sanitizeCbtDescription(description), brand: "Unbranded", image_urls, video_urls: draft.video_urls ?? [] });
+      onDraftChange(updated);
+      setStatus("主图已保存。");
+    } catch (error) { setStatus(error instanceof Error ? error.message : "保存图片顺序失败"); }
+    finally { setBusy(""); }
+  }
+
+  async function removeImage(url: string) {
+    const image_urls = draft.image_urls.filter((item) => item !== url);
+    try {
+      setBusy("media");
+      const updated = await saveDraftContent(draftId, { expected_content_version: draft.content_version ?? 1, title: normalizeCbtTitle(globalTitle), description: sanitizeCbtDescription(description), brand: "Unbranded", image_urls, video_urls: draft.video_urls ?? [] });
+      onDraftChange(updated);
+      setStatus("图片已移除。");
+    } catch (error) { setStatus(error instanceof Error ? error.message : "删除图片失败"); }
+    finally { setBusy(""); }
+  }
+
   async function saveConfig() {
     if (!canSave) return;
     setBusy("save"); setStatus(""); setPreview(null); setPublishConfirmed(false); setExecution(null);
     try {
+      await saveProductContent();
       const currentPricing = pricing;
       const targetPrice = Number(priceUsd);
       const landedCost = unitCostUsd;
@@ -337,108 +381,37 @@ export function CbtGlobalPublishingPanel({
     finally { setBusy(""); }
   }
 
-  return <section className="workspace cbt-workspace">
-    <header className="page-header">
-      <div>
-        <p className="eyebrow">GLOBAL SELLING · CBT</p>
-        <h2>跨境商品上架</h2>
-        <p>一个全球商品可同步销售到多个国家；售价统一以 USD 设置，各站分别配置标题和刊登类型。</p>
-      </div>
-      <button className="secondary-button" onClick={onBackToEditing}><ArrowLeft size={16} /> 返回编辑上架</button>
+  return <section className="workspace wf-listing-editor">
+    <header className="wf-header">
+      <div><p className="eyebrow">GLOBAL SELLING · CBT</p><h2>编辑产品 / 跨境上架</h2><p>按“店铺和类目 → 商品资料 → 图片 → 描述 → SKU → 销售配置”一次完成，不再分散到多个页面。</p></div>
+      <button className="secondary-button" onClick={onBackToEditing}><ArrowLeft size={16} /> 返回上架库</button>
     </header>
 
-    <section className="surface publish-section">
-      <div className="section-heading"><div><span className="step-number">1</span><h3>跨境店与商品基础资料</h3></div><button className="icon-button" title="刷新店铺能力" disabled={!storeId || busy === "profile"} onClick={() => setProfileReloadKey((value) => value + 1)}><RefreshCw size={17} /></button></div>
-      <label>已授权跨境店
-        <select value={storeId} onChange={(event) => { setStoreId(event.target.value); setOffers([]); setHasSavedConfig(false); offersInitializedRef.current = false; setPreview(null); }}>
-          <option value="">选择 CBT 店铺</option>
-          {cbtStores.map((store) => <option key={store.id} value={store.id}>{store.display_name} · 卖家 {store.seller_id}</option>)}
-        </select>
-      </label>
-      {busy === "profile" && <p className="status-line">正在读取真实店铺市场和配额...</p>}
-      {profile && <>
-        <div className="cbt-profile-line"><Store size={16} /><strong>{profile.seller_id}</strong><span>发布模型：{profile.model === "traditional_global" ? "传统 Global Selling" : "User Products"}</span></div>
-        {profile.model !== "traditional_global" && <p className="inline-warning">此账号已启用 User Products，不能使用本页的传统 `/global/items` 流程。</p>}
-        <p className="section-note">系统默认选择全部可用 Remote 站点；墨西哥 FULL 不参与本流程，保持灰色禁用。</p>
-        <div className="cbt-market-selection">
-          <div><strong>同时发布到站点</strong><small>已默认选择 {offers.filter((offer) => remoteMarkets.some((market) => market.site_id === offer.site_id)).length} 个 Remote 站点</small></div>
-          <label><input type="checkbox" checked={allRemoteSelected} disabled={profile.model !== "traditional_global" || remoteMarkets.length === 0} onChange={toggleAllRemoteMarkets} /> 全选非 FULL 站点</label>
-        </div>
-      </>}
-    </section>
+    <aside className="wf-step-nav" aria-label="上架步骤">
+      {[['store-category','店铺和类目'],['basic','产品基本信息'],['media','产品图片'],['description','描述'],['variants','变体与 SKU'],['sales','销售配置']].map(([id,label], index) => <a key={id} href={`#${id}`}><span>{index + 1}</span>{label}</a>)}
+    </aside>
 
-    <section className="surface publish-section">
-      <div className="section-heading"><div><span className="step-number">2</span><h3>全球商品资料</h3></div></div>
-      <div className="form-grid two-col">
-        <label>产品族名称 family_name *<input value={familyName} placeholder="例如 Silicone Mold Collection" onChange={(event) => { setFamilyName(event.target.value); setSaved(null); setPreview(null); }} /></label>
-        <label>可售库存 *<input type="number" min="1" step="1" value={quantity} onChange={(event) => { setQuantity(event.target.value); setSaved(null); setPreview(null); }} /></label>
-      </div>
-      <label>英文商品描述（不得包含品牌） *<textarea rows={7} value={description} onChange={(event) => { setDescription(sanitizeCbtDescription(event.target.value)); setSaved(null); setPreview(null); }} /></label>
-      <p className="cbt-image-note"><Image size={16} /> 将使用商品来源中已保存的 {draft.image_urls.length} 张图片，并写入每一个目标市场的 `sites_to_sell`。</p>
-    </section>
+    <main className="wf-editor-main">
+      <section id="store-category" className="surface wf-section">
+        <div className="wf-section-title"><span>1</span><div><h3>店铺和类目</h3><p>先确认跨境店和最底层 CBT 分类，确认后才加载官方属性。</p></div><button className="icon-button" title="刷新店铺能力" disabled={!storeId || busy === "profile"} onClick={() => setProfileReloadKey((value) => value + 1)}><RefreshCw size={17} /></button></div>
+        <div className="wf-form-row"><label>店铺 *<select value={storeId} onChange={(event) => { setStoreId(event.target.value); setOffers([]); setHasSavedConfig(false); offersInitializedRef.current = false; setPreview(null); }}><option value="">选择 CBT 店铺</option>{cbtStores.map((store) => <option key={store.id} value={store.id}>{store.display_name} · 卖家 {store.seller_id}</option>)}</select></label>
+          <div className="wf-sites"><strong>同时发布到站点</strong><label><input type="checkbox" checked={allRemoteSelected} disabled={profile?.model !== "traditional_global" || remoteMarkets.length === 0} onChange={toggleAllRemoteMarkets} /> 全选</label>{remoteMarkets.map((market) => <label key={market.site_id}><input type="checkbox" checked={offers.some((offer) => offer.site_id === market.site_id)} onChange={() => toggleMarket(market.site_id)} /> {MARKET_NAMES[market.site_id]}</label>)}<label className="is-disabled"><input type="checkbox" disabled /> 墨西哥（FULL）</label></div></div>
+        {profile && <p className="section-note">卖家 {profile.seller_id} · {profile.model === "traditional_global" ? "传统 Global Selling" : "User Products"}。Remote 站点默认全部勾选；墨西哥 FULL 由独立流程处理。</p>}
+        <div className="wf-category-line"><label>Mercado Libre 最终分类 *<input value={categoryId} placeholder="先用标题搜索 CBT 最底层分类" onChange={(event) => { setCategoryId(event.target.value.toUpperCase()); setCategoryLeafVerified(false); setCategoryPath(""); setSaved(null); setPreview(null); }} /></label><button onClick={predictCategory} disabled={!globalTitle.trim() || busy === "category"}><Search size={16} /> 选择分类</button><button className="secondary-button" onClick={loadAttributes} disabled={!categoryId.startsWith("CBT") || busy === "attributes"}><ListChecks size={16} /> 确认分类</button></div>
+        {categoryPath && <p className="category-path-label">{categoryPath} · {categoryLeafVerified ? "最底层分类已确认" : "待确认"}</p>}
+        {predictions.length > 0 && <div className="prediction-list">{predictions.map((item) => { const id = String(item.category_id ?? ""); const name = String(item.category_name_zh ?? item.category_name ?? item.domain_name ?? id); return <button key={id} onClick={() => { setCategoryId(id); setCategoryLeafVerified(false); setCategoryPath(""); setAttributeDefinitions([]); }}>{name}<small>{id} · 点击后确认分类</small></button>; })}</div>}
+      </section>
 
-    <section className="surface publish-section">
-      <div className="section-heading"><div><span className="step-number">3</span><h3>CBT 类目、属性与质保</h3></div></div>
-      <div className="category-controls"><label>CBT 最终类目 ID *<input value={categoryId} placeholder="CBT..." onChange={(event) => { setCategoryId(event.target.value.toUpperCase()); setCategoryLeafVerified(false); setCategoryPath(""); setSaved(null); setPreview(null); }} /></label><button onClick={predictCategory} disabled={!globalTitle.trim() || busy === "category"}><Search size={16} /> 官方类目预测</button><button className="secondary-button" onClick={loadAttributes} disabled={!categoryId.startsWith("CBT") || busy === "attributes"}><ListChecks size={16} /> 验证叶子类目并读取属性</button></div>
-      {categoryPath && <p className="category-path-label">{categoryPath} · {categoryLeafVerified ? "叶子类目已验证" : "待验证"}</p>}
-      {predictions.length > 0 && <div className="prediction-list">{predictions.map((item) => { const id = String(item.category_id ?? ""); const officialName = String(item.category_name ?? item.domain_name ?? id); const chineseName = String(item.category_name_zh ?? officialName); return <button key={id} onClick={() => { setCategoryId(id); setCategoryLeafVerified(false); setCategoryPath(""); setAttributeDefinitions([]); setPreview(null); }}>{chineseName}<small>官方：{officialName} · {id}</small></button>; })}</div>}
-      <div className="form-grid two-col cbt-attributes">{requiredIds.map((id) => {
-        const definition = attributeDefinitions.find((item) => String(item.id).toUpperCase() === id);
-        return <label key={id}>{String(definition?.name ?? id)} *<input value={attributes[id] ?? ""} placeholder={id === "ITEM_CONDITION" ? "New" : id === "SELLER_SKU" ? "内部 SKU" : "例如 10 cm / 250 g"} onChange={(event) => setAttribute(id, event.target.value)} /></label>;
-      })}</div>
-      <label>质保条款（按类目要求填写）<input value={warranty} placeholder="例如 No warranty" onChange={(event) => { setWarranty(event.target.value); setSaved(null); setPreview(null); }} /></label>
-      {missing.length > 0 && <p className="inline-warning">还缺少 {missing.join("、")}。</p>}
-    </section>
+      <section id="basic" className="surface wf-section"><div className="wf-section-title"><span>2</span><div><h3>产品基本信息</h3><p>标题强制英文不超过 60 字符；品牌固定为无品牌。</p></div></div><div className="form-grid two-col"><label>Parent SKU / 产品族名称 *<input value={familyName} placeholder="例如 SKU02761" onChange={(event) => { setFamilyName(event.target.value); setSaved(null); setPreview(null); }} /></label><label>可售库存 *<input type="number" min="1" step="1" value={quantity} onChange={(event) => { setQuantity(event.target.value); setSaved(null); setPreview(null); }} /></label></div><label>英文标题 *<div className="wf-title-input"><input maxLength={60} value={globalTitle} onChange={(event) => { setGlobalTitle(normalizeCbtTitle(event.target.value)); setSaved(null); setPreview(null); }} /><small>{globalTitle.length}/60</small></div></label><label>品牌（固定）<input disabled value="Unbranded（无品牌）" /></label></section>
 
-    <section className="surface publish-section">
-      <div className="section-heading"><div><span className="step-number">4</span><h3>销售配置</h3><p>只填写一次全球售价；各站点显示该售价，并分别选择刊登类型。</p></div></div>
-      <div className="cbt-pricing-rule">非 FULL 跨境商品按“售价 - 采购成本 - 国内运费”显示预估净收益；国际运输由美客多统一处理，不作为单品成本输入。</div>
-      <div className="cbt-sales-table-wrap">
-        <table className="cbt-sales-table">
-          <thead><tr><th>销售国家/地区</th><th>售价（USD）</th><th>预估净收益（USD）</th><th>刊登类型</th><th>标题</th></tr></thead>
-          <tbody>
-            <tr className="cbt-global-row">
-              <th><Globe2 size={16} /> 全球商品</th>
-              <td><input type="number" min="0.01" step="0.01" value={priceUsd} onChange={(event) => { setPriceUsd(event.target.value); setSaved(null); setPreview(null); setPublishConfirmed(false); }} /></td>
-              <td><strong>{estimatedProfitUsd === null ? "请先完成成本定价" : estimatedProfitUsd.toFixed(2)}</strong></td>
-              <td><span className="cbt-derived-value">按国家设置</span></td>
-              <td><div className="cbt-title-input"><input maxLength={60} value={globalTitle} onChange={(event) => { setGlobalTitle(normalizeCbtTitle(event.target.value)); setSaved(null); setPreview(null); }} /><small>{globalTitle.length}/60</small></div></td>
-            </tr>
-            {remoteMarkets.map((market) => {
-              const offer = offers.find((item) => item.site_id === market.site_id);
-              const enabled = Boolean(offer);
-              const capacity = market.listing_count !== null && market.listing_limit !== null ? `${market.listing_count} / ${market.listing_limit}` : "配额待返回";
-              return <tr className={enabled ? "" : "disabled"} key={`${market.site_id}-${market.logistic_type}`}>
-                <th><label className="cbt-site-toggle"><input type="checkbox" disabled={profile?.model !== "traditional_global"} checked={enabled} onChange={() => toggleMarket(market.site_id)} /><span><strong>{MARKET_NAMES[market.site_id] ?? market.site_id}</strong><small>{market.site_id} · 已刊登/配额 {capacity}</small></span></label></th>
-                <td><span className="cbt-derived-value">{priceUsd || "-"}</span></td>
-                <td><span className="cbt-derived-value">{estimatedProfitUsd === null ? "-" : estimatedProfitUsd.toFixed(2)}</span></td>
-                <td><select disabled={!enabled} value={offer?.listing_type_id ?? "gold_pro"} onChange={(event) => updateOffer(market.site_id, "listing_type_id", event.target.value)}><option value="gold_pro">Premium（优质）</option><option value="gold_special">Classic（经典）</option></select></td>
-                <td><div className="cbt-title-input"><input disabled={!enabled} maxLength={60} value={offer?.title ?? globalTitle} onChange={(event) => updateOffer(market.site_id, "title", event.target.value)} /><small>{(offer?.title ?? globalTitle).length}/60</small></div></td>
-              </tr>;
-            })}
-            {fullMarkets.map((market) => (
-              <tr className="disabled cbt-full-row" key={`${market.site_id}-${market.logistic_type}`}>
-                <th><label className="cbt-site-toggle"><input type="checkbox" disabled checked={false} readOnly /><span><strong>墨西哥（FULL）</strong><small>MLM · FULL 履约不参与本次发布</small></span></label></th>
-                <td><span className="cbt-derived-value">不发布</span></td>
-                <td><span className="cbt-derived-value">-</span></td>
-                <td><span className="cbt-derived-value">已排除</span></td>
-                <td><span className="cbt-derived-value">由店铺 FULL 流程单独管理</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {remoteMarkets.length === 0 && <p className="inline-warning">未读取到可用的 Remote 销售国家，请刷新店铺能力或检查跨境店授权。</p>}
-      {unitCostUsd === null && <p className="inline-warning">请先返回编辑上架，保存采购成本、国内运费和 USD 汇率，才能核对预估净收益。</p>}
-      {pricing && pricing.target_currency !== "USD" && <p className="inline-warning">这张上架单当前不是 CBT 的 USD 定价。请重新以 CBT 为目标站点采集并完成成本定价。</p>}
-      {offers.length === 0 && <p className="inline-warning">请至少启用一个可用的 Remote 销售国家。</p>}
-      <div className="button-row"><button disabled={!canSave || busy === "save"} onClick={saveConfig}><Save size={16} /> 保存跨境刊登配置</button><button className="secondary-button" disabled={!saved || busy === "preview"} onClick={previewPayload}><ListChecks size={16} /> 生成官方请求预检</button></div>
-      {preview && <div className={`validation-result ${preview.allowed ? "ready" : "blocked"}`}><strong>{preview.allowed ? "官方 Global Selling 请求已通过结构校验" : "刊登请求未通过"}</strong>{preview.errors.map((error) => <span key={error}>{error}</span>)}</div>}
-      <div className="release-summary"><div><span>商品素材</span><strong>{draft.image_urls.length} 张图片</strong></div><div><span>预检</span><strong>{preview?.allowed ? "通过" : "未完成"}</strong></div><div><span>发布确认</span><strong>{publishConfirmed ? "已确认" : "待确认"}</strong></div><div><span>线上发布</span><strong>{readiness?.mercado_libre.live_publish_enabled ? "已开启" : "未开启"}</strong></div></div>
-      <div className="button-row"><label className="check-row"><input type="checkbox" checked={publishConfirmed} disabled={!preview?.allowed || !readiness?.mercado_libre.live_publish_enabled} onChange={(event) => setPublishConfirmed(event.target.checked)} />我已确认配置，向美客多创建商品</label><button disabled={!publishConfirmed || !preview?.allowed || !readiness?.mercado_libre.live_publish_enabled || busy === "execute"} onClick={executePublish}><Globe2 size={16} /> 提交跨境发布</button></div>
-      {!readiness?.mercado_libre.live_publish_enabled && <p className="inline-warning">服务器尚未开启真实发布；可先完成配置和官方请求预检。</p>}
-      {execution && <div className={`validation-result ${execution.status === "published" ? "ready" : "blocked"}`}><strong>{execution.status === "published" ? "已提交并创建商品" : "未创建商品"}</strong>{execution.item_id && <span>商品 ID：{execution.item_id}</span>}{execution.permalink && <a href={execution.permalink} target="_blank" rel="noreferrer">打开商品页</a>}{execution.errors.map((error) => <span key={error}>{error}</span>)}</div>}
-      {status && <p className="status-line">{status}</p>}
-    </section>
+      <section id="media" className="surface wf-section"><div className="wf-section-title"><span>3</span><div><h3>产品图片</h3><p>使用采集到的原图；第 1 张是主图。小规格缩略图不会入库。</p></div><strong>{draft.image_urls.length} 张</strong></div><div className="wf-media-grid">{draft.image_urls.map((url,index) => <article className={`wf-media-card ${index === 0 ? "cover" : ""}`} key={url}><div className="wf-media-label">{index === 0 ? "主图" : `图片 ${index + 1}`}</div><img src={url} alt={`商品图片 ${index + 1}`} /><div><button className="tiny-button" disabled={index === 0 || busy === "media"} onClick={() => setCoverImage(url)}>设为主图</button><button className="tiny-button danger" disabled={busy === "media"} onClick={() => removeImage(url)}>删除</button></div></article>)}</div>{draft.image_urls.length === 0 && <p className="inline-warning">当前没有可发布图片，请先回到上架库补充素材。</p>}<div className="wf-video-line"><strong>产品视频</strong><span>{draft.video_urls?.length ?? 0}/3 个；视频独立保存，未进入商品图片。</span></div></section>
+
+      <section id="description" className="surface wf-section"><div className="wf-section-title"><span>4</span><div><h3>描述</h3><p>英文、基于采集信息；不出现品牌。末尾保留 7 天店铺保修说明。</p></div></div><label>英文商品描述 *<textarea rows={10} value={description} onChange={(event) => { setDescription(sanitizeCbtDescription(event.target.value)); setSaved(null); setPreview(null); }} /></label></section>
+
+      <section id="variants" className="surface wf-section"><div className="wf-section-title"><span>5</span><div><h3>变体与 SKU</h3><p>当前为采集到的 SKU 信息；选择分类后才可确认官方变体属性。</p></div></div><div className="wf-sku-row"><div><span>来源 ASIN</span><strong>{draft.source_variant_asin || "未提供"}</strong></div><div><span>已采集规格</span><strong>{Object.entries(draft.source_variant_attributes ?? {}).map(([key,value]) => `${key}: ${value}`).join(" · ") || "单品，无变体"}</strong></div><div><span>卖家 SKU *</span><input value={attributes.SELLER_SKU ?? ""} placeholder="内部 SKU" onChange={(event) => setAttribute("SELLER_SKU", event.target.value)} /></div></div><div className="form-grid two-col cbt-attributes">{requiredIds.filter((id) => id !== "SELLER_SKU").map((id) => { const definition = attributeDefinitions.find((item) => String(item.id).toUpperCase() === id); return <label key={id}>{String(definition?.name ?? id)} *<input value={attributes[id] ?? ""} placeholder={id === "ITEM_CONDITION" ? "New" : "例如 10 cm / 250 g"} onChange={(event) => setAttribute(id, event.target.value)} /></label>; })}</div><label>质保条款<input value={warranty} placeholder="例如 No warranty" onChange={(event) => { setWarranty(event.target.value); setSaved(null); setPreview(null); }} /></label>{missing.length > 0 && <p className="inline-warning">还缺少官方必填字段：{missing.join("、")}。</p>}</section>
+
+      <section id="sales" className="surface wf-section"><div className="wf-section-title"><span>6</span><div><h3>销售配置</h3><p>只填写一次全球 USD 售价；净收益只扣采购成本和国内运费。</p></div></div><div className="cbt-pricing-rule">全球销售统一运输不进入单品成本。预估净收益 = USD 售价 −（采购成本 + 国内运费）× USD 汇率。</div><div className="cbt-sales-table-wrap"><table className="cbt-sales-table"><thead><tr><th>站点</th><th>售价（USD）</th><th>预估净收益</th><th>刊登类型</th><th>标题</th></tr></thead><tbody><tr className="cbt-global-row"><th><Globe2 size={16} /> 全球</th><td><input type="number" min="0.01" step="0.01" value={priceUsd} onChange={(event) => { setPriceUsd(event.target.value); setSaved(null); setPreview(null); }} /></td><td><strong>{estimatedProfitUsd === null ? "请先填写成本" : estimatedProfitUsd.toFixed(2)}</strong></td><td><span className="cbt-derived-value">按站点配置</span></td><td><div className="cbt-title-input"><input maxLength={60} value={globalTitle} onChange={(event) => setGlobalTitle(normalizeCbtTitle(event.target.value))} /><small>{globalTitle.length}/60</small></div></td></tr>{remoteMarkets.map((market) => { const offer = offers.find((item) => item.site_id === market.site_id); const enabled = Boolean(offer); return <tr className={enabled ? "" : "disabled"} key={market.site_id}><th><label className="cbt-site-toggle"><input type="checkbox" checked={enabled} onChange={() => toggleMarket(market.site_id)} /><span><strong>{MARKET_NAMES[market.site_id] ?? market.site_id}</strong><small>{market.site_id} · Remote</small></span></label></th><td><span className="cbt-derived-value">{priceUsd || "-"}</span></td><td><span className="cbt-derived-value">{estimatedProfitUsd === null ? "-" : estimatedProfitUsd.toFixed(2)}</span></td><td><select disabled={!enabled} value={offer?.listing_type_id ?? "gold_pro"} onChange={(event) => updateOffer(market.site_id, "listing_type_id", event.target.value)}><option value="gold_pro">Premium（优质）</option><option value="gold_special">Classic（经典）</option></select></td><td><div className="cbt-title-input"><input disabled={!enabled} maxLength={60} value={offer?.title ?? globalTitle} onChange={(event) => updateOffer(market.site_id, "title", event.target.value)} /><small>{(offer?.title ?? globalTitle).length}/60</small></div></td></tr>; })}{fullMarkets.map((market) => <tr className="disabled cbt-full-row" key={`${market.site_id}-${market.logistic_type}`}><th><label className="cbt-site-toggle"><input type="checkbox" disabled /><span><strong>墨西哥（FULL）</strong><small>MLM · FULL 履约不参与本次发布</small></span></label></th><td>不发布</td><td>-</td><td>已排除</td><td>由 FULL 流程单独管理</td></tr>)}</tbody></table></div>{pricing && pricing.target_currency !== "USD" && <p className="inline-warning">请补充 USD 成本定价后保存；当前草稿的本地站价格不能用于 CBT 发布。</p>}{preview && <div className={`validation-result ${preview.allowed ? "ready" : "blocked"}`}><strong>{preview.allowed ? "官方请求预检通过" : "刊登请求未通过"}</strong>{preview.errors.map((error) => <span key={error}>{error}</span>)}</div>}{execution && <div className={`validation-result ${execution.status === "published" ? "ready" : "blocked"}`}><strong>{execution.status === "published" ? "已提交并创建商品" : "未创建商品"}</strong>{execution.item_id && <span>商品 ID：{execution.item_id}</span>}{execution.permalink && <a href={execution.permalink} target="_blank" rel="noreferrer">打开商品页</a>}{execution.errors.map((error) => <span key={error}>{error}</span>)}</div>}</section>
+    </main>
+    <footer className="wf-action-bar"><span>{status || (saved ? "配置已保存" : "请先完成必填内容")}</span><div><button className="secondary-button" onClick={onBackToEditing}>取消</button><button disabled={!canSave || busy === "save"} onClick={saveConfig}><Save size={16} /> 保存</button><button className="secondary-button" disabled={!saved || busy === "preview"} onClick={previewPayload}><ListChecks size={16} /> 预检</button><label className="check-row"><input type="checkbox" checked={publishConfirmed} disabled={!preview?.allowed || !readiness?.mercado_libre.live_publish_enabled} onChange={(event) => setPublishConfirmed(event.target.checked)} />确认发布</label><button disabled={!publishConfirmed || !preview?.allowed || !readiness?.mercado_libre.live_publish_enabled || busy === "execute"} onClick={executePublish}><Globe2 size={16} /> 立即发布</button></div></footer>
   </section>;
 }

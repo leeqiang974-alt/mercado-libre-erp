@@ -18,7 +18,7 @@
 6. Run Claude planning/review and NVIDIA behavioral/compliance review with provider status visible; local fallback must be labeled as fallback.
 7. Approve, queue, publish, and inspect the returned item id, permalink, and error details.
 
-- The operator-facing entrypoint for pending products is the `上架库` editor. Dashboard pending-product shortcuts must open that editor first; the final publish configuration page is only the next step after content and category work is complete.
+- The operator-facing entrypoint for pending products is a single cohesive `编辑产品 / 跨境上架` page reached from `上架库`. It must follow the WorryFree-style order: store/category, basic information, media, description, variants/SKU, and sales configuration. Do not split these into separate editor and final-publish screens. The bottom action bar owns save, official preflight, explicit confirmation, and publish.
 
 ## Product Truthfulness
 
