@@ -1,4 +1,7 @@
-from fastapi import FastAPI
+import asyncio
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi import Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
@@ -57,6 +60,22 @@ app.include_router(stores.router)
 app.include_router(audit_events.router)
 app.include_router(integrations.router)
 app.include_router(erp.router)
+
+
+@app.middleware("http")
+async def fail_fast_on_stuck_request(request: Request, call_next):
+    """Do not allow a slow third-party call to block every ERP screen."""
+    if request.url.path == "/health":
+        return await call_next(request)
+    try:
+        return await asyncio.wait_for(
+            call_next(request), timeout=settings.api_request_timeout_seconds
+        )
+    except TimeoutError:
+        return JSONResponse(
+            status_code=504,
+            content={"detail": "request_timeout", "retryable": True},
+        )
 
 
 @app.get("/health")

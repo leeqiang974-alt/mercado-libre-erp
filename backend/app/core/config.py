@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     default_site_id: str = "MLM"
     allow_live_publish: bool = False
     token_encryption_key: str = "local-dev-token-key-change-me"
+    api_request_timeout_seconds: int = 20
     job_stale_after_seconds: int = 900
     job_execution_timeout_seconds: int = 840
     listing_type_cache_ttl_seconds: int = 900
@@ -36,6 +37,8 @@ class Settings(BaseSettings):
             ("postgresql://", "postgresql+")
         ):
             raise ValueError("Live publishing requires PostgreSQL task locking.")
+        if self.api_request_timeout_seconds < 5:
+            raise ValueError("API request timeout must be at least five seconds.")
         if self.job_execution_timeout_seconds >= self.job_stale_after_seconds:
             raise ValueError("Job execution timeout must be shorter than the stale-job threshold.")
         if self.amazon_domain_min_interval_seconds < 1:
