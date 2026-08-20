@@ -196,7 +196,23 @@ export function CbtGlobalPublishingPanel({
         setHasSavedConfig(Boolean(config));
         setConfigLoaded(true);
         offersInitializedRef.current = Boolean(config);
-        if (!config) return;
+        if (!config) {
+          if (draft.target_category_id) {
+            setCategoryId(draft.target_category_id);
+            getCategoryDetails(draft.target_category_id)
+              .then((details) => {
+                if (!cancelled) {
+                  setCategoryLeafVerified(details.verified && details.leaf);
+                  setCategoryPath((details.path_from_root_zh ?? details.path_from_root).map((item) => item.name_zh || item.name).filter(Boolean).join(" > "));
+                }
+              })
+              .catch(() => undefined);
+            getCategoryAttributes(draft.target_category_id)
+              .then((result) => !cancelled && setAttributeDefinitions(result.attributes))
+              .catch(() => undefined);
+          }
+          return;
+        }
         setSaved(config);
         setCategoryId(config.category_id);
         getCategoryDetails(config.category_id)
@@ -241,7 +257,7 @@ export function CbtGlobalPublishingPanel({
   async function predictCategory() {
     setBusy("category"); setStatus("");
     try {
-      const result = await getCategoryPredictions("CBT", globalTitle);
+      const result = await getCategoryPredictions(draft.target_site_id || "CBT", globalTitle);
       setPredictions(result.predictions.slice(0, 6));
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "CBT 类目预测失败");
@@ -402,7 +418,7 @@ export function CbtGlobalPublishingPanel({
       <aside className="drafts-sidebar surface wf-listing-rail">
         <div className="drafts-sidebar-heading"><h3>上架库</h3><span>{listingRail.length} 个</span></div>
         <p className="section-note">选择商品后，在右侧完成分类、素材、售价和站点配置。</p>
-        <div className="draft-rail-list">{listingRail.map((item) => <button className={`draft-rail-item ${item.id === draftId ? "selected" : ""}`} key={item.id} onClick={() => { window.location.href = `/?draft_id=${item.id}#publishing`; }}><img className="product-image" src={item.image_urls[0] || ""} alt="" /><span><strong>{item.title || "未命名商品"}</strong><small>#{item.id} · {item.target_site_id}</small><small>{item.risk_status}</small></span></button>)}</div>
+        <div className="draft-rail-list">{listingRail.map((item) => <button className={`draft-rail-item ${item.id === draftId ? "selected" : ""}`} key={item.id} onClick={() => { window.location.href = `/?draft_id=${item.id}#drafts`; }}><img className="product-image" src={item.image_urls[0] || ""} alt="" /><span><strong>{item.title || "未命名商品"}</strong><small>#{item.id} · {item.target_site_id}</small><small>{item.risk_status}</small></span></button>)}</div>
       </aside>
       <main className="wf-editor-main">
       <section id="store-category" className="surface wf-section">
