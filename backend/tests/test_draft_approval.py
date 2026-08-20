@@ -180,7 +180,7 @@ def test_draft_can_be_approved_and_audited():
         assert event.after_json["approved_by"] == "operator"
 
 
-def test_draft_approval_requires_current_claude_nvidia_pass():
+def test_draft_approval_does_not_require_ai_review():
     client, testing_session = make_client()
 
     response = client.post(
@@ -188,13 +188,13 @@ def test_draft_approval_requires_current_claude_nvidia_pass():
         json={"approved_by": "operator"},
     )
 
-    assert response.status_code == 422
-    assert "current_claude_nvidia_pass_required_before_approval" in response.text
+    assert response.status_code == 200
     with testing_session() as db:
-        assert db.query(ProductDraftApproval).count() == 0
+        approval = db.query(ProductDraftApproval).one()
+        assert approval.review_result_id is None
 
 
-def test_draft_approval_rejects_pass_from_obsolete_review_contract():
+def test_draft_approval_can_ignore_obsolete_ai_review_contract():
     client, testing_session = make_client()
     with testing_session() as db:
         draft = db.get(ProductDraft, 1)
@@ -214,11 +214,11 @@ def test_draft_approval_rejects_pass_from_obsolete_review_contract():
 
     response = client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
 
-    assert response.status_code == 422
-    assert "current_claude_nvidia_pass_required_before_approval" in response.text
+    assert response.status_code == 200
+    assert response.json()["status"] == "approved"
 
 
-def test_draft_approval_requires_latest_behavioral_review_to_pass():
+def test_draft_approval_can_ignore_blocking_ai_review():
     client, testing_session = make_client()
     seed_publish_review(testing_session)
     with testing_session() as db:
@@ -239,8 +239,8 @@ def test_draft_approval_requires_latest_behavioral_review_to_pass():
 
     response = client.post("/api/drafts/1/approval", json={"approved_by": "operator"})
 
-    assert response.status_code == 422
-    assert "current_claude_nvidia_pass_required_before_approval" in response.text
+    assert response.status_code == 200
+    assert response.json()["status"] == "approved"
 
 
 def test_newer_behavioral_review_invalidates_old_review_and_approval(monkeypatch):

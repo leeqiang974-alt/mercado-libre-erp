@@ -133,7 +133,6 @@ def preview_cbt_publish_from_draft(
     errors: list[str] = []
     if store is None or store.site_id.strip().upper() != "CBT" or store.oauth_status != "connected":
         errors.append("connected_cbt_store_required")
-    errors.extend(provider_review_context_errors(db, draft))
     raw_config = {
         "store_id": config.store_id,
         "category_id": config.category_id,
@@ -172,7 +171,7 @@ async def execute_cbt_publish_from_draft(
     request: CbtPublishExecuteRequest,
     db: Session = Depends(get_db),
 ) -> PublishExecutionResult:
-    """Create one traditional Global Selling item after all approval gates pass."""
+    """Create one traditional Global Selling item after configuration checks."""
     if not request.acknowledge_publish:
         return PublishExecutionResult(status="blocked", errors=["publish_acknowledgement_required"])
     if not settings.allow_live_publish:
@@ -194,10 +193,6 @@ async def execute_cbt_publish_from_draft(
     if config.draft_content_version != draft.content_version:
         return PublishExecutionResult(
             status="blocked", errors=["cbt_listing_config_stale_save_again_required"]
-        )
-    if not is_product_draft_approved(db, draft.id):
-        return PublishExecutionResult(
-            status="blocked", errors=["current_claude_nvidia_pass_and_human_approval_required"]
         )
 
     raw_config = {
@@ -230,11 +225,6 @@ async def execute_cbt_publish_from_draft(
     except ValueError as exc:
         return PublishExecutionResult(status="blocked", errors=[str(exc)])
 
-    approval = get_product_draft_approval(db, draft.id)
-    if approval is None:
-        return PublishExecutionResult(
-            status="blocked", errors=["current_claude_nvidia_pass_and_human_approval_required"]
-        )
     idempotency_key = hashlib.sha256(
         json.dumps(
             {
@@ -242,7 +232,6 @@ async def execute_cbt_publish_from_draft(
                 "draft_id": draft.id,
                 "draft_version": draft.content_version,
                 "store_id": store.id,
-                "review_result_id": approval.review_result_id,
                 "payload": payload,
             },
             sort_keys=True,
@@ -290,7 +279,6 @@ async def execute_cbt_publish_from_draft(
         request_summary_json={
             "publication_model": "traditional_global",
             "draft_version": draft.content_version,
-            "review_result_id": approval.review_result_id,
             "category_id": config.category_id,
             "marketplaces": [offer["site_id"] for offer in payload["sites_to_sell"]],
         },

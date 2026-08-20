@@ -275,6 +275,11 @@ export function PublishingPage({
         if (cancelled || initRequestEpochRef.current !== initEpoch) return;
         setReadiness(system);
         setStores(storeRows);
+        // A connected CBT store is the real Global Selling entry point. Keep
+        // old drafts with an MLM target usable by opening the global workflow.
+        if (storeRows.some((store) => store.site_id === "CBT" && store.oauth_status === "connected")) {
+          setPublishingModel("cbt");
+        }
         if (listingTypeRequestEpochRef.current === initialListingTypeEpoch) {
           setListingTypes(metadata.listing_type_ids);
           setListingTypesVerified(metadata.verified);
@@ -370,7 +375,6 @@ export function PublishingPage({
     return () => { cancelled = true; };
   }, [storeId]);
 
-  const reviewPassed = review?.decision === "pass";
   const expectedCurrency = currencyForSite(siteId);
   const siteMatchesDraft = siteId === draft?.target_site_id;
   const pricingValid = Boolean(siteMatchesDraft && draft?.price && draft.currency === expectedCurrency);
@@ -433,7 +437,6 @@ export function PublishingPage({
   });
   const currentConfigFingerprint = JSON.stringify({
     draft_id: draftId,
-    review_result_id: review?.review_result_id ?? null,
     approval_id: approval?.id ?? null,
     site_id: siteId,
     store_id: Number(storeId),
@@ -703,14 +706,24 @@ export function PublishingPage({
     }
   }
 
+  const operatorReview = {
+    provider: "operator",
+    decision: "pass" as const,
+    risk_level: "low" as const,
+    reason_codes: [],
+    reasons: [],
+    suggested_changes: {},
+    review_result_id: null,
+  };
+
   async function createPreview() {
-    if (!draftId || !review) return;
+    if (!draftId) return;
     const requestedFingerprint = currentConfigFingerprint;
     setBusy("preview");
     setPreview(null);
     setPreviewFingerprint("");
     try {
-      const result = await previewPublishFromDraft(draftId, review, listingTypes, true);
+      const result = await previewPublishFromDraft(draftId, operatorReview, listingTypes, true);
       if (currentConfigFingerprintRef.current !== requestedFingerprint) return;
       setPreview(result);
       setPreviewFingerprint(requestedFingerprint);
@@ -724,11 +737,11 @@ export function PublishingPage({
 
   async function executePublish() {
     if (
-      !draftId || !review || !storeId || !previewMatchesCurrentConfig || busy === "config"
+      !draftId || !storeId || !previewMatchesCurrentConfig || busy === "config"
     ) return;
     setBusy("execute");
     try {
-      const result = await executePublishFromDraft(draftId, Number(storeId), review, listingTypes, true);
+      const result = await executePublishFromDraft(draftId, Number(storeId), operatorReview, listingTypes, true);
       setExecution(result);
       await refreshPublishJobs(false);
     } catch (error) {
@@ -740,11 +753,11 @@ export function PublishingPage({
 
   async function queuePublish() {
     if (
-      !draftId || !review || !storeId || !previewMatchesCurrentConfig || busy === "config"
+      !draftId || !storeId || !previewMatchesCurrentConfig || busy === "config"
     ) return;
     setBusy("queue");
     try {
-      await enqueuePublishFromDraft(draftId, Number(storeId), review, listingTypes, true);
+      await enqueuePublishFromDraft(draftId, Number(storeId), operatorReview, listingTypes, true);
       await refreshPublishJobs(false);
       setStatus("Publish job queued");
     } catch (error) {
@@ -1071,7 +1084,7 @@ export function PublishingPage({
       && JSON.stringify(normalizedSavedAttributes) === JSON.stringify(currentAttributes)
       && missingRequiredAttributes.length === 0
   );
-  const canApprove = pricingValid && reviewPassed && configReady;
+  const canApprove = pricingValid && configReady;
   const canPreview = canApprove && Boolean(approval);
   const previewMatchesCurrentConfig = Boolean(
     preview?.allowed && previewFingerprint === currentConfigFingerprint && configReady,
@@ -1090,7 +1103,6 @@ export function PublishingPage({
 
       <div className="publish-progress">
         <ProgressItem label="价格" ready={pricingValid} />
-        <ProgressItem label="AI 审核" ready={reviewPassed} />
         <ProgressItem label="属性与站点" ready={configReady} />
         <ProgressItem label="人工确认" ready={Boolean(approval)} />
         <ProgressItem label="发布预检" ready={previewMatchesCurrentConfig} />
@@ -1290,9 +1302,8 @@ export function PublishingPage({
       </section>
 
       <section className="surface publish-section">
-        <div className="section-heading"><div><span className="step-number">3</span><h3>审核、人工确认与发布</h3></div></div>
+        <div className="section-heading"><div><span className="step-number">3</span><h3>人工确认与发布</h3></div></div>
         <div className="release-summary">
-          <div><span>AI 审核</span><strong>{String(review?.decision ?? "未审核")}</strong></div>
           <div><span>店铺</span><strong>{selectedStore?.display_name ?? "未选择"}</strong></div>
           <div><span>刊登方式</span><strong>{COMMERCIAL_TYPES.find((type) => type.id === listingTypeId)?.label ?? "未选择"}</strong></div>
           <div><span>物流</span><strong>{selectedShipping ? (SHIPPING_LABELS[selectedShippingKey] ?? selectedShippingKey) : "未选择"}</strong></div>

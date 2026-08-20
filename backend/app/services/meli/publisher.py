@@ -74,10 +74,8 @@ def validate_publish_request(
         errors.append("listing_type_not_supported")
     if listing_choice.listing_type_id not in valid_listing_type_ids:
         errors.append("listing_type_not_available")
-    if review.decision == "block":
-        errors.append("ai_review_blocked")
-    if review.decision == "needs_human_review" and not human_approved:
-        errors.append("ai_review_needs_human_review")
+    # AI review is optional assistance. Publishing is guarded by the explicit
+    # operator confirmation plus the concrete marketplace validations below.
     errors.extend(validate_site_currency(listing_choice.site_id, draft.currency))
     try:
         build_item_payload(
