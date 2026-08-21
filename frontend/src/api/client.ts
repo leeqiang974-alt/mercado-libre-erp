@@ -199,7 +199,7 @@ export type CbtListingConfig = {
   price_usd: number;
   available_quantity: number;
   attributes: { id: string; value_name: string; value_id?: string | null }[];
-  sale_terms: { id: string; value_name: string }[];
+  sale_terms: { id: string; value_id?: string | null; value_name: string }[];
   sites_to_sell: {
     site_id: string;
     title: string;

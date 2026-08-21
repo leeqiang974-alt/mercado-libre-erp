@@ -2,6 +2,10 @@ from collections.abc import Iterable
 
 
 SUPPORTED_CBT_REMOTE_SITES = {"MLA", "MLB", "MLC", "MCO", "MLM", "MLU"}
+# The authorized-marketplaces endpoint can still report MLU as Remote while
+# /global/items rejects it for this seller program. Do not present a target
+# that Mercado Libre has declared non-operable.
+TEMPORARILY_UNAVAILABLE_CBT_REMOTE_SITES = {"MLU"}
 
 
 def normalize_cbt_profile(
@@ -43,7 +47,11 @@ def normalize_cbt_profile(
                         cap.get("quota", cap.get("limit", cap.get("capacity", cap.get("maximum")))),
                     )
                 ),
-                "available": logistic_type == "remote" and site_id in SUPPORTED_CBT_REMOTE_SITES,
+                "available": (
+                    logistic_type == "remote"
+                    and site_id in SUPPORTED_CBT_REMOTE_SITES
+                    and site_id not in TEMPORARILY_UNAVAILABLE_CBT_REMOTE_SITES
+                ),
             }
         )
     tags = user_data.get("tags", [])

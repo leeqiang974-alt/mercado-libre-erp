@@ -94,6 +94,16 @@ function createRemoteOffer(market: CbtMarketplace, title: string): Offer {
   };
 }
 
+function warrantySaleTerms(warranty: string) {
+  if (warranty === "No warranty") {
+    return [{ id: "WARRANTY_TYPE", value_id: "6150835", value_name: "No warranty" }];
+  }
+  return [
+    { id: "WARRANTY_TYPE", value_id: "2230280", value_name: "Seller warranty" },
+    { id: "WARRANTY_TIME", value_name: warranty },
+  ];
+}
+
 function remoteMarketsForProfile(profile: CbtPublishingProfile): CbtMarketplace[] {
   return Array.from(
     new Map(
@@ -251,7 +261,8 @@ export function CbtGlobalPublishingPanel({
         setQuantity(String(config.available_quantity || 999));
         setAttributes({ ITEM_CONDITION: "new", SELLER_SKU: defaultSku(draftId), ...Object.fromEntries(config.attributes.map((item) => [item.id, item.value_name])), BRAND: "Unbranded", MODEL: config.family_name || defaultSku(draftId) });
         setOffers(config.sites_to_sell);
-        setWarranty(config.sale_terms.find((term) => term.id === "WARRANTY_TYPE")?.value_name ?? "7 days");
+        const warrantyType = config.sale_terms.find((term) => term.id === "WARRANTY_TYPE")?.value_name;
+        setWarranty(warrantyType === "No warranty" ? "No warranty" : config.sale_terms.find((term) => term.id === "WARRANTY_TIME")?.value_name ?? "7 days");
       })
       .catch((error) => !cancelled && setStatus(error instanceof Error ? error.message : "无法读取跨境刊登配置"));
     return () => { cancelled = true; };
@@ -284,6 +295,12 @@ export function CbtGlobalPublishingPanel({
       .then((data) => {
         if (cancelled) return;
         setProfile(data);
+        const availableSiteIds = new Set(remoteMarketsForProfile(data).map((market) => market.site_id));
+        setOffers((current) => {
+          const filtered = current.filter((offer) => availableSiteIds.has(offer.site_id));
+          if (filtered.length !== current.length) setStatus("乌拉圭（MLU）当前不支持国际直发，已从本次发布站点排除；请保存配置后再发布。");
+          return filtered;
+        });
         if (configLoaded && !hasSavedConfig && data.model === "traditional_global" && !offersInitializedRef.current) {
           setOffers(remoteMarketsForProfile(data).map((market) => createRemoteOffer(market, globalTitle)));
           offersInitializedRef.current = true;
@@ -444,7 +461,7 @@ export function CbtGlobalPublishingPanel({
         global_title: normalizeCbtTitle(globalTitle), description: sanitizeCbtDescription(description), price_usd: Number(priceUsd),
         available_quantity: Number(quantity),
         attributes: Object.entries(attributes).filter(([, value]) => value.trim()).map(([id, value_name]) => ({ id, value_name })),
-        sale_terms: warranty.trim() ? [{ id: "WARRANTY_TYPE", value_name: warranty.trim() }] : [],
+        sale_terms: warrantySaleTerms(warranty),
         sites_to_sell: offers,
       });
       setSaved(config); onDraftChange(config.draft); onReviewInvalidated();

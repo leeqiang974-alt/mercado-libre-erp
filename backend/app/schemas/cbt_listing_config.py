@@ -8,6 +8,7 @@ from app.schemas.drafts import ProductDraftRead
 
 class CbtSaleTerm(BaseModel):
     id: str = Field(min_length=1, max_length=80)
+    value_id: str | None = Field(default=None, max_length=120)
     value_name: str = Field(min_length=1, max_length=500)
 
     @field_validator("id")
