@@ -78,6 +78,41 @@ def test_cbt_profile_marks_only_remote_supported_markets_available():
     assert profile["marketplaces"][1]["available"] is False
 
 
+def test_cbt_payload_normalizes_condition_and_package_units():
+    payload = build_cbt_global_item_payload(
+        ProductDraftCreate(
+            title="Reusable Silicone Mold",
+            description="English description",
+            image_urls=["https://example.com/main.jpg"],
+        ),
+        CbtListingConfigUpsert.model_validate(
+            {
+                "store_id": 2,
+                "category_id": "CBT432923",
+                "family_name": "xy000013",
+                "global_title": "Reusable Silicone Mold",
+                "description": "English description",
+                "price_usd": 9.99,
+                "available_quantity": 999,
+                "attributes": [
+                    {"id": "ITEM_CONDITION", "value_name": "new"},
+                    {"id": "SELLER_SKU", "value_name": "xy000013"},
+                    {"id": "PACKAGE_LENGTH", "value_name": "25"},
+                    {"id": "PACKAGE_WIDTH", "value_name": "25"},
+                    {"id": "PACKAGE_HEIGHT", "value_name": "5"},
+                    {"id": "PACKAGE_WEIGHT", "value_name": "250"},
+                ],
+                "sites_to_sell": [{"site_id": "MLM", "title": "Reusable Silicone Mold", "listing_type_id": "gold_special"}],
+            }
+        ),
+    )
+
+    attributes = {item["id"]: item for item in payload["attributes"]}
+    assert attributes["ITEM_CONDITION"]["value_id"] == "2230284"
+    assert attributes["PACKAGE_LENGTH"]["value_name"] == "25 cm"
+    assert attributes["PACKAGE_WEIGHT"]["value_name"] == "250 g"
+
+
 def test_cbt_config_response_accepts_the_saved_draft_snapshot():
     """Saving must not re-serialize a ProductDraftRead as an ORM model."""
     draft = ProductDraftRead(

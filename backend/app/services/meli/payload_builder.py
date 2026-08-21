@@ -1,6 +1,7 @@
 from app.schemas.drafts import ProductDraftCreate
 from app.schemas.cbt_listing_config import CbtListingConfigUpsert
 from app.schemas.publishing import ListingChoice
+import re
 
 
 SUPPORTED_SHIPPING_MODES = {"me2", "me1", "not_specified"}
@@ -104,6 +105,32 @@ CBT_REQUIRED_SHIPPING_ATTRIBUTES = {
     "PACKAGE_WEIGHT",
 }
 
+_CBT_PACKAGE_ATTRIBUTE_UNITS = {
+    "PACKAGE_HEIGHT": "cm",
+    "PACKAGE_LENGTH": "cm",
+    "PACKAGE_WIDTH": "cm",
+    "PACKAGE_WEIGHT": "g",
+}
+
+
+def _normalize_cbt_attributes(attributes: list[dict]) -> list[dict]:
+    """Convert editor shorthand into the values accepted by Global Selling."""
+    normalized: list[dict] = []
+    for raw in attributes:
+        attribute = dict(raw)
+        attribute_id = str(attribute.get("id", "")).strip().upper()
+        value_name = str(attribute.get("value_name", "")).strip()
+        if attribute_id == "ITEM_CONDITION" and value_name.casefold() == "new":
+            # CBT category metadata exposes the official condition value.
+            attribute["value_name"] = "New"
+            attribute["value_id"] = attribute.get("value_id") or "2230284"
+        elif attribute_id in _CBT_PACKAGE_ATTRIBUTE_UNITS and re.fullmatch(r"\d+(?:\.\d+)?", value_name):
+            # Package attributes are number_unit fields. The compact UI accepts
+            # a bare number but the marketplace request must include its unit.
+            attribute["value_name"] = f"{value_name} {_CBT_PACKAGE_ATTRIBUTE_UNITS[attribute_id]}"
+        normalized.append(attribute)
+    return normalized
+
 
 def build_cbt_global_item_payload(
     draft: ProductDraftCreate,
@@ -130,7 +157,9 @@ def build_cbt_global_item_payload(
     if not config.sites_to_sell:
         raise ValueError("At least one Remote marketplace is required.")
 
-    attributes = [attribute.model_dump(exclude_none=True) for attribute in config.attributes]
+    attributes = _normalize_cbt_attributes(
+        [attribute.model_dump(exclude_none=True) for attribute in config.attributes]
+    )
     attribute_ids = {str(attribute.get("id", "")).upper() for attribute in attributes}
     if "ITEM_CONDITION" not in attribute_ids:
         raise ValueError("Verified ITEM_CONDITION attribute is required.")
