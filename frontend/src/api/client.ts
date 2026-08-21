@@ -587,6 +587,19 @@ export async function getDraftPricing(productDraftId: number) {
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<DraftPricing | null>;
 }
+
+export async function getCbtCategoryPredictions(storeId: number, query: string) {
+  const response = await fetch(`${API_BASE}/api/stores/${storeId}/cbt/category-predictions?q=${encodeURIComponent(query)}`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<{ store_id: number; query: string; predictions: Record<string, unknown>[] }>;
+}
+
+export async function getCbtCategoryTree(storeId: number, categoryId = "") {
+  const query = categoryId ? `?category_id=${encodeURIComponent(categoryId)}` : "";
+  const response = await fetch(`${API_BASE}/api/stores/${storeId}/cbt/category-tree${query}`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<{ category: Record<string, unknown> | null; children: Record<string, unknown>[] }>;
+}
 export const EMPTY_PRICING: DraftPricingInput = {
   source_price: 0,
   source_currency: "CNY",

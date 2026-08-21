@@ -13,7 +13,8 @@ import {
   confirmDraftCategory,
   getCategoryAttributes,
   getCategoryDetails,
-  getCategoryPredictions,
+  getCbtCategoryPredictions,
+  getCbtCategoryTree,
   getCbtListingConfig,
   getCbtMarketplaceListingTypes,
   getCbtPublishingProfile,
@@ -137,6 +138,8 @@ export function CbtGlobalPublishingPanel({
   const [categoryPath, setCategoryPath] = useState("");
   const [categorySearchQuery, setCategorySearchQuery] = useState(normalizeCbtTitle(draft.title));
   const [predictions, setPredictions] = useState<Record<string, unknown>[]>([]);
+  const [categoryTree, setCategoryTree] = useState<Record<string, unknown>[]>([]);
+  const [categoryTreePath, setCategoryTreePath] = useState("");
   const [globalTitle, setGlobalTitle] = useState(normalizeCbtTitle(draft.title));
   const [familyName, setFamilyName] = useState(defaultSku(draftId));
   const [description, setDescription] = useState(sanitizeCbtDescription(draft.description));
@@ -314,12 +317,21 @@ export function CbtGlobalPublishingPanel({
     return () => { cancelled = true; };
   }, [storeId, profileReloadKey, configLoaded, hasSavedConfig]);
 
+  useEffect(() => {
+    if (!storeId) { setCategoryTree([]); setCategoryTreePath(""); return; }
+    getCbtCategoryTree(Number(storeId))
+      .then((result) => { setCategoryTree(result.children); setCategoryTreePath("CBT 全部分类"); })
+      .catch(() => setCategoryTree([]));
+  }, [storeId]);
+
   async function predictCategory() {
     setBusy("category"); setStatus("");
     try {
       const query = categorySearchQuery.trim() || globalTitle;
       if (!query) throw new Error("请输入分类关键词或先填写英文标题。");
-      const result = await getCategoryPredictions("CBT", query);
+      if (!storeId) throw new Error("请先选择已授权 CBT 店铺。");
+      if (/[^\x00-\x7F]/.test(query)) throw new Error("官方 CBT 分类预测仅接受英文标题；中文可通过下方分类目录浏览。");
+      const result = await getCbtCategoryPredictions(Number(storeId), query);
       const enriched = await Promise.all(result.predictions.slice(0, 6).map(async (prediction) => {
         const id = String(prediction.category_id ?? "");
         if (!id) return prediction;
@@ -332,6 +344,26 @@ export function CbtGlobalPublishingPanel({
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "CBT 类目预测失败");
     } finally { setBusy(""); }
+  }
+
+  async function browseCategoryTree(nextCategoryId = "") {
+    if (!storeId) return;
+    setBusy("category-tree"); setStatus("");
+    try {
+      const result = await getCbtCategoryTree(Number(storeId), nextCategoryId);
+      setCategoryTree(result.children);
+      const detail = result.category;
+      const path = detail?.path_from_root_zh ?? detail?.path_from_root;
+      setCategoryTreePath(Array.isArray(path) ? path.map((item) => {
+        const row = item as Record<string, unknown>;
+        return String(row.name_zh ?? row.name ?? "");
+      }).filter(Boolean).join(" > ") : "CBT 全部分类");
+      if (nextCategoryId && result.children.length === 0) {
+        setCategoryId(nextCategoryId); setCategoryLeafVerified(false); setCategoryPath(""); setAttributeDefinitions([]);
+        setStatus("已选择最底层分类，请点击“确认最终分类”读取官方属性。");
+      }
+    } catch (error) { setStatus(error instanceof Error ? error.message : "读取 CBT 分类目录失败"); }
+    finally { setBusy(""); }
   }
 
   async function loadAttributes() {
@@ -522,9 +554,10 @@ export function CbtGlobalPublishingPanel({
         <div className="wf-form-row"><label>店铺 *<select value={storeId} onChange={(event) => { setStoreId(event.target.value); setOffers([]); setHasSavedConfig(false); offersInitializedRef.current = false; setPreview(null); }}><option value="">选择 CBT 店铺</option>{cbtStores.map((store) => <option key={store.id} value={store.id}>{store.display_name} · 卖家 {store.seller_id}</option>)}</select></label>
           <div className="wf-sites"><strong>同时发布到站点</strong><label><input type="checkbox" checked={allRemoteSelected} disabled={profile?.model !== "traditional_global" || remoteMarkets.length === 0} onChange={toggleAllRemoteMarkets} /> 全选</label>{remoteMarkets.map((market) => <label key={market.site_id}><input type="checkbox" checked={offers.some((offer) => offer.site_id === market.site_id)} onChange={() => toggleMarket(market.site_id)} /> {MARKET_NAMES[market.site_id]}</label>)}<label className="is-disabled"><input type="checkbox" disabled /> 墨西哥（FULL）</label></div></div>
         {profile && <p className="section-note">卖家 {profile.seller_id} · {profile.model === "traditional_global" ? "传统 Global Selling" : "User Products"}。Remote 站点默认全部勾选；墨西哥 FULL 由独立流程处理。</p>}
-        <div className="wf-category-line"><label>分类关键词（支持中文/英文）<input value={categorySearchQuery} placeholder="例如：硅胶蛋糕模具 / silicone muffin pan" onChange={(event) => setCategorySearchQuery(event.target.value)} /></label><button onClick={predictCategory} disabled={busy === "category"}><Search size={16} /> 搜索 CBT 分类</button><button className="secondary-button" onClick={loadAttributes} disabled={!categoryId.startsWith("CBT") || busy === "attributes"}><ListChecks size={16} /> 确认最终分类</button></div><label>Global Selling 最终 CBT 分类 *<input readOnly value={categoryId} placeholder="从上方搜索结果中点击选择最底层分类" /></label>
+        <div className="wf-category-line"><label>英文标题预测（官方接口）<input value={categorySearchQuery} placeholder="例如 silicone muffin pan" onChange={(event) => setCategorySearchQuery(event.target.value)} /></label><button onClick={predictCategory} disabled={busy === "category"}><Search size={16} /> 智能预测</button><button className="secondary-button" onClick={loadAttributes} disabled={!categoryId.startsWith("CBT") || busy === "attributes"}><ListChecks size={16} /> 确认最终分类</button></div><label>Global Selling 最终 CBT 分类 *<input readOnly value={categoryId} placeholder="从预测结果或下方分类目录选择最底层分类" /></label>
         {categoryPath && <p className="category-path-label">{categoryPath}{categoryId ? ` · ${categoryLeafVerified ? "最终 CBT 最底层分类已确认" : "待确认最终 CBT 分类"}` : " · 请在上方选择对应的 CBT 最底层分类"}</p>}
-        {predictions.length > 0 && <div className="prediction-list">{predictions.map((item) => { const id = String(item.category_id ?? ""); const name = String(item.category_name_zh ?? item.category_name ?? item.domain_name ?? id); return <button key={id} onClick={() => { setCategoryId(id); setCategoryLeafVerified(false); setCategoryPath(""); setAttributeDefinitions([]); }}><strong>{name}</strong><small>{String(item.parent_path ?? "正在读取母级分类路径")}</small><small>{id} · {item.is_leaf === false ? "还有下级分类" : "点击后确认分类"}</small></button>; })}</div>}
+        {predictions.length > 0 && <div className="prediction-list">{predictions.map((item) => { const id = String(item.category_id ?? ""); const name = String(item.category_name_zh ?? item.category_name ?? item.domain_name ?? id); return <button key={id} onClick={() => { const suggested = Array.isArray(item.attributes) ? item.attributes : []; setCategoryId(id); setCategoryLeafVerified(false); setCategoryPath(""); setAttributeDefinitions([]); setAttributes((current) => ({ ...current, ...Object.fromEntries(suggested.filter((value) => typeof value === "object" && value !== null).map((value) => { const row = value as Record<string, unknown>; return [String(row.id ?? ""), String(row.value_name ?? "")]; }).filter(([id, value]) => id && value && !current[id])) })); }}><strong>{name}</strong><small>{String(item.parent_path ?? "正在读取母级分类路径")}</small><small>{id} · {item.is_leaf === false ? "还有下级分类" : "点击后确认分类；预测属性会自动带入空白项"}</small></button>; })}</div>}
+        <div className="prediction-list"><div className="section-note"><strong>官方 CBT 分类目录</strong> · {categoryTreePath || "正在读取"} <button className="tiny-button" type="button" onClick={() => browseCategoryTree()} disabled={busy === "category-tree"}>返回根分类</button></div>{categoryTree.map((item) => { const id = String(item.id ?? ""); const name = String(item.name_zh ?? item.name ?? id); return <button key={id} type="button" onClick={() => browseCategoryTree(id)}><strong>{name}</strong><small>{id} · 点击展开；没有子分类时即选为最终候选</small></button>; })}</div>
       </section>
 
       <section id="basic" className="surface wf-section"><div className="wf-section-title"><span>2</span><div><h3>产品基本信息</h3><p>标题强制英文不超过 60 字符；品牌固定为无品牌。</p></div></div><div className="form-grid two-col"><label>Parent SKU / 产品族名称 *<input value={familyName} placeholder="例如 SKU02761" onChange={(event) => { const value = event.target.value; setFamilyName(value); setAttributes((current) => ({ ...current, MODEL: value })); setSaved(null); setPreview(null); }} /></label><label>可售库存 *<input type="number" min="1" step="1" value={quantity} onChange={(event) => { setQuantity(event.target.value); setSaved(null); setPreview(null); }} /></label></div><label>英文标题 *<div className="wf-title-input"><input value={globalTitle} onChange={(event) => { setGlobalTitle(normalizeCbtTitle(event.target.value)); setSaved(null); setPreview(null); }} /><small>{globalTitle.length}/60</small></div>{globalTitle.length > 60 && <small className="inline-warning">标题超过 60 字符：不会自动截断，请使用 AI 重新生成或手动精简。</small>}</label><label>品牌（固定）<input disabled value="Unbranded（无品牌）" /></label></section>

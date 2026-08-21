@@ -1,4 +1,5 @@
 import asyncio
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -26,6 +27,7 @@ from app.services.meli.metadata_cache import (
     upsert_cached_metadata,
 )
 from app.services.meli.cbt import normalize_cbt_profile
+from app.services.meli.category_i18n import add_category_translations, translate_category_text
 
 router = APIRouter(prefix="/api/stores", tags=["stores"])
 settings = get_settings()
@@ -195,6 +197,96 @@ async def get_cbt_publishing_profile(
     profile = normalize_cbt_profile(store.seller_id, user, marketplaces, capacity)
     profile["store_id"] = store.id
     return profile
+
+
+@router.get("/{store_id}/cbt/category-predictions")
+async def get_cbt_category_predictions(
+    store_id: int, q: str = Query(..., min_length=1, max_length=180), db: Session = Depends(get_db)
+) -> dict[str, object]:
+    """Use the authenticated CBT domain-discovery endpoint documented for Global Selling."""
+    query = " ".join(q.split())
+    if any(ord(char) > 127 for char in query):
+        raise HTTPException(status_code=422, detail="CBT category prediction requires an English title.")
+    store = db.get(Store, store_id)
+    if store is None or store.site_id.strip().upper() != "CBT":
+        raise HTTPException(status_code=422, detail="A connected CBT Global Selling store is required.")
+    if store.oauth_status != "connected":
+        raise HTTPException(status_code=409, detail="Store is not connected.")
+    try:
+        access_token = await resolve_fresh_store_access_token(
+            db=db, store=store, encryption_key=settings.token_encryption_key,
+            oauth_client=create_oauth_client(db),
+        )
+        if not access_token:
+            raise HTTPException(status_code=409, detail="Store access token is unavailable.")
+        data = await create_meli_client(access_token).get(
+            f"/marketplace/domain_discovery/search?q={quote(query, safe='')}"
+        )
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="CBT category prediction is unavailable.") from exc
+    if not isinstance(data, list):
+        raise HTTPException(status_code=502, detail="CBT category prediction returned an invalid response.")
+    predictions = []
+    for item in data[:12]:
+        if not isinstance(item, dict) or not str(item.get("category_id") or "").strip().upper().startswith("CBT"):
+            continue
+        predictions.append({
+            **item,
+            "category_name_zh": translate_category_text(item.get("category_name") or item.get("domain_name")),
+            "domain_name_zh": translate_category_text(item.get("domain_name")),
+        })
+    return {"store_id": store.id, "query": query, "predictions": predictions}
+
+
+@router.get("/{store_id}/cbt/category-tree")
+async def get_cbt_category_tree(
+    store_id: int, category_id: str = Query(default=""), db: Session = Depends(get_db)
+) -> dict[str, object]:
+    """Browse the authorized seller's CBT root or one category's children."""
+    store = db.get(Store, store_id)
+    if store is None or store.site_id.strip().upper() != "CBT":
+        raise HTTPException(status_code=422, detail="A connected CBT Global Selling store is required.")
+    if store.oauth_status != "connected":
+        raise HTTPException(status_code=409, detail="Store is not connected.")
+    try:
+        access_token = await resolve_fresh_store_access_token(
+            db=db, store=store, encryption_key=settings.token_encryption_key,
+            oauth_client=create_oauth_client(db),
+        )
+        if not access_token:
+            raise HTTPException(status_code=409, detail="Store access token is unavailable.")
+        client = create_meli_client(access_token)
+        normalized = category_id.strip().upper()
+        if normalized:
+            if not normalized.startswith("CBT"):
+                raise HTTPException(status_code=422, detail="CBT category ID is required.")
+            detail = await client.get(f"/categories/{normalized}")
+            if not isinstance(detail, dict):
+                raise ValueError("invalid_category_response")
+            translated = add_category_translations(detail)
+            return {
+                "category": translated,
+                "children": [
+                    {**child, "name_zh": translate_category_text(child.get("name"))}
+                    for child in detail.get("children_categories", []) if isinstance(child, dict)
+                ],
+            }
+        roots = await client.get("/sites/CBT/categories")
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="CBT category tree is unavailable.") from exc
+    if not isinstance(roots, list):
+        raise HTTPException(status_code=502, detail="CBT category tree returned an invalid response.")
+    return {
+        "category": None,
+        "children": [
+            {**child, "name_zh": translate_category_text(child.get("name"))}
+            for child in roots if isinstance(child, dict)
+        ],
+    }
 
 
 @router.get("/{store_id}/cbt/categories/{category_id}/marketplace-listing-types")
