@@ -42,6 +42,7 @@ from app.services.cbt_listing_configs import get_cbt_listing_config
 from app.services.integration_credentials import resolve_integration_credentials
 from app.services.audit_events import create_audit_event
 from app.services.meli.client import MercadoLibreClient
+from app.services.meli.pictures import PictureUploadError, materialize_global_picture_sources
 from app.services.meli.category_validation import validate_category_attributes
 from app.services.meli.oauth import MercadoLibreOAuthClient
 from app.services.meli.publisher import (
@@ -483,6 +484,7 @@ async def execute_cbt_publish_from_draft(
                     status="blocked", errors=["traditional_cbt_seller_required"]
                 )
             else:
+                payload = await materialize_global_picture_sources(client, payload)
                 response = await client.post("/global/items", payload)
                 response_data = response if isinstance(response, (dict, list)) else {}
                 item_id, permalink_or_keys = _global_response_item_identity(response_data)
@@ -519,6 +521,8 @@ async def execute_cbt_publish_from_draft(
                         ],
                     )
                 )
+    except PictureUploadError as exc:
+        result = PublishExecutionResult(status="failed", errors=[f"图片上传失败：{exc}"])
     except httpx.HTTPStatusError as exc:
         result = (
             PublishExecutionResult(

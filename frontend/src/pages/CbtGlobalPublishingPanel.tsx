@@ -156,7 +156,6 @@ export function CbtGlobalPublishingPanel({
   const [warranty, setWarranty] = useState("7 days");
   const [saved, setSaved] = useState<CbtListingConfig | null>(null);
   const [preview, setPreview] = useState<{ allowed: boolean; errors: string[]; payload: Record<string, unknown> | null } | null>(null);
-  const [publishConfirmed, setPublishConfirmed] = useState(false);
   const [execution, setExecution] = useState<PublishExecutionResult | null>(null);
   const [readiness, setReadiness] = useState<SystemReadiness | null>(null);
   const [pricing, setPricing] = useState<DraftPricing | null>(null);
@@ -395,7 +394,7 @@ export function CbtGlobalPublishingPanel({
 
   function setAttribute(id: string, value: string) {
     setAttributes((current) => ({ ...current, [id]: value }));
-    setSaved(null); setPreview(null); setPublishConfirmed(false); setExecution(null);
+    setSaved(null); setPreview(null); setExecution(null);
   }
 
   function toggleMarket(siteId: string) {
@@ -404,19 +403,19 @@ export function CbtGlobalPublishingPanel({
       if (current.some((offer) => offer.site_id === siteId)) return current.filter((offer) => offer.site_id !== siteId);
       return [...current, { site_id: siteId, title: globalTitle, listing_type_id: "gold_pro", logistic_type: "remote", picture_urls: [] }];
     });
-    setSaved(null); setPreview(null); setPublishConfirmed(false); setExecution(null);
+    setSaved(null); setPreview(null); setExecution(null);
   }
 
   function toggleAllRemoteMarkets() {
     offersInitializedRef.current = true;
     setOffers(allRemoteSelected ? [] : remoteMarkets.map((market) => createRemoteOffer(market, globalTitle)));
-    setSaved(null); setPreview(null); setPublishConfirmed(false); setExecution(null);
+    setSaved(null); setPreview(null); setExecution(null);
   }
 
   function updateOffer(siteId: string, key: "title" | "listing_type_id", value: string) {
     setOffers((current) => current.map((offer) => offer.site_id === siteId
       ? { ...offer, [key]: key === "title" ? normalizeCbtTitle(value) : value } as Offer : offer));
-    setSaved(null); setPreview(null); setPublishConfirmed(false); setExecution(null);
+    setSaved(null); setPreview(null); setExecution(null);
   }
 
   async function saveProductContent() {
@@ -490,7 +489,7 @@ export function CbtGlobalPublishingPanel({
       setStatus(`暂不能保存：${errors[0] ?? "请完善美客多发布要求"}`);
       return;
     }
-    setBusy("save"); setStatus(""); setPreview(null); setPublishConfirmed(false); setExecution(null);
+    setBusy("save"); setStatus(""); setPreview(null); setExecution(null);
     try {
       await saveProductContent();
       const config = await saveCbtListingConfig(draftId, {
@@ -527,6 +526,7 @@ export function CbtGlobalPublishingPanel({
   }
 
   async function executePublish() {
+    if (!window.confirm("确认向 Mercado Libre 提交真实刊登吗？提交后将创建商品。")) return;
     setBusy("execute"); setStatus("");
     try {
       setExecution(await executeCbtPublishFromDraft(draftId));
@@ -580,7 +580,7 @@ export function CbtGlobalPublishingPanel({
         <div className="wf-image-lightbox-canvas"><img src={previewImage} alt="商品图片大图预览" style={{ transform: `scale(${imageZoom})` }} /></div>
       </div>
     </div>}
-    <footer className="wf-action-bar"><span>{status || (saved ? "配置已保存" : "请先完成必填内容")}</span><div><button className="secondary-button" onClick={onBackToEditing}>取消</button><button disabled={busy === "save"} onClick={saveConfig}><Save size={16} /> 保存</button><button className="secondary-button" disabled={busy === "preview"} onClick={previewPayload}><ListChecks size={16} /> 预检</button><label className="check-row"><input type="checkbox" checked={publishConfirmed} disabled={!preview?.allowed || !readiness?.mercado_libre.live_publish_enabled} onChange={(event) => setPublishConfirmed(event.target.checked)} />确认发布</label><button disabled={!publishConfirmed || !preview?.allowed || !readiness?.mercado_libre.live_publish_enabled || busy === "execute"} onClick={executePublish}><Globe2 size={16} /> 立即发布</button></div></footer>
+    <footer className="wf-action-bar"><span>{status || (saved ? "配置已保存" : "请先完成必填内容")}</span><div><button className="secondary-button" onClick={onBackToEditing}>取消</button><button disabled={busy === "save"} onClick={saveConfig}><Save size={16} /> 保存</button><button className="secondary-button" disabled={busy === "preview"} onClick={previewPayload}><ListChecks size={16} /> 预检</button><button disabled={!preview?.allowed || !readiness?.mercado_libre.live_publish_enabled || busy === "execute"} onClick={executePublish}><Globe2 size={16} /> 立即发布</button></div></footer>
   </section>;
 }
 
