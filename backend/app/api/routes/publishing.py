@@ -494,7 +494,12 @@ async def execute_cbt_publish_from_draft(
                     else ""
                 )
                 result = (
-                    PublishExecutionResult(status="published", item_id=item_id, permalink=permalink)
+                    PublishExecutionResult(
+                        status="published",
+                        item_id=item_id,
+                        permalink=permalink,
+                        response_details=_global_response_details(response_data),
+                    )
                     if item_id
                     else PublishExecutionResult(
                         status="failed",
