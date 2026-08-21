@@ -165,6 +165,10 @@ def build_cbt_global_item_payload(
         "currency_id": "USD",
         "price": config.price_usd,
         "available_quantity": config.available_quantity,
+        # /global/items validates a root image collection in addition to each
+        # Remote-market offer's pictures. Keep both from the same ordered
+        # product image library.
+        "pictures": [{"source": url} for url in default_pictures],
         # Traditional Global Selling expects an ItemDescription object here,
         # unlike a plain string in the draft/editor state.
         "description": build_description_payload(

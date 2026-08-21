@@ -19,6 +19,7 @@
 - `category_id`：必须为 `CBT...`
 - `currency_id`：固定 `USD`
 - `price`、`available_quantity`
+- `pictures`：根级必填，使用当前图片库的有序商品图；每个启用的 Remote 市场也保留同一组图片
 - `title`、`description`：`description` 必须是 `{"plain_text": "..."}` 对象，不能发送字符串
 - `family_name`：传统 CBT 必填
 - `attributes`：至少包含 `ITEM_CONDITION`、`SELLER_SKU`、包裹长宽高重量以及类目要求属性
