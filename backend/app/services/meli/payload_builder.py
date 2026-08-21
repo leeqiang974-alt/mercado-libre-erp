@@ -192,6 +192,10 @@ def build_cbt_global_item_payload(
             {
                 "site_id": offer.site_id,
                 "logistic_type": "remote",
+                # Remote CBT uses the Net Proceeds model. Mercado Libre derives
+                # the public buyer price from this operator-defined net amount;
+                # sending root `price` together with it is invalid.
+                "net_proceeds": config.price_usd,
                 "listing_type_id": offer.listing_type_id,
                 "title": offer.title,
                 "pictures": [{"source": url} for url in picture_urls],
@@ -203,7 +207,6 @@ def build_cbt_global_item_payload(
         "family_name": config.family_name,
         "category_id": config.category_id,
         "currency_id": "USD",
-        "price": config.price_usd,
         "available_quantity": config.available_quantity,
         # /global/items validates a root image collection in addition to each
         # Remote-market offer's pictures. Keep both from the same ordered
