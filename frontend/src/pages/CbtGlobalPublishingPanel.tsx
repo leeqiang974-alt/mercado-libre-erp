@@ -223,18 +223,11 @@ export function CbtGlobalPublishingPanel({
         setConfigLoaded(true);
         offersInitializedRef.current = Boolean(config);
         if (!config) {
+          // A local MLM category is useful source evidence but cannot be used as
+          // the final CBT Global Selling category. Keep it visible separately.
           if (draft.target_category_id) {
-            setCategoryId(draft.target_category_id);
             getCategoryDetails(draft.target_category_id)
-              .then((details) => {
-                if (!cancelled) {
-                  setCategoryLeafVerified(details.verified && details.leaf);
-                  setCategoryPath((details.path_from_root_zh ?? details.path_from_root).map((item) => item.name_zh || item.name).filter(Boolean).join(" > "));
-                }
-              })
-              .catch(() => undefined);
-            getCategoryAttributes(draft.target_category_id)
-              .then((result) => !cancelled && setAttributeDefinitions(result.attributes))
+              .then((details) => !cancelled && setCategoryPath(`来源已匹配：${(details.path_from_root_zh ?? details.path_from_root).map((item) => item.name_zh || item.name).filter(Boolean).join(" > ")} · ${draft.target_category_id}`))
               .catch(() => undefined);
           }
           return;
@@ -302,7 +295,7 @@ export function CbtGlobalPublishingPanel({
   async function predictCategory() {
     setBusy("category"); setStatus("");
     try {
-      const result = await getCategoryPredictions(draft.target_site_id || "CBT", globalTitle);
+      const result = await getCategoryPredictions("CBT", globalTitle);
       const enriched = await Promise.all(result.predictions.slice(0, 6).map(async (prediction) => {
         const id = String(prediction.category_id ?? "");
         if (!id) return prediction;
@@ -501,8 +494,8 @@ export function CbtGlobalPublishingPanel({
         <div className="wf-form-row"><label>店铺 *<select value={storeId} onChange={(event) => { setStoreId(event.target.value); setOffers([]); setHasSavedConfig(false); offersInitializedRef.current = false; setPreview(null); }}><option value="">选择 CBT 店铺</option>{cbtStores.map((store) => <option key={store.id} value={store.id}>{store.display_name} · 卖家 {store.seller_id}</option>)}</select></label>
           <div className="wf-sites"><strong>同时发布到站点</strong><label><input type="checkbox" checked={allRemoteSelected} disabled={profile?.model !== "traditional_global" || remoteMarkets.length === 0} onChange={toggleAllRemoteMarkets} /> 全选</label>{remoteMarkets.map((market) => <label key={market.site_id}><input type="checkbox" checked={offers.some((offer) => offer.site_id === market.site_id)} onChange={() => toggleMarket(market.site_id)} /> {MARKET_NAMES[market.site_id]}</label>)}<label className="is-disabled"><input type="checkbox" disabled /> 墨西哥（FULL）</label></div></div>
         {profile && <p className="section-note">卖家 {profile.seller_id} · {profile.model === "traditional_global" ? "传统 Global Selling" : "User Products"}。Remote 站点默认全部勾选；墨西哥 FULL 由独立流程处理。</p>}
-        <div className="wf-category-line"><label>Mercado Libre 最终分类 *<input value={categoryId} placeholder="先用标题搜索 CBT 最底层分类" onChange={(event) => { setCategoryId(event.target.value.toUpperCase()); setCategoryLeafVerified(false); setCategoryPath(""); setSaved(null); setPreview(null); }} /></label><button onClick={predictCategory} disabled={!globalTitle.trim() || busy === "category"}><Search size={16} /> 选择分类</button><button className="secondary-button" onClick={loadAttributes} disabled={!categoryId.startsWith("CBT") || busy === "attributes"}><ListChecks size={16} /> 确认分类</button></div>
-        {categoryPath && <p className="category-path-label">{categoryPath} · {categoryLeafVerified ? "最底层分类已确认" : "待确认"}</p>}
+        <div className="wf-category-line"><label>Global Selling 最终 CBT 分类 *<input value={categoryId} placeholder="点击“选择 CBT 分类”后，从最底层候选中选择" onChange={(event) => { setCategoryId(event.target.value.toUpperCase()); setCategoryLeafVerified(false); setCategoryPath(""); setSaved(null); setPreview(null); }} /></label><button onClick={predictCategory} disabled={!globalTitle.trim() || busy === "category"}><Search size={16} /> 选择 CBT 分类</button><button className="secondary-button" onClick={loadAttributes} disabled={!categoryId.startsWith("CBT") || busy === "attributes"}><ListChecks size={16} /> 确认最终分类</button></div>
+        {categoryPath && <p className="category-path-label">{categoryPath}{categoryId ? ` · ${categoryLeafVerified ? "最终 CBT 最底层分类已确认" : "待确认最终 CBT 分类"}` : " · 请在上方选择对应的 CBT 最底层分类"}</p>}
         {predictions.length > 0 && <div className="prediction-list">{predictions.map((item) => { const id = String(item.category_id ?? ""); const name = String(item.category_name_zh ?? item.category_name ?? item.domain_name ?? id); return <button key={id} onClick={() => { setCategoryId(id); setCategoryLeafVerified(false); setCategoryPath(""); setAttributeDefinitions([]); }}><strong>{name}</strong><small>{String(item.parent_path ?? "正在读取母级分类路径")}</small><small>{id} · {item.is_leaf === false ? "还有下级分类" : "点击后确认分类"}</small></button>; })}</div>}
       </section>
 
