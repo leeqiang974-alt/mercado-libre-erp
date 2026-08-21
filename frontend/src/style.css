@@ -1933,7 +1933,19 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .wf-media-card.cover { border:2px solid #fb923c; padding:6px; }
 .wf-media-label { color:#667085; font-size:11px; font-weight:700; margin-bottom:6px; }
 .wf-media-card.cover .wf-media-label { color:#ea580c; }
-.wf-media-card img { background:#f7f8fa; display:block; height:132px; object-fit:contain; width:100%; }
+.wf-media-preview-trigger { background:transparent; border:0; cursor:zoom-in; display:block; padding:0; width:100%; }
+.wf-media-preview-trigger img { background:#f7f8fa; display:block; height:132px; object-fit:contain; width:100%; }
+.wf-media-preview-trigger:focus-visible { outline:2px solid #f97316; outline-offset:2px; }
+.wf-image-lightbox { align-items:center; background:rgba(15,23,42,.76); bottom:0; display:flex; justify-content:center; left:0; padding:28px; position:fixed; right:0; top:0; z-index:30; }
+.wf-image-lightbox-panel { background:#fff; border-radius:8px; box-shadow:0 24px 80px rgba(0,0,0,.42); max-height:92vh; max-width:min(1100px,94vw); overflow:hidden; width:100%; }
+.wf-image-lightbox-actions { align-items:center; border-bottom:1px solid #e6eaf0; display:flex; gap:8px; justify-content:flex-end; padding:10px 12px; }
+.wf-image-lightbox-actions span { color:#667085; font-size:12px; min-width:40px; text-align:center; }
+.wf-image-lightbox-actions button { background:#fff; border:1px solid #d5dce3; border-radius:4px; color:#344054; cursor:pointer; font-size:12px; padding:6px 9px; }
+.wf-image-lightbox-actions button:hover { border-color:#f97316; color:#c2410c; }
+.wf-image-lightbox-actions button.danger { color:#b42318; }
+.wf-image-lightbox-canvas { align-items:center; background:#f7f8fa; display:flex; height:min(76vh,780px); justify-content:center; overflow:auto; padding:24px; }
+.wf-image-lightbox-canvas img { max-height:100%; max-width:100%; object-fit:contain; transform-origin:center; transition:transform .16s ease; }
+
 .wf-media-card > div:last-child { display:flex; gap:5px; margin-top:7px; }
 .tiny-button { background:#fff; border:1px solid #d5dce3; border-radius:3px; color:#475467; cursor:pointer; font-size:11px; padding:4px 6px; }
 .tiny-button:hover { border-color:#f97316; color:#c2410c; }
