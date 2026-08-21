@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
+import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -18,6 +19,26 @@ from app.models.review_result import ReviewDecision, ReviewResult
 from app.models.store import Store
 from app.models.token_credential import TokenCredential
 from app.services.meli.token_vault import encrypt_token_value
+
+
+def test_global_publish_error_keeps_meli_validation_message():
+    request = httpx.Request("POST", "https://api.mercadolibre.com/global/items")
+    response = httpx.Response(
+        400,
+        request=request,
+        json={
+            "message": "Validation failed",
+            "error": "validation_error",
+            "cause": [{"code": "item.attributes.invalid", "message": "PACKAGE_WEIGHT is invalid"}],
+        },
+    )
+
+    result = publishing._meli_global_publish_error(
+        httpx.HTTPStatusError("bad request", request=request, response=response)
+    )
+
+    assert "meli_global_publish_failed:400" in result
+    assert "PACKAGE_WEIGHT is invalid" in result
 
 
 def make_client() -> TestClient:

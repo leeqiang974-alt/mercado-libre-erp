@@ -120,6 +120,40 @@ class CbtPublishExecuteRequest(BaseModel):
     acknowledge_publish: bool = False
 
 
+def _meli_global_publish_error(exc: httpx.HTTPStatusError) -> str:
+    """Return actionable marketplace validation feedback without exposing headers."""
+    base = f"meli_global_publish_failed:{exc.response.status_code}"
+    try:
+        body = exc.response.json()
+    except ValueError:
+        return base
+    if not isinstance(body, dict):
+        return base
+
+    parts = [
+        str(body[key]).strip()
+        for key in ("error", "message", "code")
+        if isinstance(body.get(key), (str, int, float)) and str(body[key]).strip()
+    ]
+    causes = body.get("cause")
+    if isinstance(causes, list):
+        for cause in causes[:8]:
+            if not isinstance(cause, dict):
+                continue
+            cause_parts = [
+                str(cause[key]).strip()
+                for key in ("code", "message")
+                if isinstance(cause.get(key), (str, int, float)) and str(cause[key]).strip()
+            ]
+            if cause_parts:
+                parts.append(" / ".join(cause_parts))
+    if not parts:
+        return base
+    # API responses are untrusted external text. Keep a bounded field-level
+    # validation summary rather than headers or a raw response body.
+    return f"{base}: {' | '.join(parts)[:800]}"
+
+
 @router.post("/cbt/preview-from-draft", response_model=CbtPublishPreview)
 def preview_cbt_publish_from_draft(
     product_draft_id: int,
@@ -340,7 +374,7 @@ async def execute_cbt_publish_from_draft(
             )
             if exc.response.status_code == 408 or exc.response.status_code >= 500
             else PublishExecutionResult(
-                status="failed", errors=[f"meli_global_publish_failed:{exc.response.status_code}"]
+                status="failed", errors=[_meli_global_publish_error(exc)]
             )
         )
     except Exception:
