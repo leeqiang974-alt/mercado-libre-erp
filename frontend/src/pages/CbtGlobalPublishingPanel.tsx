@@ -382,6 +382,7 @@ export function CbtGlobalPublishingPanel({
         category_id: categoryId,
       });
       onDraftChange(confirmed.draft);
+      setListingRail((current) => current.map((item) => item.id === confirmed.draft.id ? confirmed.draft : item));
       setCategoryLeafVerified(true);
       setCategoryPath((details.path_from_root_zh ?? details.path_from_root).map((item) => item.name_zh || item.name).filter(Boolean).join(" > "));
       const result = await getCategoryAttributes(categoryId);
@@ -500,7 +501,7 @@ export function CbtGlobalPublishingPanel({
         sale_terms: warrantySaleTerms(warranty),
         sites_to_sell: offers,
       });
-      setSaved(config); onDraftChange(config.draft); onReviewInvalidated();
+      setSaved(config); onDraftChange(config.draft); setListingRail((current) => current.map((item) => item.id === config.draft.id ? config.draft : item)); onReviewInvalidated();
       setStatus("跨境刊登配置已保存，可直接进行官方请求预检。");
     } catch (error) { setStatus(error instanceof Error ? error.message : "保存跨境刊登配置失败"); }
     finally { setBusy(""); }
