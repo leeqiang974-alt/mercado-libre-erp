@@ -9,6 +9,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.product_draft import ProductDraft
+from app.models.publish_job import PublishJob, PublishJobStatus
 from app.models.audit_event import AuditEvent
 from app.models.collection_job import CollectionJob, CollectionJobStatus
 from app.models.registry import import_all_models
@@ -96,6 +97,39 @@ def test_import_amazon_html_can_persist_and_list_draft():
         assert source.raw_status == SourceProductStatus.NEEDS_MANUAL_ACTION
         assert "not independently fetched" in source.collection_error
         assert session.query(ProductDraft).one().source_product_id == source.id
+
+
+def test_draft_list_exposes_latest_erp_publish_status_and_sites():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        draft = ProductDraft(title="Published mold", risk_status="unreviewed")
+        store = Store(site_id="CBT", seller_id="seller", display_name="Global store")
+        db.add_all([draft, store])
+        db.flush()
+        db.add(
+            PublishJob(
+                product_draft_id=draft.id,
+                store_id=store.id,
+                requested_by="operator",
+                status=PublishJobStatus.PUBLISHED,
+                meli_item_id="CBT123",
+                response_summary_json={
+                    "response_details": {
+                        "site_items": [
+                            {"site_id": "MLB", "item_id": "MLB123"},
+                            {"site_id": "MLM", "item_id": "MLM123"},
+                        ]
+                    }
+                },
+            )
+        )
+        db.commit()
+
+    response = client.get("/api/drafts")
+
+    assert response.status_code == 200
+    assert response.json()[0]["publication_status"] == "published"
+    assert response.json()[0]["published_sites"] == ["MLB", "MLM"]
 
 
 def test_import_amazon_html_resolves_manual_collection_job_atomically():

@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.product_draft import ProductDraft
+from app.models.publish_job import PublishJob, PublishJobStatus
 from app.schemas.draft_approvals import DraftApprovalCreate, DraftApprovalRead
 from app.schemas.draft_listing_config import DraftListingConfigRead, DraftListingConfigUpsert
 from app.schemas.cbt_listing_config import CbtListingConfigRead, CbtListingConfigUpsert
@@ -39,7 +40,26 @@ router = APIRouter(prefix="/api/drafts", tags=["drafts"])
 
 @router.get("", response_model=list[ProductDraftRead])
 def list_drafts(db: Session = Depends(get_db)) -> list[ProductDraftRead]:
-    return list_product_drafts(db)
+    drafts = list_product_drafts(db)
+    jobs = db.query(PublishJob).order_by(PublishJob.id.desc()).all()
+    latest: dict[int, PublishJob] = {}
+    for job in jobs:
+        latest.setdefault(job.product_draft_id, job)
+    for draft in drafts:
+        job = latest.get(draft.id)
+        if job is None:
+            continue
+        draft.publication_status = job.status.value
+        if job.status == PublishJobStatus.PUBLISHED:
+            details = (job.response_summary_json or {}).get("response_details", {})
+            rows = details.get("site_items", []) if isinstance(details, dict) else []
+            draft.published_sites = [
+                str(row.get("site_id")) for row in rows
+                if isinstance(row, dict) and row.get("item_id") and row.get("site_id")
+            ]
+            if not draft.published_sites and job.meli_item_id:
+                draft.published_sites = ["CBT"]
+    return drafts
 
 
 @router.get("/{product_draft_id}", response_model=ProductDraftRead)

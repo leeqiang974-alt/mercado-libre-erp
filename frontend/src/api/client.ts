@@ -30,6 +30,10 @@ export type ProductDraftRead = ProductDraft & {
   status: string;
   risk_status: string;
   content_version: number;
+  /** Latest ERP publish-job state, used by the unified listing rail. */
+  publication_status: string;
+  /** Site IDs created by the latest successful ERP publish job. */
+  published_sites: string[];
 };
 
 export type DraftContentUpdate = {

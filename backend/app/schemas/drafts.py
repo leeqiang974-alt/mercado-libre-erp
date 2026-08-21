@@ -36,6 +36,8 @@ class ProductDraftRead(ProductDraftCreate):
     status: str
     risk_status: str
     content_version: int
+    publication_status: str = "unpublished"
+    published_sites: list[str] = Field(default_factory=list)
 
 
 class ProductDraftContentUpdate(BaseModel):
