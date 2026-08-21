@@ -11,6 +11,7 @@ from app.schemas.cbt_listing_config import (
     CbtListingConfigRead,
     CbtListingConfigUpsert,
 )
+from app.schemas.drafts import ProductDraftRead
 from app.services.audit_events import create_audit_event
 from app.services.drafts import normalize_listing_title, sanitize_unbranded_description, to_draft_read, update_draft_content
 from app.models.source_product import SourceProduct
@@ -101,7 +102,15 @@ def get_cbt_listing_config(db: Session, product_draft_id: int) -> CbtListingConf
     return config
 
 
-def to_cbt_listing_config_read(config: CbtListingConfig, draft: object) -> CbtListingConfigRead:
+def to_cbt_listing_config_read(
+    config: CbtListingConfig,
+    draft: ProductDraft | ProductDraftRead,
+) -> CbtListingConfigRead:
+    # The upsert path already builds a Pydantic snapshot before committing so
+    # the response represents the exact content version that was saved.  The
+    # read path still passes the ORM object.  Do not serialize that snapshot a
+    # second time: ProductDraftRead deliberately has no ORM-only *_json fields.
+    draft_read = draft if isinstance(draft, ProductDraftRead) else to_draft_read(draft)
     return CbtListingConfigRead(
         id=config.id,
         product_draft_id=config.product_draft_id,
@@ -116,7 +125,7 @@ def to_cbt_listing_config_read(config: CbtListingConfig, draft: object) -> CbtLi
         sale_terms=config.sale_terms_json or [],
         sites_to_sell=config.sites_to_sell_json or [],
         draft_content_version=config.draft_content_version,
-        draft=to_draft_read(draft),
+        draft=draft_read,
         created_at=config.created_at,
         updated_at=config.updated_at,
     )

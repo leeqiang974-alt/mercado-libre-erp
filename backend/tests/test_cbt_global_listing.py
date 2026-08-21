@@ -1,5 +1,9 @@
+from datetime import UTC, datetime
+from types import SimpleNamespace
+
 from app.schemas.cbt_listing_config import CbtListingConfigUpsert
-from app.schemas.drafts import ProductDraftCreate
+from app.schemas.drafts import ProductDraftCreate, ProductDraftRead
+from app.services.cbt_listing_configs import to_cbt_listing_config_read
 from app.services.meli.cbt import normalize_cbt_profile
 from app.services.meli.payload_builder import build_cbt_global_item_payload
 
@@ -71,3 +75,53 @@ def test_cbt_profile_marks_only_remote_supported_markets_available():
     assert profile["marketplaces"][0]["available"] is True
     assert profile["marketplaces"][0]["listing_count"] == 78
     assert profile["marketplaces"][1]["available"] is False
+
+
+def test_cbt_config_response_accepts_the_saved_draft_snapshot():
+    """Saving must not re-serialize a ProductDraftRead as an ORM model."""
+    draft = ProductDraftRead(
+        id=14,
+        title="Reusable Silicone Mold",
+        description="English description",
+        brand="Unbranded",
+        target_site_id="CBT",
+        target_category_id="CBT30046",
+        condition="new",
+        source_price=None,
+        source_currency="USD",
+        price=12.5,
+        currency="USD",
+        stock=999,
+        listing_type_id="gold_special",
+        image_urls=[],
+        video_urls=[],
+        attributes=[],
+        status="draft",
+        risk_status="unreviewed",
+        content_version=8,
+    )
+    now = datetime.now(UTC)
+    config = SimpleNamespace(
+        id=1,
+        product_draft_id=14,
+        store_id=2,
+        category_id="CBT30046",
+        family_name="xy000014",
+        global_title=draft.title,
+        description=draft.description,
+        price_usd=12.5,
+        available_quantity=999,
+        attributes_json=[],
+        sale_terms_json=[],
+        sites_to_sell_json=[
+            {"site_id": "MLM", "title": draft.title, "listing_type_id": "gold_special"}
+        ],
+        draft_content_version=8,
+        created_at=now,
+        updated_at=now,
+    )
+
+    result = to_cbt_listing_config_read(config, draft)
+
+    assert result.draft.id == 14
+    assert result.draft.content_version == 8
