@@ -197,6 +197,64 @@ async def get_cbt_publishing_profile(
     return profile
 
 
+@router.get("/{store_id}/cbt/categories/{category_id}/marketplace-listing-types")
+async def get_cbt_marketplace_listing_types(
+    store_id: int, category_id: str, db: Session = Depends(get_db)
+) -> dict[str, object]:
+    """Return the official available Classic/Premium types for every CBT Remote market.
+
+    An unavailable remote response is reported per market; it is never replaced
+    with a Premium default.
+    """
+    store = db.get(Store, store_id)
+    if store is None:
+        raise HTTPException(status_code=404, detail="Store not found.")
+    if store.site_id.strip().upper() != "CBT":
+        raise HTTPException(status_code=422, detail="This endpoint is only for CBT Global Selling stores.")
+    normalized_category_id = category_id.strip().upper()
+    if not normalized_category_id.startswith("CBT"):
+        raise HTTPException(status_code=422, detail="Global Selling listing types require a CBT category.")
+    try:
+        access_token = await resolve_fresh_store_access_token(
+            db=db, store=store, encryption_key=settings.token_encryption_key,
+            oauth_client=create_oauth_client(db),
+        )
+        if not access_token:
+            raise HTTPException(status_code=409, detail="Store access token is unavailable.")
+        client = create_meli_client(access_token)
+        user, marketplaces, capacity = await asyncio.wait_for(asyncio.gather(
+            client.get(f"/users/{store.seller_id}"),
+            client.get(f"/marketplace/users/{store.seller_id}"),
+            client.get("/marketplace/users/cap"),
+        ), timeout=5)
+        profile = normalize_cbt_profile(store.seller_id, user, marketplaces, capacity)
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, TimeoutError) as exc:
+        raise HTTPException(status_code=502, detail="Global Selling marketplaces are unavailable.") from exc
+
+    async def lookup(market: dict[str, object]) -> dict[str, object]:
+        site_id = str(market.get("site_id") or "")
+        seller_id = str(market.get("seller_id") or "")
+        if not market.get("available") or not seller_id:
+            return {"site_id": site_id, "verified": False, "listing_type_ids": [], "error": "market_unavailable"}
+        try:
+            result = await asyncio.wait_for(
+                fetch_available_listing_types(client, seller_id, normalized_category_id), timeout=4
+            )
+            ids = [str(item.get("id")) for item in result["listing_types"] if str(item.get("id")) in {"gold_special", "gold_pro"}]
+            return {"site_id": site_id, "verified": True, "listing_type_ids": ids}
+        except (httpx.HTTPError, TimeoutError, ValueError):
+            return {"site_id": site_id, "verified": False, "listing_type_ids": [], "error": "official_listing_types_unavailable"}
+
+    markets = [item for item in profile["marketplaces"] if isinstance(item, dict)]
+    return {
+        "store_id": store.id,
+        "category_id": normalized_category_id,
+        "markets": await asyncio.gather(*(lookup(item) for item in markets)),
+    }
+
+
 @router.get("/{store_id}/items")
 async def list_store_items(
     store_id: int,

@@ -1019,6 +1019,12 @@ export async function getStoreItemPriceReference(storeId: number, itemId: string
   return response.json() as Promise<StoreItemPriceReference>;
 }
 
+export async function getCbtMarketplaceListingTypes(storeId: number, categoryId: string) {
+  const response = await fetch(`${API_BASE}/api/stores/${storeId}/cbt/categories/${encodeURIComponent(categoryId)}/marketplace-listing-types`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<{ store_id: number; category_id: string; markets: Array<{ site_id: string; verified: boolean; listing_type_ids: string[]; error?: string }> }>;
+}
+
 export async function getStoreCategoryListingTypes(storeId: number, categoryId: string) {
   const response = await fetch(
     `${API_BASE}/api/stores/${storeId}/categories/${encodeURIComponent(categoryId)}/listing-types`,
