@@ -154,17 +154,24 @@ def _meli_global_publish_error(exc: httpx.HTTPStatusError) -> str:
     return f"{base}: {' | '.join(parts)[:800]}"
 
 
-def _global_response_item_identity(response: dict) -> tuple[str, str]:
+def _global_response_item_identity(response: dict | list) -> tuple[str, str]:
     """Read the documented and observed Global Selling item-id response shapes."""
-    candidates: list[dict] = [response]
-    for key in ("item", "global_item", "data"):
-        value = response.get(key)
-        if isinstance(value, dict):
-            candidates.append(value)
-    for key in ("items", "results", "site_items"):
-        value = response.get(key)
-        if isinstance(value, list):
-            candidates.extend(item for item in value if isinstance(item, dict))
+    candidates: list[dict] = []
+    root_keys: list[str] = []
+    if isinstance(response, dict):
+        candidates.append(response)
+        root_keys = sorted(str(key) for key in response.keys())[:20]
+        for key in ("item", "global_item", "data"):
+            value = response.get(key)
+            if isinstance(value, dict):
+                candidates.append(value)
+        for key in ("items", "results", "site_items"):
+            value = response.get(key)
+            if isinstance(value, list):
+                candidates.extend(item for item in value if isinstance(item, dict))
+    elif isinstance(response, list):
+        candidates.extend(item for item in response if isinstance(item, dict))
+        root_keys = ["array"]
     for candidate in candidates:
         item_id = str(
             candidate.get("id")
@@ -176,7 +183,7 @@ def _global_response_item_identity(response: dict) -> tuple[str, str]:
             return item_id, str(candidate.get("permalink") or response.get("permalink") or "").strip()
     # Do not expose raw responses. The bounded key list tells us which API
     # contract shape must be handled if Mercado Libre accepts without an id.
-    return "", ",".join(sorted(str(key) for key in response.keys())[:20])
+    return "", ",".join(root_keys)
 
 
 @router.post("/cbt/preview-from-draft", response_model=CbtPublishPreview)
@@ -376,9 +383,15 @@ async def execute_cbt_publish_from_draft(
                 )
             else:
                 response = await client.post("/global/items", payload)
-                response_data = response if isinstance(response, dict) else {}
+                response_data = response if isinstance(response, (dict, list)) else {}
                 item_id, permalink_or_keys = _global_response_item_identity(response_data)
-                permalink = permalink_or_keys if item_id else str(response_data.get("permalink", "")).strip()
+                permalink = (
+                    permalink_or_keys
+                    if item_id
+                    else str(response_data.get("permalink", "")).strip()
+                    if isinstance(response_data, dict)
+                    else ""
+                )
                 result = (
                     PublishExecutionResult(status="published", item_id=item_id, permalink=permalink)
                     if item_id

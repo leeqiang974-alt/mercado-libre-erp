@@ -50,6 +50,15 @@ def test_global_publish_response_reads_nested_marketplace_item_id():
     assert permalink == "https://example.com/MLM123"
 
 
+def test_global_publish_response_reads_top_level_array_item_id():
+    item_id, permalink = publishing._global_response_item_identity(
+        [{"id": "CBT123", "permalink": "https://example.com/CBT123"}]
+    )
+
+    assert item_id == "CBT123"
+    assert permalink == "https://example.com/CBT123"
+
+
 def make_client() -> TestClient:
     engine = create_engine(
         "sqlite://",
