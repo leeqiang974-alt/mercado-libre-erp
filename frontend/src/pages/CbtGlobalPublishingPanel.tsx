@@ -46,6 +46,7 @@ const REQUIRED_ATTRIBUTE_IDS = [
   "PACKAGE_HEIGHT",
   "PACKAGE_WEIGHT",
 ];
+const MAX_PRODUCT_IMAGES = 12;
 
 const MARKET_NAMES: Record<string, string> = {
   MLA: "阿根廷", MLB: "巴西", MLC: "智利", MCO: "哥伦比亚", MLM: "墨西哥", MLU: "乌拉圭",
@@ -365,6 +366,9 @@ export function CbtGlobalPublishingPanel({
   }
 
   async function saveProductContent() {
+    if (draft.image_urls.length > MAX_PRODUCT_IMAGES) {
+      throw new Error(`美客多最多允许发布 ${MAX_PRODUCT_IMAGES} 张图片，请先删除多余图片。`);
+    }
     const updated = await saveDraftContent(draftId, {
       expected_content_version: draft.content_version ?? 1,
       title: normalizeCbtTitle(globalTitle),
@@ -417,6 +421,7 @@ export function CbtGlobalPublishingPanel({
     if (!globalTitle.trim() || globalTitle.length > 60) errors.push("英文标题必须为 1–60 个字符");
     if (!description.trim()) errors.push("请填写英文商品描述");
     if (draft.image_urls.length === 0) errors.push("至少需要 1 张商品图片");
+    if (draft.image_urls.length > MAX_PRODUCT_IMAGES) errors.push(`美客多最多允许发布 ${MAX_PRODUCT_IMAGES} 张图片，请删除多余图片`);
     if (!Number.isInteger(Number(quantity)) || Number(quantity) < 1) errors.push("库存必须为大于 0 的整数");
     if (Number(priceUsd) <= 0) errors.push("请填写目标净收益（USD）");
     if (offers.length === 0) errors.push("至少选择一个 Remote 发布站点");
@@ -504,7 +509,7 @@ export function CbtGlobalPublishingPanel({
 
       <section id="basic" className="surface wf-section"><div className="wf-section-title"><span>2</span><div><h3>产品基本信息</h3><p>标题强制英文不超过 60 字符；品牌固定为无品牌。</p></div></div><div className="form-grid two-col"><label>Parent SKU / 产品族名称 *<input value={familyName} placeholder="例如 SKU02761" onChange={(event) => { const value = event.target.value; setFamilyName(value); setAttributes((current) => ({ ...current, MODEL: value })); setSaved(null); setPreview(null); }} /></label><label>可售库存 *<input type="number" min="1" step="1" value={quantity} onChange={(event) => { setQuantity(event.target.value); setSaved(null); setPreview(null); }} /></label></div><label>英文标题 *<div className="wf-title-input"><input value={globalTitle} onChange={(event) => { setGlobalTitle(normalizeCbtTitle(event.target.value)); setSaved(null); setPreview(null); }} /><small>{globalTitle.length}/60</small></div>{globalTitle.length > 60 && <small className="inline-warning">标题超过 60 字符：不会自动截断，请使用 AI 重新生成或手动精简。</small>}</label><label>品牌（固定）<input disabled value="Unbranded（无品牌）" /></label></section>
 
-      <section id="media" className="surface wf-section"><div className="wf-section-title"><span>3</span><div><h3>产品图片</h3><p>使用采集到的原图；第 1 张是主图。小规格缩略图不会入库。</p></div><strong>{draft.image_urls.length} 张</strong></div><div className="wf-media-grid">{draft.image_urls.map((url,index) => <article className={`wf-media-card ${index === 0 ? "cover" : ""}`} key={url}><div className="wf-media-label">{index === 0 ? "主图" : `图片 ${index + 1}`}</div><button className="wf-media-preview-trigger" type="button" title="点击查看大图" onClick={() => openImagePreview(url)}><img src={url} alt={`商品图片 ${index + 1}`} /></button><div><button className="tiny-button" disabled={index === 0 || busy === "media"} onClick={() => setCoverImage(url)}>设为主图</button><button className="tiny-button danger" disabled={busy === "media"} onClick={() => removeImage(url)}>删除</button></div></article>)}</div>{draft.image_urls.length === 0 && <p className="inline-warning">当前没有可发布图片，请先回到上架库补充素材。</p>}<div className="wf-video-line"><strong>产品视频</strong><span>{draft.video_urls?.length ?? 0}/3 个；视频独立保存，未进入商品图片。</span></div></section>
+      <section id="media" className="surface wf-section"><div className="wf-section-title"><span>3</span><div><h3>产品图片</h3><p>使用采集到的原图；第 1 张是主图。小规格缩略图不会入库，美客多最多发布 12 张。</p></div><strong>{draft.image_urls.length}/{MAX_PRODUCT_IMAGES} 张</strong></div>{draft.image_urls.length > MAX_PRODUCT_IMAGES && <p className="inline-warning">当前有 {draft.image_urls.length} 张图片，请删除 {draft.image_urls.length - MAX_PRODUCT_IMAGES} 张后再保存或发布。</p>}<div className="wf-media-grid">{draft.image_urls.map((url,index) => <article className={`wf-media-card ${index === 0 ? "cover" : ""}`} key={url}><div className="wf-media-label">{index === 0 ? "主图" : `图片 ${index + 1}`}</div><button className="wf-media-preview-trigger" type="button" title="点击查看大图" onClick={() => openImagePreview(url)}><img src={url} alt={`商品图片 ${index + 1}`} /></button><div><button className="tiny-button" disabled={index === 0 || busy === "media"} onClick={() => setCoverImage(url)}>设为主图</button><button className="tiny-button danger" disabled={busy === "media"} onClick={() => removeImage(url)}>删除</button></div></article>)}</div>{draft.image_urls.length === 0 && <p className="inline-warning">当前没有可发布图片，请先回到上架库补充素材。</p>}<div className="wf-video-line"><strong>产品视频</strong><span>{draft.video_urls?.length ?? 0}/3 个；视频独立保存，未进入商品图片。</span></div></section>
 
       <section id="description" className="surface wf-section"><div className="wf-section-title"><span>4</span><div><h3>描述</h3><p>英文、基于采集信息；不出现品牌。末尾保留 7 天店铺保修说明。</p></div></div><label>英文商品描述 *<textarea rows={10} value={description} onChange={(event) => { setDescription(sanitizeCbtDescription(event.target.value)); setSaved(null); setPreview(null); }} /></label></section>
 

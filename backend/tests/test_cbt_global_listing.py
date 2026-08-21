@@ -113,6 +113,38 @@ def test_cbt_payload_normalizes_condition_and_package_units():
     assert attributes["PACKAGE_WEIGHT"]["value_name"] == "250 g"
 
 
+def test_cbt_payload_rejects_more_than_twelve_pictures():
+    config = CbtListingConfigUpsert.model_validate(
+        {
+            "store_id": 2, "category_id": "CBT432923", "family_name": "xy000013",
+            "global_title": "Reusable Silicone Mold", "description": "English description",
+            "price_usd": 9.99, "available_quantity": 999,
+            "attributes": [
+                {"id": "ITEM_CONDITION", "value_name": "New"},
+                {"id": "SELLER_SKU", "value_name": "xy000013"},
+                {"id": "PACKAGE_LENGTH", "value_name": "25 cm"},
+                {"id": "PACKAGE_WIDTH", "value_name": "25 cm"},
+                {"id": "PACKAGE_HEIGHT", "value_name": "5 cm"},
+                {"id": "PACKAGE_WEIGHT", "value_name": "250 g"},
+            ],
+            "sites_to_sell": [{"site_id": "MLM", "title": "Reusable Silicone Mold", "listing_type_id": "gold_special"}],
+        }
+    )
+
+    try:
+        build_cbt_global_item_payload(
+            ProductDraftCreate(
+                title="Reusable Silicone Mold", description="English description",
+                image_urls=[f"https://example.com/{number}.jpg" for number in range(13)],
+            ),
+            config,
+        )
+    except ValueError as error:
+        assert "at most 12 pictures" in str(error)
+    else:
+        raise AssertionError("Expected a 12-picture validation error")
+
+
 def test_cbt_config_response_accepts_the_saved_draft_snapshot():
     """Saving must not re-serialize a ProductDraftRead as an ORM model."""
     draft = ProductDraftRead(

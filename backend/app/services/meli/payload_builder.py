@@ -5,6 +5,7 @@ import re
 
 
 SUPPORTED_SHIPPING_MODES = {"me2", "me1", "not_specified"}
+MAX_PRODUCT_PICTURES = 12
 SUPPORTED_NON_FULL_LOGISTIC_TYPES = {
     "drop_off",
     "cross_docking",
@@ -39,6 +40,8 @@ def build_item_payload(
         raise ValueError("Available quantity must be at least one.")
     if not draft.image_urls:
         raise ValueError("At least one picture is required.")
+    if len(draft.image_urls) > MAX_PRODUCT_PICTURES:
+        raise ValueError("A Mercado Libre listing can contain at most 12 pictures.")
     if not draft.description.strip():
         raise ValueError("Description is required.")
     item_condition = next(
@@ -172,11 +175,19 @@ def build_cbt_global_item_payload(
         raise ValueError("SELLER_SKU attribute is required.")
 
     default_pictures = list(draft.image_urls or [])
+    if not default_pictures:
+        raise ValueError("At least one picture is required.")
+    if len(default_pictures) > MAX_PRODUCT_PICTURES:
+        raise ValueError("A Mercado Libre Global Selling listing can contain at most 12 pictures.")
     sites_to_sell: list[dict] = []
     for offer in config.sites_to_sell:
         picture_urls = offer.picture_urls or default_pictures
         if not picture_urls:
             raise ValueError(f"At least one picture is required for {offer.site_id}.")
+        if len(picture_urls) > MAX_PRODUCT_PICTURES:
+            raise ValueError(
+                f"Mercado Libre allows at most 12 pictures for {offer.site_id}."
+            )
         sites_to_sell.append(
             {
                 "site_id": offer.site_id,
