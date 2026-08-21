@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -23,7 +24,12 @@ from app.services.cbt_listing_configs import (
     to_cbt_listing_config_read,
     upsert_cbt_listing_config,
 )
-from app.services.drafts import list_product_drafts, save_product_draft_content, to_draft_read
+from app.services.drafts import (
+    list_product_drafts,
+    save_product_draft_content,
+    to_draft_read,
+    update_draft_content,
+)
 from app.services.draft_pricing import (
     get_draft_pricing,
     require_current_draft_pricing,
@@ -34,6 +40,7 @@ from app.services.meli.attribute_mapping import suggest_draft_category_attribute
 from app.services.draft_categories import confirm_draft_category, to_category_read
 from app.services.ai_content_generation import generate_and_save_draft_content
 from app.core.config import get_settings
+from app.services.storage.aliyun_oss import OssMirrorError, mirror_images_to_oss
 
 router = APIRouter(prefix="/api/drafts", tags=["drafts"])
 
@@ -80,6 +87,33 @@ def save_draft_content(
     db: Session = Depends(get_db),
 ) -> ProductDraftRead:
     return to_draft_read(save_product_draft_content(db, product_draft_id, payload))
+
+
+@router.post("/{product_draft_id}/mirror-images-to-oss", response_model=ProductDraftRead)
+async def mirror_draft_images_to_oss(
+    product_draft_id: int,
+    db: Session = Depends(get_db),
+) -> ProductDraftRead:
+    """Persist stable, verified OSS image URLs before Global Selling publishing."""
+    draft = db.scalar(select(ProductDraft).where(ProductDraft.id == product_draft_id).with_for_update())
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Product draft not found.")
+    try:
+        mirrored_urls = await mirror_images_to_oss(draft.image_urls_json or [], get_settings())
+    except OssMirrorError as exc:
+        raise HTTPException(status_code=422, detail=f"oss_image_mirror_failed: {exc}") from exc
+    if mirrored_urls == (draft.image_urls_json or []):
+        return to_draft_read(draft)
+    previous_version = draft.content_version
+    update_draft_content(
+        db,
+        product_draft_id,
+        expected_content_version=previous_version,
+        image_urls_json=mirrored_urls,
+    )
+    db.commit()
+    db.refresh(draft)
+    return to_draft_read(draft)
 
 
 @router.put("/{product_draft_id}/category", response_model=DraftCategoryRead)

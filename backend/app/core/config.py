@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     amazon_domain_min_interval_seconds: int = 8
     amazon_challenge_backoff_base_seconds: int = 300
     amazon_challenge_backoff_max_seconds: int = 21600
+    # Stored below the existing persistent backend data mount, never in Git.
+    aliyun_oss_credential_file: str = "/data/amazon-browser/oss/aliyun_oss_credentials.txt"
+    aliyun_oss_endpoint: str = "oss-cn-shanghai.aliyuncs.com"
+    aliyun_oss_bucket: str = "ozonshanghai"
+    aliyun_oss_prefix: str = "mercado-libre-erp/source-images"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

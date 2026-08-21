@@ -909,6 +909,14 @@ export async function saveDraftContent(productDraftId: number, payload: DraftCon
   return response.json() as Promise<ProductDraftRead>;
 }
 
+export async function mirrorDraftImagesToOss(productDraftId: number) {
+  const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/mirror-images-to-oss`, {
+    method: "POST",
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<ProductDraftRead>;
+}
+
 export async function confirmDraftCategory(
   productDraftId: number,
   payload: { expected_content_version: number; target_site_id: string; category_id: string },

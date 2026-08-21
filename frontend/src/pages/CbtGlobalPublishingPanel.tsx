@@ -23,6 +23,7 @@ import {
   getSystemReadiness,
   listDrafts,
   listStores,
+  mirrorDraftImagesToOss,
   previewCbtPublishFromDraft,
   saveDraftContent,
   saveDraftPricing,
@@ -431,7 +432,9 @@ export function CbtGlobalPublishingPanel({
       video_urls: draft.video_urls ?? [],
     });
     onDraftChange(updated);
-    return updated;
+    const ossDraft = await mirrorDraftImagesToOss(draftId);
+    onDraftChange(ossDraft);
+    return ossDraft;
   }
 
   function openImagePreview(url: string) {
