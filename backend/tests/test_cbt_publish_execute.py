@@ -41,6 +41,15 @@ def test_global_publish_error_keeps_meli_validation_message():
     assert "PACKAGE_WEIGHT is invalid" in result
 
 
+def test_global_publish_response_reads_nested_marketplace_item_id():
+    item_id, permalink = publishing._global_response_item_identity(
+        {"items": [{"site_id": "MLM", "item_id": "MLM123", "permalink": "https://example.com/MLM123"}]}
+    )
+
+    assert item_id == "MLM123"
+    assert permalink == "https://example.com/MLM123"
+
+
 def make_client() -> TestClient:
     engine = create_engine(
         "sqlite://",

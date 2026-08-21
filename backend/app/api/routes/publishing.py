@@ -154,6 +154,31 @@ def _meli_global_publish_error(exc: httpx.HTTPStatusError) -> str:
     return f"{base}: {' | '.join(parts)[:800]}"
 
 
+def _global_response_item_identity(response: dict) -> tuple[str, str]:
+    """Read the documented and observed Global Selling item-id response shapes."""
+    candidates: list[dict] = [response]
+    for key in ("item", "global_item", "data"):
+        value = response.get(key)
+        if isinstance(value, dict):
+            candidates.append(value)
+    for key in ("items", "results", "site_items"):
+        value = response.get(key)
+        if isinstance(value, list):
+            candidates.extend(item for item in value if isinstance(item, dict))
+    for candidate in candidates:
+        item_id = str(
+            candidate.get("id")
+            or candidate.get("item_id")
+            or candidate.get("global_item_id")
+            or ""
+        ).strip()
+        if item_id:
+            return item_id, str(candidate.get("permalink") or response.get("permalink") or "").strip()
+    # Do not expose raw responses. The bounded key list tells us which API
+    # contract shape must be handled if Mercado Libre accepts without an id.
+    return "", ",".join(sorted(str(key) for key in response.keys())[:20])
+
+
 @router.post("/cbt/preview-from-draft", response_model=CbtPublishPreview)
 def preview_cbt_publish_from_draft(
     product_draft_id: int,
@@ -352,8 +377,8 @@ async def execute_cbt_publish_from_draft(
             else:
                 response = await client.post("/global/items", payload)
                 response_data = response if isinstance(response, dict) else {}
-                item_id = str(response_data.get("id", "")).strip()
-                permalink = str(response_data.get("permalink", "")).strip()
+                item_id, permalink_or_keys = _global_response_item_identity(response_data)
+                permalink = permalink_or_keys if item_id else str(response_data.get("permalink", "")).strip()
                 result = (
                     PublishExecutionResult(status="published", item_id=item_id, permalink=permalink)
                     if item_id
@@ -363,6 +388,7 @@ async def execute_cbt_publish_from_draft(
                         errors=[
                             "global_publish_outcome_unknown_manual_reconciliation_required",
                             "meli_publish_response_missing_item_id",
+                            f"meli_global_response_keys:{permalink_or_keys or 'non_object'}",
                         ],
                     )
                 )
