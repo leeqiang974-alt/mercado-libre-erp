@@ -26,6 +26,7 @@ class PublishExecutionResult(BaseModel):
     shipping_mode: str = ""
     shipping_logistic_type: str = ""
     errors: list[str] = Field(default_factory=list)
+    response_details: dict = Field(default_factory=dict)
     job_id: int | None = None
 
 

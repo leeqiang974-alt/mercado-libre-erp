@@ -192,6 +192,42 @@ def _global_response_item_identity(response: dict | list) -> tuple[str, str]:
     return "", ",".join(root_keys)
 
 
+def _global_response_details(response: dict | list) -> dict:
+    """Keep only response fields needed to reconcile a Global Selling result."""
+    if not isinstance(response, dict):
+        return {"response_type": "array" if isinstance(response, list) else "unknown"}
+    details = {
+        key: response[key]
+        for key in ("item_id", "seller_id", "site_id", "parent_user_product_id")
+        if key in response
+    }
+    site_items = response.get("site_items")
+    if isinstance(site_items, list):
+        details["site_items"] = [
+            {
+                key: item[key]
+                for key in ("item_id", "seller_id", "site_id", "logistic_type", "status", "error", "message")
+                if key in item
+            }
+            for item in site_items[:12]
+            if isinstance(item, dict)
+        ]
+    elif isinstance(site_items, dict):
+        details["site_items"] = {
+            str(site): (
+                {
+                    key: value[key]
+                    for key in ("item_id", "seller_id", "site_id", "logistic_type", "status", "error", "message")
+                    if key in value
+                }
+                if isinstance(value, dict)
+                else str(value)[:300]
+            )
+            for site, value in list(site_items.items())[:12]
+        }
+    return details
+
+
 @router.post("/cbt/preview-from-draft", response_model=CbtPublishPreview)
 def preview_cbt_publish_from_draft(
     product_draft_id: int,
@@ -404,6 +440,7 @@ async def execute_cbt_publish_from_draft(
                     else PublishExecutionResult(
                         status="blocked",
                         permalink=permalink,
+                        response_details=_global_response_details(response_data),
                         errors=[
                             "global_publish_outcome_unknown_manual_reconciliation_required",
                             "meli_publish_response_missing_item_id",

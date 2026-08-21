@@ -176,6 +176,7 @@ def replay_publish_result(job: PublishJob) -> PublishExecutionResult:
         shipping_mode=summary.get("shipping_mode", ""),
         shipping_logistic_type=summary.get("shipping_logistic_type", ""),
         errors=summary.get("errors", []),
+        response_details=summary.get("response_details", {}),
         job_id=job.id,
     )
 
@@ -210,6 +211,7 @@ def complete_publish_job(db: Session, job: PublishJob, result: PublishExecutionR
         "shipping_mode": result.shipping_mode,
         "shipping_logistic_type": result.shipping_logistic_type,
         "errors": result.errors,
+        "response_details": result.response_details,
     }
     job.completed_at = datetime.now(UTC)
     db.commit()

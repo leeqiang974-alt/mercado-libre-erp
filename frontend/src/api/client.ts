@@ -375,6 +375,7 @@ export type PublishExecutionResult = {
   shipping_mode: string;
   shipping_logistic_type: string;
   errors: string[];
+  response_details?: Record<string, unknown>;
   job_id: number | null;
 };
 
