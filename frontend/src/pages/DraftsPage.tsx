@@ -63,6 +63,13 @@ const MAX_REVIEW_BATCH_SIZE = 50;
 const UNBRANDED = "Unbranded";
 const MIN_LISTING_IMAGE_EDGE = 500;
 
+function publicationStatusLabel(draft: ProductDraftRead) {
+  if (draft.publication_status === "published") return `已发布：${draft.published_sites.join("、") || "CBT"}`;
+  if (draft.publication_status === "pending" || draft.publication_status === "validating") return "发布中";
+  if (draft.publication_status === "failed" || draft.publication_status === "blocked") return "发布失败，可修改后重试";
+  return "未发布";
+}
+
 const MARKETING_TERMS = [
   "best", "top", "hot", "sale", "discount", "free shipping", "limited",
   "premium", "buy now", "deal", "clearance", "guaranteed",
@@ -692,8 +699,31 @@ export function DraftsPage({
     onSelectDraft(savedDraft);
   }
 
+  // The listing library is also the entrypoint.  Do not render a blank page
+  // when the URL is simply #drafts: the operator must always be able to pick
+  // a product from the left rail.
   if (!draft || !draftId) {
-    return <section className="workspace"><div className="empty-state">请先从左侧上架库选择一个商品。</div></section>;
+    return (
+      <section className="wf-listing-layout">
+        <aside className="drafts-sidebar surface wf-listing-rail">
+          <div className="drafts-sidebar-heading"><h3>上架库</h3><span>{savedDrafts.length} 个</span></div>
+          <p className="section-note">选择商品后，在右侧完成分类、素材、售价和站点配置。</p>
+          <div className="draft-rail-list">
+            {savedDrafts.map((item) => (
+              <button className="draft-rail-item" key={item.id} onClick={() => selectSavedDraft(item)}>
+                <ProductImage src={item.image_urls[0]} alt="" />
+                <span>
+                  <strong>{item.title || "未命名商品"}</strong>
+                  <small>#{item.id} · {item.target_site_id}</small>
+                  <small>{publicationStatusLabel(item)}</small>
+                </span>
+              </button>
+            ))}
+          </div>
+        </aside>
+        <div className="workspace"><div className="empty-state">请从左侧上架库选择一个商品。</div></div>
+      </section>
+    );
   }
 
   // This is deliberately the only operator listing surface: the library rail
