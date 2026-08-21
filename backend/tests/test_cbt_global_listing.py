@@ -46,6 +46,7 @@ def test_traditional_cbt_payload_uses_global_structure_and_remote_markets():
 
     assert payload["currency_id"] == "USD"
     assert payload["family_name"] == "Silicone mold family"
+    assert payload["description"] == {"plain_text": "English global description"}
     assert "pictures" not in payload
     assert payload["sites_to_sell"] == [
         {

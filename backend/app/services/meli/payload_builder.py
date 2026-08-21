@@ -165,7 +165,11 @@ def build_cbt_global_item_payload(
         "currency_id": "USD",
         "price": config.price_usd,
         "available_quantity": config.available_quantity,
-        "description": config.description,
+        # Traditional Global Selling expects an ItemDescription object here,
+        # unlike a plain string in the draft/editor state.
+        "description": build_description_payload(
+            draft.model_copy(update={"description": config.description})
+        ),
         "attributes": attributes,
         "sale_terms": [term.model_dump(exclude_none=True) for term in config.sale_terms],
         "sites_to_sell": sites_to_sell,
