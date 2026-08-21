@@ -228,6 +228,39 @@ def _global_response_details(response: dict | list) -> dict:
     return details
 
 
+def _global_response_site_errors(response: dict | list) -> list[str]:
+    """Return deterministic per-site validation failures from a 200 response.
+
+    Global Selling may return HTTP 200 with no parent item id when every
+    requested marketplace rejected its own child listing. This is a known
+    failure, not an unknown create outcome, and must not permanently block a
+    corrected configuration from being submitted later.
+    """
+    if not isinstance(response, dict) or not isinstance(response.get("site_items"), list):
+        return []
+    rows = [item for item in response["site_items"] if isinstance(item, dict)]
+    if not rows or any(not isinstance(item.get("error"), dict) for item in rows):
+        return []
+    errors: list[str] = []
+    for item in rows[:12]:
+        site_id = str(item.get("site_id") or "unknown_site").strip().upper()
+        error = item["error"]
+        causes = error.get("cause")
+        if isinstance(causes, list) and causes:
+            for cause in causes[:3]:
+                if not isinstance(cause, dict):
+                    continue
+                code = str(cause.get("code") or "validation_error").strip()
+                message = str(cause.get("message") or error.get("message") or "Validation error").strip()
+                errors.append(f"{site_id}: {code} / {message}"[:800])
+        else:
+            errors.append(
+                f"{site_id}: {str(error.get('error') or 'validation_error').strip()} / "
+                f"{str(error.get('message') or 'Validation error').strip()}"[:800]
+            )
+    return list(dict.fromkeys(errors))
+
+
 @router.post("/cbt/preview-from-draft", response_model=CbtPublishPreview)
 def preview_cbt_publish_from_draft(
     product_draft_id: int,
@@ -355,23 +388,49 @@ async def execute_cbt_publish_from_draft(
             text("SELECT pg_advisory_xact_lock(hashtext(:lock_name))"),
             {"lock_name": f"publish_job:{idempotency_key}"},
         )
-    unresolved_job = next(
-        (
-            candidate
-            for candidate in db.query(PublishJob)
-            .filter(
-                PublishJob.product_draft_id == draft.id,
-                PublishJob.store_id == store.id,
-                PublishJob.status.in_([PublishJobStatus.PENDING, PublishJobStatus.VALIDATING, PublishJobStatus.BLOCKED]),
+    unresolved_job = None
+    for candidate in (
+        db.query(PublishJob)
+        .filter(
+            PublishJob.product_draft_id == draft.id,
+            PublishJob.store_id == store.id,
+            PublishJob.status.in_([PublishJobStatus.PENDING, PublishJobStatus.VALIDATING, PublishJobStatus.BLOCKED]),
+        )
+        .order_by(PublishJob.id.desc())
+        .all()
+    ):
+        summary = candidate.response_summary_json or {}
+        if candidate.status in {PublishJobStatus.PENDING, PublishJobStatus.VALIDATING}:
+            unresolved_job = candidate
+            break
+        if "global_publish_outcome_unknown_manual_reconciliation_required" not in summary.get("errors", []):
+            continue
+        known_site_errors = _global_response_site_errors(summary.get("response_details", {}))
+        if known_site_errors:
+            # A legacy response was previously labeled unknown merely because
+            # it lacked a parent item id. Every site supplied a validation
+            # error, so it is safe to close this job as a known rejection.
+            candidate.status = PublishJobStatus.FAILED
+            candidate.response_summary_json = {
+                **summary,
+                "status": "failed",
+                "errors": known_site_errors,
+            }
+            candidate.completed_at = candidate.completed_at or datetime.now(UTC)
+            create_audit_event(
+                db=db,
+                actor_type="system",
+                actor_id="cbt_response_reconciliation",
+                action="cbt_global_publish.known_site_rejection_reconciled",
+                entity_type="publish_job",
+                entity_id=str(candidate.id),
+                after={"status": "failed", "errors": known_site_errors},
+                commit=False,
             )
-            .order_by(PublishJob.id.desc())
-            .all()
-            if candidate.status in {PublishJobStatus.PENDING, PublishJobStatus.VALIDATING}
-            or "global_publish_outcome_unknown_manual_reconciliation_required"
-            in (candidate.response_summary_json or {}).get("errors", [])
-        ),
-        None,
-    )
+            db.commit()
+            continue
+        unresolved_job = candidate
+        break
     if unresolved_job is not None:
         return replay_publish_result(unresolved_job)
     job = db.query(PublishJob).filter(PublishJob.idempotency_key == idempotency_key).one_or_none()
@@ -437,6 +496,13 @@ async def execute_cbt_publish_from_draft(
                 result = (
                     PublishExecutionResult(status="published", item_id=item_id, permalink=permalink)
                     if item_id
+                    else PublishExecutionResult(
+                        status="failed",
+                        permalink=permalink,
+                        response_details=_global_response_details(response_data),
+                        errors=_global_response_site_errors(response_data),
+                    )
+                    if _global_response_site_errors(response_data)
                     else PublishExecutionResult(
                         status="blocked",
                         permalink=permalink,

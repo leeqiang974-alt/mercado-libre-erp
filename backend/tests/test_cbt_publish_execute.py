@@ -59,6 +59,25 @@ def test_global_publish_response_reads_top_level_array_item_id():
     assert permalink == "https://example.com/CBT123"
 
 
+def test_global_publish_response_marks_all_site_validation_errors_as_known_failure():
+    errors = publishing._global_response_site_errors(
+        {
+            "site_id": "CBT",
+            "site_items": [
+                {
+                    "site_id": "MLM",
+                    "error": {
+                        "message": "Validation error",
+                        "cause": [{"code": "listing.warranty_time_unit_missing", "message": "Missing Warranty time."}],
+                    },
+                }
+            ],
+        }
+    )
+
+    assert errors == ["MLM: listing.warranty_time_unit_missing / Missing Warranty time."]
+
+
 def make_client() -> TestClient:
     engine = create_engine(
         "sqlite://",
