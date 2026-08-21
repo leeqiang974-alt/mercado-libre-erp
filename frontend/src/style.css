@@ -519,6 +519,16 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .release-summary span { color: #697586; font-size: 12px; }
 .validation-result { display: grid; gap: 6px; padding: 12px; margin-top: 12px; border-left: 3px solid #d92d20; background: #fff4f2; }
 .validation-result.ready { border-color: #16803c; background: #effaf3; }
+.site-publish-results { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.site-publish-result { display: flex; align-items: flex-start; gap: 7px; min-width: 210px; padding: 8px 10px; border: 1px solid #d0d5dd; border-radius: 7px; background: #fff; }
+.site-publish-result i { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; background: #98a2b3; }
+.site-publish-result.success { border-color: #abefc6; background: #f0fdf4; }
+.site-publish-result.success i { background: #16a34a; }
+.site-publish-result.failed { border-color: #fecdca; background: #fff6f5; }
+.site-publish-result.failed i { background: #dc2626; }
+.site-publish-result.pending i { background: #f59e0b; }
+.site-publish-result div { display: grid; gap: 2px; min-width: 0; }
+.site-publish-result small { color: #475467; font-size: 12px; line-height: 1.35; }
 .status-line { background: white; border: 1px solid #dde3ea; padding: 10px 12px; }
 .page-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .page-actions label { display: grid; gap: 3px; color: #52606d; font-size: 12px; }
