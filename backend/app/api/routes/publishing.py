@@ -159,19 +159,25 @@ def _global_response_item_identity(response: dict | list) -> tuple[str, str]:
     candidates: list[dict] = []
     root_keys: list[str] = []
     if isinstance(response, dict):
-        candidates.append(response)
         root_keys = sorted(str(key) for key in response.keys())[:20]
-        for key in ("item", "global_item", "data"):
-            value = response.get(key)
-            if isinstance(value, dict):
-                candidates.append(value)
-        for key in ("items", "results", "site_items"):
-            value = response.get(key)
-            if isinstance(value, list):
-                candidates.extend(item for item in value if isinstance(item, dict))
     elif isinstance(response, list):
-        candidates.extend(item for item in response if isinstance(item, dict))
         root_keys = ["array"]
+
+    def collect(value: object, depth: int = 0) -> None:
+        if depth > 4:
+            return
+        if isinstance(value, dict):
+            candidates.append(value)
+            # A CBT response may nest one result per marketplace under
+            # site_items; follow response containers, never arbitrary text.
+            for key in ("item", "global_item", "data", "items", "results", "site_items"):
+                if key in value:
+                    collect(value[key], depth + 1)
+        elif isinstance(value, list):
+            for item in value[:20]:
+                collect(item, depth + 1)
+
+    collect(response)
     for candidate in candidates:
         item_id = str(
             candidate.get("id")
