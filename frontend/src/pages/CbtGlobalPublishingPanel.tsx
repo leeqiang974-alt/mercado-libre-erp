@@ -381,8 +381,29 @@ export function CbtGlobalPublishingPanel({
     finally { setBusy(""); }
   }
 
+  function marketplaceValidationErrors() {
+    const errors: string[] = [];
+    if (!storeId) errors.push("请选择已授权的跨境店铺");
+    if (!categoryId || !categoryLeafVerified) errors.push("请选择并确认美客多最底层分类");
+    if (!familyName.trim()) errors.push("请填写 Parent SKU");
+    if (!globalTitle.trim() || globalTitle.length > 60) errors.push("英文标题必须为 1–60 个字符");
+    if (!description.trim()) errors.push("请填写英文商品描述");
+    if (draft.image_urls.length === 0) errors.push("至少需要 1 张商品图片");
+    if (!Number.isInteger(Number(quantity)) || Number(quantity) < 1) errors.push("库存必须为大于 0 的整数");
+    if (Number(priceUsd) <= 0) errors.push("请填写全球 USD 售价");
+    if (!pricing || pricing.target_currency !== "USD") errors.push("请保存采购成本、国内运费和 USD 汇率");
+    if (offers.length === 0) errors.push("至少选择一个 Remote 发布站点");
+    errors.push(...missing.map((id) => `请填写必填属性：${ATTRIBUTE_NAMES_ZH[id] ?? id}`));
+    return errors;
+  }
+
   async function saveConfig() {
-    if (!canSave) return;
+    if (!canSave) {
+      const errors = marketplaceValidationErrors();
+      setPreview({ allowed: false, errors, payload: null });
+      setStatus(`暂不能保存：${errors[0] ?? "请完善美客多发布要求"}`);
+      return;
+    }
     setBusy("save"); setStatus(""); setPreview(null); setPublishConfirmed(false); setExecution(null);
     try {
       await saveProductContent();
@@ -420,6 +441,17 @@ export function CbtGlobalPublishingPanel({
   }
 
   async function previewPayload() {
+    if (!canSave) {
+      const errors = marketplaceValidationErrors();
+      setPreview({ allowed: false, errors, payload: null });
+      setStatus("预检只检查美客多发布要求；请先补齐上方提示项。");
+      return;
+    }
+    if (!saved) {
+      setPreview({ allowed: false, errors: ["请先点击保存，系统会保存当前刊登配置后再调用美客多预检。"], payload: null });
+      setStatus("请先保存当前配置。");
+      return;
+    }
     setBusy("preview"); setStatus("");
     try {
       setPreview(await previewCbtPublishFromDraft(draftId));
@@ -479,7 +511,7 @@ export function CbtGlobalPublishingPanel({
         <div className="wf-image-lightbox-canvas"><img src={previewImage} alt="商品图片大图预览" style={{ transform: `scale(${imageZoom})` }} /></div>
       </div>
     </div>}
-    <footer className="wf-action-bar"><span>{status || (saved ? "配置已保存" : "请先完成必填内容")}</span><div><button className="secondary-button" onClick={onBackToEditing}>取消</button><button disabled={!canSave || busy === "save"} onClick={saveConfig}><Save size={16} /> 保存</button><button className="secondary-button" disabled={!saved || busy === "preview"} onClick={previewPayload}><ListChecks size={16} /> 预检</button><label className="check-row"><input type="checkbox" checked={publishConfirmed} disabled={!preview?.allowed || !readiness?.mercado_libre.live_publish_enabled} onChange={(event) => setPublishConfirmed(event.target.checked)} />确认发布</label><button disabled={!publishConfirmed || !preview?.allowed || !readiness?.mercado_libre.live_publish_enabled || busy === "execute"} onClick={executePublish}><Globe2 size={16} /> 立即发布</button></div></footer>
+    <footer className="wf-action-bar"><span>{status || (saved ? "配置已保存" : "请先完成必填内容")}</span><div><button className="secondary-button" onClick={onBackToEditing}>取消</button><button disabled={busy === "save"} onClick={saveConfig}><Save size={16} /> 保存</button><button className="secondary-button" disabled={busy === "preview"} onClick={previewPayload}><ListChecks size={16} /> 预检</button><label className="check-row"><input type="checkbox" checked={publishConfirmed} disabled={!preview?.allowed || !readiness?.mercado_libre.live_publish_enabled} onChange={(event) => setPublishConfirmed(event.target.checked)} />确认发布</label><button disabled={!publishConfirmed || !preview?.allowed || !readiness?.mercado_libre.live_publish_enabled || busy === "execute"} onClick={executePublish}><Globe2 size={16} /> 立即发布</button></div></footer>
   </section>;
 }
 
