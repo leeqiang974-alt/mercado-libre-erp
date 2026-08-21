@@ -1967,7 +1967,7 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .wf-sku-row span { color:#667085; font-size:11px; }
 .wf-sku-row strong { color:#344054; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .wf-sku-row input { margin:0; }
-.wf-step-nav { display:grid; gap:2px; position:fixed; right:max(20px, calc((100vw - 1320px) / 2)); top:185px; width:138px; z-index:2; }
+.wf-step-nav { display:grid; gap:2px; position:fixed; right:8px; top:185px; width:118px; z-index:2; }
 .wf-step-nav a { align-items:center; border-left:2px solid #d0d5dd; color:#667085; display:flex; font-size:12px; gap:7px; padding:7px 4px; text-decoration:none; }
 .wf-step-nav a:hover { border-color:#f97316; color:#c2410c; }
 .wf-step-nav span { align-items:center; background:#e9edf1; border-radius:50%; color:#667085; display:inline-flex; font-size:10px; font-weight:700; height:16px; justify-content:center; width:16px; }
