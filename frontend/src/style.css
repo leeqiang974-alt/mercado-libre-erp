@@ -1847,6 +1847,13 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .campaign-panel button { justify-self:start; }
 .campaign-row { display:grid; gap:3px; border-top:1px solid #fed7aa; padding-top:8px; color:#475467; font-size:12px; }
 .campaign-row strong { color:#1f2937; }
+.campaign-dashboard { display:grid; gap:14px; }
+.campaign-task-card { border:1px solid #dbe3ec; border-left:4px solid #f97316; border-radius:6px; display:grid; gap:9px; padding:16px; }
+.campaign-task-card > div:first-child { align-items:center; display:flex; gap:10px; }
+.campaign-task-card p, .campaign-task-card small { color:#667085; font-size:13px; margin:0; }
+.campaign-status { border-radius:999px; font-size:12px; font-weight:700; padding:3px 8px; }
+.campaign-status.running { background:#dcfce7; color:#166534; }.campaign-status.paused { background:#fef3c7; color:#92400e; }.campaign-status.pending { background:#e0f2fe; color:#075985; }.campaign-status.completed { background:#e5e7eb; color:#475467; }
+.campaign-metrics { display:flex; flex-wrap:wrap; gap:10px; }.campaign-metrics span { background:#f8fafc; border:1px solid #e6ebf0; border-radius:4px; color:#667085; font-size:12px; padding:7px 10px; }.campaign-metrics b { color:#17212b; }
 .product-filter-bar label { margin: 0; min-width: 220px; }
 .product-filter-bar label svg { vertical-align: middle; margin-right: 6px; color: #ea580c; }
 .product-search { flex: 1; min-width: 260px !important; display: flex; align-items: center; border: 1px solid #dfe5ea; padding: 0 10px; border-radius: 6px; }

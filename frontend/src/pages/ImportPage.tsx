@@ -39,7 +39,7 @@ import {
 } from "../api/client";
 import { MERCADO_LIBRE_SITES } from "../domain/sites";
 
-type ImportMode = "discover" | "url" | "html";
+type ImportMode = "discover" | "url" | "html" | "campaign";
 
 const JOB_LABELS: Record<CollectionJobRecord["status"], string> = {
   pending: "待处理",
@@ -480,7 +480,7 @@ export function ImportPage({
           title="刷新采集任务"
           aria-label="刷新采集任务"
           disabled={isBusy}
-          onClick={() => void refreshCollectionJobs()}
+          onClick={() => { void refreshCollectionJobs(); void refreshCampaigns(); }}
         >
           <RefreshCw size={17} />
         </button>
@@ -503,9 +503,29 @@ export function ImportPage({
         >
           <Link2 size={17} /> 链接采集
         </button>
+        <button
+          role="tab"
+          aria-selected={mode === "campaign"}
+          className={mode === "campaign" ? "selected" : ""}
+          onClick={() => setMode("campaign")}
+        >
+          <Clock3 size={17} /> 采集任务{campaigns.length ? ` (${campaigns.length})` : ""}
+        </button>
       </div>
 
-      <section className="surface import-source">
+      {mode === "campaign" ? (
+        <section className="surface campaign-dashboard">
+          <div className="section-heading"><div><h3>关键词采集任务</h3><p>实时显示关键词发现、详情采集、去重和暂停原因。</p></div></div>
+          {campaigns.length === 0 ? <div className="empty-state compact-empty"><Clock3 size={24} /><strong>暂无关键词采集任务</strong></div> : campaigns.map((campaign) => (
+            <article className="campaign-task-card" key={campaign.id}>
+              <div><strong>{campaign.name}</strong><span className={`campaign-status ${campaign.status}`}>{campaign.status === "running" ? "运行中" : campaign.status === "paused" ? "已暂停" : campaign.status === "completed" ? "已完成" : "等待中"}</span></div>
+              <p>当前：{campaign.current_keyword || "全部关键词已发现"} · 第 {campaign.current_page}/{campaign.pages_per_keyword} 页 · 共 {campaign.keyword_count} 个关键词</p>
+              <div className="campaign-metrics"><span>发现 <b>{campaign.discovered_count}</b></span><span>已入队 <b>{campaign.queued_count}</b></span><span>已去重 <b>{campaign.duplicate_count}</b></span><span>详情任务 <b>{displayedCollectionJobs.length}</b></span></div>
+              <small>{campaign.message}</small>
+            </article>
+          ))}
+        </section>
+      ) : <section className="surface import-source">
         {mode === "html" && (
           <div className="section-heading">
             <div>
@@ -567,12 +587,7 @@ export function ImportPage({
             <div className="inline-warning import-warning"><ScanSearch size={17} /><span>按关键词从 Amazon 搜索结果发现 ASIN，自动加入采集队列；详情图片、规格与价格仍会从每个商品页独立核验。</span></div>
             <div className="batch-options"><label>发现数量 <select value={discoveryLimit} onChange={(event) => setDiscoveryLimit(event.target.value)}><option value="10">10 个</option><option value="20">20 个</option><option value="50">50 个</option></select></label><label>目标美客多站点 <select value={targetSiteId} onChange={(event) => setTargetSiteId(event.target.value)}>{MERCADO_LIBRE_SITES.map((site) => <option key={site.id} value={site.id}>{site.country} ({site.id})</option>)}</select></label></div>
             <div className="button-row"><button disabled={discoveryKeyword.trim().length < 2 || isBusy} onClick={discoverAndQueue}>{busyAction === "discover" ? <LoaderCircle className="spin" size={17} /> : <ScanSearch size={17} />} 发现并采集</button></div>
-            <div className="campaign-panel">
-              <strong>持续关键词采集</strong><small>每行一个关键词；后台按每词 2 页分批发现，并将商品详情加入采集队列。</small>
-              <textarea value={campaignKeywords} placeholder={"例如\nsilicone muffin pan\ndrawer organizer"} onChange={(event) => setCampaignKeywords(event.target.value)} />
-              <button disabled={!campaignKeywords.trim() || isBusy} onClick={startKeywordCampaign}>{busyAction === "campaign" ? "创建中…" : "启动关键词任务"}</button>
-              {campaigns.map((campaign) => <div className="campaign-row" key={campaign.id}><strong>{campaign.name}</strong><span>{campaign.status} · {campaign.current_keyword || "已完成"}</span><span>发现 {campaign.discovered_count} / 入队 {campaign.queued_count} / 去重 {campaign.duplicate_count}</span><small>{campaign.message}</small></div>)}
-            </div>
+            <div className="campaign-panel"><strong>持续关键词采集</strong><small>每行一个关键词；启动后请到“采集任务”查看实时状态。</small><textarea value={campaignKeywords} placeholder={"例如\nsilicone muffin pan\ndrawer organizer"} onChange={(event) => setCampaignKeywords(event.target.value)} /><button disabled={!campaignKeywords.trim() || isBusy} onClick={startKeywordCampaign}>{busyAction === "campaign" ? "创建中…" : "启动关键词任务"}</button></div>
             {batchResult && <div className="batch-result" aria-live="polite"><div className="batch-result-summary"><strong>{batchResult.created_count} 个已加入采集队列</strong><span>{batchResult.existing_count} 个已有任务</span><span>{batchResult.duplicate_count} 个重复</span><span>{batchResult.invalid_count} 个无效</span></div><div className="batch-result-list">{batchResult.items.map((item, index) => <div className={`batch-result-row ${item.outcome}`} key={`${item.input_url}-${index}`}><span>{BATCH_LABELS[item.outcome]}</span><strong title={item.normalized_url || item.input_url}>{shortSource(item.normalized_url || item.input_url)}</strong><small>{item.job ? `任务 #${item.job.id}` : BATCH_DETAILS[item.detail] || item.detail}</small></div>)}</div></div>}
           </>
         ) : mode === "url" ? (
@@ -691,7 +706,7 @@ export function ImportPage({
 
         {status && <p className="status-line">{status}</p>}
         {error && <p className="error import-error" role="alert">{error}</p>}
-      </section>
+      </section>}
 
       <section className="saved-section" aria-labelledby="collection-queue-title">
         <div className="section-heading">
