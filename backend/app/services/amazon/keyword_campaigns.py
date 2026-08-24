@@ -50,11 +50,15 @@ async def run_one_keyword_campaign_step(db: Session) -> dict[str, int]:
         db.commit()
         return {"campaigns": 1, "queued": 0}
     if not result.product_urls:
-        # Zero search cards is not a successful empty keyword: Amazon often
-        # returns a verification/interstitial page that has no ASIN cards.
-        # Stop visibly instead of silently burning through the keyword list.
-        campaign.status = KeywordCampaignStatus.PAUSED.value
-        campaign.message = f"{keyword} 未返回可验证商品卡片，已暂停等待采集页面诊断。"
+        # A single result page can be empty or temporarily rendered without
+        # cards.  Record it, skip only that page, and keep the long-running
+        # campaign alive rather than freezing hundreds of later keywords.
+        if campaign.current_page >= campaign.pages_per_keyword:
+            campaign.current_keyword_index += 1
+            campaign.current_page = 1
+        else:
+            campaign.current_page += 1
+        campaign.message = f"{keyword} 本页未返回商品卡片，已跳过该页并继续下一页/关键词。"
         db.commit()
         return {"campaigns": 1, "queued": 0}
 

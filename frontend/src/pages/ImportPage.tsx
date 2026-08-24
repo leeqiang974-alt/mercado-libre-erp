@@ -516,7 +516,7 @@ export function ImportPage({
             <article className="campaign-task-card" key={campaign.id}>
               <div><strong>{campaign.name}</strong><span className={`campaign-status ${campaign.status}`}>{campaign.status === "running" ? "运行中" : campaign.status === "paused" ? "已暂停" : campaign.status === "completed" ? "已完成" : "等待中"}</span></div>
               <p>当前：{campaign.current_keyword || "全部关键词已发现"} · 第 {campaign.current_page}/{campaign.pages_per_keyword} 页 · 共 {campaign.keyword_count} 个关键词</p>
-              <div className="campaign-metrics"><span>发现 <b>{campaign.discovered_count}</b></span><span>已入队 <b>{campaign.queued_count}</b></span><span>已去重 <b>{campaign.duplicate_count}</b></span><span>详情任务 <b>{displayedCollectionJobs.length}</b></span></div>
+              <div className="campaign-metrics"><span>发现 <b>{campaign.discovered_count}</b></span><span>已入队 <b>{campaign.queued_count}</b></span><span>已去重 <b>{campaign.duplicate_count}</b></span><span>最近显示 <b>{displayedCollectionJobs.length}</b> 条任务</span></div>
               <small>{campaign.message}</small>
             </article>
           ))}
