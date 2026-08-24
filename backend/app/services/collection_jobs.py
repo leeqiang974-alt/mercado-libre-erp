@@ -20,18 +20,20 @@ from app.services.source_products import (
 Collector = Callable[[str, str], Awaitable[CollectionResult]]
 
 
-def create_collection_job(db: Session, source_url: str, target_site_id: str) -> CollectionJob:
-    return create_collection_jobs(db, [(source_url, target_site_id)])[0]
+def create_collection_job(db: Session, source_url: str, target_site_id: str, *, campaign_id: int | None = None, campaign_keyword: str | None = None) -> CollectionJob:
+    return create_collection_jobs(db, [(source_url, target_site_id)], campaign_id=campaign_id, campaign_keyword=campaign_keyword)[0]
 
 
 def create_collection_jobs(
-    db: Session, entries: list[tuple[str, str]]
+    db: Session, entries: list[tuple[str, str]], *, campaign_id: int | None = None, campaign_keyword: str | None = None
 ) -> list[CollectionJob]:
     jobs = [
         CollectionJob(
             source_url=source_url,
             source_identity=source_url,
             target_site_id=target_site_id,
+            campaign_id=campaign_id,
+            campaign_keyword=campaign_keyword,
         )
         for source_url, target_site_id in entries
     ]
@@ -43,10 +45,13 @@ def create_collection_jobs(
 
 
 def list_collection_jobs(
-    db: Session, *, limit: int = 100, offset: int = 0
+    db: Session, *, limit: int = 100, offset: int = 0, campaign_id: int | None = None
 ) -> list[CollectionJobRead]:
+    query = db.query(CollectionJob)
+    if campaign_id is not None:
+        query = query.filter(CollectionJob.campaign_id == campaign_id)
     rows = (
-        db.query(CollectionJob)
+        query
         .order_by(CollectionJob.id.desc())
         .offset(offset)
         .limit(limit)
@@ -307,6 +312,8 @@ def to_collection_job_read(
         target_site_id=job.target_site_id,
         status=job.status.value,
         message=job.message,
+        campaign_id=job.campaign_id,
+        campaign_keyword=job.campaign_keyword,
         source_product_id=job.source_product_id,
         draft_id=job.draft_id,
         created_at=job.created_at,

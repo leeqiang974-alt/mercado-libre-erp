@@ -12,6 +12,8 @@ class CollectionJobRead(BaseModel):
     target_site_id: str
     status: str
     message: str
+    campaign_id: int | None = None
+    campaign_keyword: str | None = None
     source_product_id: int | None = None
     draft_id: int | None = None
     created_at: datetime

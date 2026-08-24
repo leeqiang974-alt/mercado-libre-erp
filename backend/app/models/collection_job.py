@@ -58,6 +58,8 @@ class CollectionJob(Base):
         default=CollectionJobStatus.PENDING,
     )
     message: Mapped[str] = mapped_column(Text, default="")
+    campaign_id: Mapped[int | None] = mapped_column(ForeignKey("keyword_collection_campaigns.id"), nullable=True, index=True)
+    campaign_keyword: Mapped[str | None] = mapped_column(String(240), nullable=True)
     source_product_id: Mapped[int | None] = mapped_column(
         ForeignKey("source_products.id"), nullable=True
     )

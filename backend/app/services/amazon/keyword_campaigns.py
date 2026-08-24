@@ -65,7 +65,7 @@ async def run_one_keyword_campaign_step(db: Session) -> dict[str, int]:
     existing = {row[0] for row in db.query(CollectionJob.source_identity).filter(CollectionJob.target_site_id == campaign.target_site_id, CollectionJob.source_identity.in_(result.product_urls)).all()}
     new_urls = [url for url in result.product_urls if url not in existing]
     if new_urls:
-        create_collection_jobs(db, [(url, campaign.target_site_id) for url in new_urls])
+        create_collection_jobs(db, [(url, campaign.target_site_id) for url in new_urls], campaign_id=campaign.id, campaign_keyword=keyword)
     campaign.discovered_count += len(result.product_urls)
     campaign.queued_count += len(new_urls)
     campaign.duplicate_count += len(result.product_urls) - len(new_urls)

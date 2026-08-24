@@ -474,6 +474,8 @@ export type CollectionJobRecord = {
   target_site_id: string;
   status: "pending" | "running" | "completed" | "needs_manual_action" | "failed";
   message: string;
+  campaign_id: number | null;
+  campaign_keyword: string | null;
   source_product_id: number | null;
   draft_id: number | null;
   created_at: string;
@@ -694,8 +696,9 @@ export async function createCollectionJobsFile(
   return response.json() as Promise<CollectionBatchResult>;
 }
 
-export async function listCollectionJobs(limit = 100, offset = 0) {
+export async function listCollectionJobs(limit = 100, offset = 0, campaignId?: number) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (campaignId) params.set("campaign_id", String(campaignId));
   const response = await fetch(`${API_BASE}/api/imports/amazon-url/jobs?${params}`);
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<CollectionJobRecord[]>;

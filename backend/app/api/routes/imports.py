@@ -474,9 +474,10 @@ def _create_amazon_url_collection_jobs_batch(
 def get_amazon_url_collection_jobs(
     limit: int = Query(default=100, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    campaign_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
 ) -> list[CollectionJobRead]:
-    return list_collection_jobs(db, limit=limit, offset=offset)
+    return list_collection_jobs(db, limit=limit, offset=offset, campaign_id=campaign_id)
 
 
 @router.get("/amazon-url/jobs/status", response_model=list[CollectionJobRead])

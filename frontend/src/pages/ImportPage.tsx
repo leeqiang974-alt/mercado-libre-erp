@@ -167,6 +167,7 @@ export function ImportPage({
   const [discoveryLimit, setDiscoveryLimit] = useState("20");
   const [campaignKeywords, setCampaignKeywords] = useState("");
   const [campaigns, setCampaigns] = useState<KeywordCampaign[]>([]);
+  const [selectedCampaignId, setSelectedCampaignId] = useState<number | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string>("");
   const [snapshotUrl, setSnapshotUrl] = useState("");
@@ -218,7 +219,7 @@ export function ImportPage({
         .filter((job) => job.status === "pending" || job.status === "running")
         .map((job) => job.id);
       const [jobs, knownStatuses] = await Promise.all([
-        listCollectionJobs(),
+        listCollectionJobs(200, 0, selectedCampaignId ?? undefined),
         listCollectionJobStatuses(knownJobIds),
       ]);
       if (requestEpoch === collectionRequestEpoch.current) {
@@ -242,7 +243,7 @@ export function ImportPage({
         setError(jobError instanceof Error ? jobError.message : "Failed to load collection jobs");
       }
     }
-  }, []);
+  }, [selectedCampaignId]);
 
   const refreshCampaigns = useCallback(async () => {
     try { setCampaigns(await listKeywordCampaigns()); } catch { /* API may be migrating */ }
@@ -472,9 +473,12 @@ export function ImportPage({
   const isBusy = Boolean(busyAction);
   const displayedCollectionJobs = Array.from(
     new Map(
-      [...Object.values(knownVariantJobs), ...collectionJobs].map((job) => [job.id, job]),
+      [...Object.values(knownVariantJobs), ...collectionJobs]
+        .filter((job) => selectedCampaignId === null || job.campaign_id === selectedCampaignId)
+        .map((job) => [job.id, job]),
     ).values(),
   ).sort((left, right) => right.id - left.id);
+  const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId);
   const urlEntries = sourceUrls
     .split(/\r?\n/)
     .map((entry) => entry.trim())
@@ -518,8 +522,9 @@ export function ImportPage({
             <article className="campaign-task-card" key={campaign.id}>
               <div><strong>{campaign.name}</strong><span className={`campaign-status ${campaign.status}`}>{campaign.status === "running" ? "运行中" : campaign.status === "paused" ? "已暂停" : campaign.status === "completed" ? "已完成" : "等待中"}</span></div>
               <p>当前：{campaign.current_keyword || "全部关键词已发现"} · 第 {campaign.current_page}/{campaign.pages_per_keyword} 页 · 共 {campaign.keyword_count} 个关键词</p>
-              <div className="campaign-metrics"><span>发现 <b>{campaign.discovered_count}</b></span><span>已入队 <b>{campaign.queued_count}</b></span><span>已去重 <b>{campaign.duplicate_count}</b></span><span>最近显示 <b>{displayedCollectionJobs.length}</b> 条任务</span></div>
+              <div className="campaign-metrics"><span>发现 <b>{campaign.discovered_count}</b></span><span>已入队 <b>{campaign.queued_count}</b></span><span>已去重 <b>{campaign.duplicate_count}</b></span></div>
               <small>{campaign.message}</small>
+              <div className="button-row"><button className="secondary-button" onClick={() => setSelectedCampaignId(selectedCampaignId === campaign.id ? null : campaign.id)}>{selectedCampaignId === campaign.id ? "查看全部采集任务" : "查看此关键词任务结果"}</button></div>
             </article>
           ))}
         </section>
@@ -709,8 +714,8 @@ export function ImportPage({
       <section className="saved-section" aria-labelledby="collection-queue-title">
         <div className="section-heading">
           <div>
-              <h3 id="collection-queue-title">采集库</h3>
-              <p>{displayedCollectionJobs.length} 个采集任务</p>
+              <h3 id="collection-queue-title">{selectedCampaign ? `${selectedCampaign.name} · 采集结果` : "采集库"}</h3>
+              <p>{selectedCampaign ? "按关键词显示该任务采集到的商品；完成后可直接编辑上架。" : `${displayedCollectionJobs.length} 个采集任务`}</p>
           </div>
         </div>
 
