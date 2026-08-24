@@ -25,6 +25,7 @@ const HASH_PAGE_ALIASES: Record<string, string> = {
   listing: "drafts",
   products: "products",
   "store-products": "products",
+  "collection-tasks": "collection-tasks",
   publishing: "publishing",
 };
 
@@ -146,6 +147,14 @@ export function App() {
       {/* 商品管理 */}
       {page === "import" && (
         <ImportPage
+          onImportHtml={importAndReview}
+          onOpenDraft={openDraftForListing}
+          status={status}
+        />
+      )}
+      {page === "collection-tasks" && (
+        <ImportPage
+          initialMode="campaign"
           onImportHtml={importAndReview}
           onOpenDraft={openDraftForListing}
           status={status}

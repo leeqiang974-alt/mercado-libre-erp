@@ -15,6 +15,7 @@ import {
   Warehouse,
   ShoppingBag,
   MessageSquare,
+  ListPlus,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -27,6 +28,7 @@ const menuGroups = [
     title: "商品管理",
     items: [
       { id: "import", label: "智能采集", icon: Upload },
+      { id: "collection-tasks", label: "采集任务", icon: ListPlus },
       { id: "drafts", label: "上架库", icon: FilePenLine },
       { id: "products", label: "店铺已上架", icon: Package },
     ],

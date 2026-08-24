@@ -147,6 +147,7 @@ export function ImportPage({
   onImportHtml,
   onOpenDraft,
   status,
+  initialMode = "discover",
 }: {
   onImportHtml: (
     sourceUrl: string,
@@ -157,8 +158,9 @@ export function ImportPage({
   ) => Promise<void>;
   onOpenDraft: (draft: ProductDraftRead) => void;
   status: string;
+  initialMode?: ImportMode;
 }) {
-  const [mode, setMode] = useState<ImportMode>("discover");
+  const [mode, setMode] = useState<ImportMode>(initialMode);
   const [sourceUrls, setSourceUrls] = useState("");
   const [discoveryKeyword, setDiscoveryKeyword] = useState("");
   const [discoveryDomain, setDiscoveryDomain] = useState("amazon.com");
@@ -183,6 +185,8 @@ export function ImportPage({
   const [variantBatchResults, setVariantBatchResults] = useState<Record<string, SourceVariantCollectionBatchResult>>({});
   const collectionRequestEpoch = useRef(0);
   const knownVariantJobsRef = useRef<Record<number, CollectionJobRecord>>({});
+
+  useEffect(() => setMode(initialMode), [initialMode]);
 
   function setKnownVariantJobSnapshot(jobsById: Record<number, CollectionJobRecord>) {
     const jobs = Object.values(jobsById);
@@ -472,8 +476,8 @@ export function ImportPage({
       <header className="page-header">
         <div>
           <p className="eyebrow">第一步</p>
-          <h2>智能采集</h2>
-          <p>输入关键词自动发现并采集 Amazon 商品；采集成功后，直接进入编辑上架。</p>
+          <h2>{initialMode === "campaign" ? "采集任务" : "智能采集"}</h2>
+          <p>{initialMode === "campaign" ? "查看关键词任务和每个商品的实时采集状态。" : "输入关键词自动发现并采集 Amazon 商品；采集成功后，直接进入编辑上架。"}</p>
         </div>
         <button
           className="icon-button"
@@ -502,14 +506,6 @@ export function ImportPage({
           onClick={() => setMode("url")}
         >
           <Link2 size={17} /> 链接采集
-        </button>
-        <button
-          role="tab"
-          aria-selected={mode === "campaign"}
-          className={mode === "campaign" ? "selected" : ""}
-          onClick={() => setMode("campaign")}
-        >
-          <Clock3 size={17} /> 采集任务{campaigns.length ? ` (${campaigns.length})` : ""}
         </button>
       </div>
 
