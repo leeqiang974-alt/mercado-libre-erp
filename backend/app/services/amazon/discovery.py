@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import os
 from urllib.parse import quote_plus, urlparse
 
 from bs4 import BeautifulSoup
@@ -50,13 +51,15 @@ def extract_amazon_search_product_urls(html: str, search_url: str, limit: int) -
 
 async def discover_amazon_products(domain: str, keyword: str, limit: int, page: int = 1) -> AmazonDiscoveryResult:
     search_url = build_amazon_search_url(domain, keyword, page)
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
     from playwright.async_api import async_playwright
 
     locale, accept_language = amazon_browser_language(search_url)
     headless = amazon_browser_headless()
     async with async_playwright() as playwright:
+        profile_dir = os.getenv("AMAZON_BROWSER_PROFILE_DIR", "").strip()
         context = await playwright.chromium.launch_persistent_context(
-            None,
+            profile_dir or None,
             headless=headless,
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -70,7 +73,13 @@ async def discover_amazon_products(domain: str, keyword: str, limit: int, page: 
         page = context.pages[0] if context.pages else await context.new_page()
         try:
             await page.goto(search_url, wait_until="domcontentloaded", timeout=30_000)
-            await page.wait_for_timeout(1_000)
+            try:
+                await page.wait_for_selector(
+                    '[data-component-type="s-search-result"][data-asin]', timeout=12_000
+                )
+            except PlaywrightTimeoutError:
+                pass
+            await page.wait_for_timeout(750)
             html = await page.content()
             return AmazonDiscoveryResult(
                 search_url=search_url,
