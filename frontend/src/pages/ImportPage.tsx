@@ -246,6 +246,7 @@ export function ImportPage({
     let timer = 0;
     async function poll() {
       await refreshCollectionJobs(false);
+      await refreshCampaigns();
       if (!cancelled) {
         timer = window.setTimeout(() => void poll(), 5000);
       }
