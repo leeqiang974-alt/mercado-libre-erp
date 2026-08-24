@@ -167,6 +167,8 @@ export function ImportPage({
   const [discoveryLimit, setDiscoveryLimit] = useState("20");
   const [campaignKeywords, setCampaignKeywords] = useState("");
   const [campaigns, setCampaigns] = useState<KeywordCampaign[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string>("");
   const [snapshotUrl, setSnapshotUrl] = useState("");
   const [targetSiteId, setTargetSiteId] = useState("CBT");
   const [html, setHtml] = useState("");
@@ -245,6 +247,14 @@ export function ImportPage({
   const refreshCampaigns = useCallback(async () => {
     try { setCampaigns(await listKeywordCampaigns()); } catch { /* API may be migrating */ }
   }, []);
+
+  async function refreshTaskDashboard() {
+    setIsRefreshing(true);
+    try {
+      await Promise.all([refreshCollectionJobs(false), refreshCampaigns()]);
+      setLastRefreshedAt(new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+    } finally { setIsRefreshing(false); }
+  }
   useEffect(() => {
     let cancelled = false;
     let timer = 0;
@@ -479,15 +489,7 @@ export function ImportPage({
           <h2>{initialMode === "campaign" ? "采集任务" : "智能采集"}</h2>
           <p>{initialMode === "campaign" ? "查看关键词任务和每个商品的实时采集状态。" : "输入关键词自动发现并采集 Amazon 商品；采集成功后，直接进入编辑上架。"}</p>
         </div>
-        <button
-          className="icon-button"
-          title="刷新采集任务"
-          aria-label="刷新采集任务"
-          disabled={isBusy}
-          onClick={() => { void refreshCollectionJobs(); void refreshCampaigns(); }}
-        >
-          <RefreshCw size={17} />
-        </button>
+        <div className="page-header-actions"><span className="task-refresh-time">{lastRefreshedAt ? `已刷新 ${lastRefreshedAt}` : "自动每 5 秒刷新"}</span><button className="icon-button" title="立即刷新任务状态" aria-label="立即刷新任务状态" disabled={isBusy || isRefreshing} onClick={() => void refreshTaskDashboard()}><RefreshCw className={isRefreshing ? "spin" : ""} size={17} /></button></div>
       </header>
 
       {initialMode !== "campaign" && <div className="import-mode-switch" role="tablist" aria-label="Amazon 采集方式">
