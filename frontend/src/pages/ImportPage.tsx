@@ -490,7 +490,7 @@ export function ImportPage({
         </button>
       </header>
 
-      <div className="import-mode-switch" role="tablist" aria-label="Amazon 采集方式">
+      {initialMode !== "campaign" && <div className="import-mode-switch" role="tablist" aria-label="Amazon 采集方式">
         <button
           role="tab"
           aria-selected={mode === "discover"}
@@ -507,7 +507,7 @@ export function ImportPage({
         >
           <Link2 size={17} /> 链接采集
         </button>
-      </div>
+      </div>}
 
       {mode === "campaign" ? (
         <section className="surface campaign-dashboard">
