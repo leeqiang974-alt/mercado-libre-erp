@@ -22,6 +22,8 @@
 
 ## Product Truthfulness
 
+- Amazon candidate discovery must default to excluding shoes/apparel and any size-dependent variants; dangerous goods, liquids, cosmetics, pesticides, plants/seeds, batteries, high-value goods, and high-weight goods. Preserve the exclusion reason on each rejected candidate. The operator may add exclusions later; never silently re-enable an excluded group.
+
 - The UI must show integration readiness for Mercado Libre, Claude, NVIDIA, live publishing, database, and workers.
 - Never silently substitute local review for Claude or NVIDIA and present it as provider output.
 - Keep Amazon source currency separate from Mercado Libre target currency; never relabel an unconverted source price.
