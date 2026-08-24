@@ -1920,7 +1920,11 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .wf-header h2 { margin:3px 0 6px; color:#17212b; font-size:24px; }
 .wf-header p { margin:0; color:#667085; font-size:13px; }
 .wf-listing-layout { display:grid; gap:20px; grid-template-columns:250px minmax(0, 1fr); }
-.wf-listing-rail { align-self:start; max-height:calc(100vh - 180px); position:sticky; top:18px; }
+/* The product rail is its own scroll region.  Previously only the outer rail
+   had a max-height while its list kept its independent viewport height; the
+   final product was therefore clipped below the rail instead of scrollable. */
+.wf-listing-rail { align-self:start; display:flex; flex-direction:column; height:calc(100vh - 180px); max-height:calc(100vh - 180px); min-height:0; overflow:hidden; position:sticky; top:18px; }
+.wf-listing-rail .draft-rail-list { flex:1 1 auto; max-height:none; min-height:0; overscroll-behavior:contain; padding-bottom:8px; }
 .wf-editor-main { margin-right:154px; display:grid; gap:14px; }
 .wf-section { scroll-margin-top:18px; padding:18px 20px; border-radius:4px; }
 .wf-section-title { display:flex; align-items:flex-start; gap:10px; border-bottom:1px solid #e7ebef; margin-bottom:15px; padding-bottom:12px; }
