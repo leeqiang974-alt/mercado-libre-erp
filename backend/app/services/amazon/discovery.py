@@ -19,9 +19,9 @@ class AmazonDiscoveryResult:
     challenge_detected: bool = False
 
 
-def build_amazon_search_url(domain: str, keyword: str) -> str:
+def build_amazon_search_url(domain: str, keyword: str, page: int = 1) -> str:
     hostname = domain.strip().lower().removeprefix("https://").removeprefix("http://").strip("/")
-    search_url = f"https://{hostname}/s?k={quote_plus(keyword.strip())}"
+    search_url = f"https://{hostname}/s?k={quote_plus(keyword.strip())}&page={max(1, page)}"
     if amazon_marketplace_domain(search_url) is None:
         raise ValueError("only_public_amazon_domains_allowed")
     return search_url
@@ -48,8 +48,8 @@ def extract_amazon_search_product_urls(html: str, search_url: str, limit: int) -
     return urls
 
 
-async def discover_amazon_products(domain: str, keyword: str, limit: int) -> AmazonDiscoveryResult:
-    search_url = build_amazon_search_url(domain, keyword)
+async def discover_amazon_products(domain: str, keyword: str, limit: int, page: int = 1) -> AmazonDiscoveryResult:
+    search_url = build_amazon_search_url(domain, keyword, page)
     from playwright.async_api import async_playwright
 
     locale, accept_language = amazon_browser_language(search_url)

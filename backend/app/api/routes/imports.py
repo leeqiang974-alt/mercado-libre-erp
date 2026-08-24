@@ -48,6 +48,8 @@ from app.schemas.collection_jobs import (
     SourceVariantCollectionBatchRead,
 )
 from app.models.collection_job import CollectionJob, CollectionJobStatus
+from app.models.keyword_collection_campaign import KeywordCampaignStatus, KeywordCollectionCampaign
+from app.services.amazon.keyword_campaigns import normalize_keywords
 from app.services.meli.sites import SITE_CURRENCIES
 from app.schemas.source_products import (
     SourceProductRead,
@@ -85,6 +87,39 @@ class AmazonDiscoveryImport(BaseModel):
     domain: str = Field(default="amazon.com")
     target_site_id: str = "CBT"
     limit: int = Field(default=20, ge=1, le=50)
+
+
+class KeywordCampaignCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    keywords: list[str] = Field(min_length=1, max_length=100)
+    domain: str = Field(default="amazon.com", max_length=120)
+    target_site_id: str = "CBT"
+    pages_per_keyword: int = Field(default=2, ge=1, le=10)
+
+
+class KeywordCampaignRead(BaseModel):
+    id: int
+    name: str
+    domain: str
+    target_site_id: str
+    keyword_count: int
+    pages_per_keyword: int
+    status: str
+    current_keyword: str | None
+    current_page: int
+    discovered_count: int
+    queued_count: int
+    duplicate_count: int
+    message: str
+
+
+def _campaign_read(row: KeywordCollectionCampaign) -> KeywordCampaignRead:
+    keywords = row.keywords_json or []
+    current = keywords[row.current_keyword_index] if row.current_keyword_index < len(keywords) else None
+    return KeywordCampaignRead(id=row.id, name=row.name, domain=row.domain, target_site_id=row.target_site_id,
+        keyword_count=len(keywords), pages_per_keyword=row.pages_per_keyword, status=row.status,
+        current_keyword=current, current_page=row.current_page, discovered_count=row.discovered_count,
+        queued_count=row.queued_count, duplicate_count=row.duplicate_count, message=row.message)
 
 
 @router.post("/amazon-html")
@@ -310,6 +345,25 @@ async def discover_amazon_search_products(
         ),
         db,
     )
+
+
+@router.post("/amazon-search/campaigns", response_model=KeywordCampaignRead)
+def create_keyword_campaign(payload: KeywordCampaignCreate, db: Session = Depends(get_db)) -> KeywordCampaignRead:
+    keywords = normalize_keywords(payload.keywords)
+    if not keywords:
+        raise HTTPException(status_code=422, detail="keyword_campaign_requires_keywords")
+    _target_site_or_422(payload.target_site_id)
+    row = KeywordCollectionCampaign(name=" ".join(payload.name.split()), domain=payload.domain.strip().lower(),
+        target_site_id=payload.target_site_id.upper(), keywords_json=keywords, pages_per_keyword=payload.pages_per_keyword,
+        status=KeywordCampaignStatus.PENDING.value, message="等待后台按关键词发现商品。")
+    db.add(row)
+    db.commit(); db.refresh(row)
+    return _campaign_read(row)
+
+
+@router.get("/amazon-search/campaigns", response_model=list[KeywordCampaignRead])
+def list_keyword_campaigns(db: Session = Depends(get_db)) -> list[KeywordCampaignRead]:
+    return [_campaign_read(row) for row in db.query(KeywordCollectionCampaign).order_by(KeywordCollectionCampaign.id.desc()).limit(30).all()]
 
 
 @router.post("/amazon-url/jobs/file", response_model=CollectionBatchRead)

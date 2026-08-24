@@ -483,6 +483,12 @@ export type CollectionJobRecord = {
   source_product: SourceProductSummary | null;
 };
 
+export type KeywordCampaign = {
+  id: number; name: string; domain: string; target_site_id: string; keyword_count: number;
+  pages_per_keyword: number; status: string; current_keyword: string | null; current_page: number;
+  discovered_count: number; queued_count: number; duplicate_count: number; message: string;
+};
+
 export type AmazonSourceVariant = {
   asin: string;
   attributes: Record<string, string>;
@@ -657,6 +663,18 @@ export async function discoverAmazonProducts(
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<CollectionBatchResult>;
+}
+
+export async function createKeywordCampaign(payload: { name: string; keywords: string[]; domain: string; target_site_id: string; pages_per_keyword: number }) {
+  const response = await fetch(`${API_BASE}/api/imports/amazon-search/campaigns`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<KeywordCampaign>;
+}
+
+export async function listKeywordCampaigns() {
+  const response = await fetch(`${API_BASE}/api/imports/amazon-search/campaigns`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<KeywordCampaign[]>;
 }
 
 export async function createCollectionJobsFile(

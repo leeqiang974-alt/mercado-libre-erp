@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -18,6 +18,8 @@ import {
 import {
   createCollectionJobsBatch,
   discoverAmazonProducts,
+  createKeywordCampaign,
+  listKeywordCampaigns,
   createCollectionJobsFile,
   createSourceVariantCollectionJob,
   createSourceVariantCollectionJobs,
@@ -33,6 +35,7 @@ import {
   type SourceProductRecord,
   type SourceVariantCollectionBatchResult,
   type ProductDraftRead,
+  type KeywordCampaign,
 } from "../api/client";
 import { MERCADO_LIBRE_SITES } from "../domain/sites";
 
@@ -160,6 +163,8 @@ export function ImportPage({
   const [discoveryKeyword, setDiscoveryKeyword] = useState("");
   const [discoveryDomain, setDiscoveryDomain] = useState("amazon.com");
   const [discoveryLimit, setDiscoveryLimit] = useState("20");
+  const [campaignKeywords, setCampaignKeywords] = useState("");
+  const [campaigns, setCampaigns] = useState<KeywordCampaign[]>([]);
   const [snapshotUrl, setSnapshotUrl] = useState("");
   const [targetSiteId, setTargetSiteId] = useState("CBT");
   const [html, setHtml] = useState("");
@@ -233,6 +238,9 @@ export function ImportPage({
     }
   }, []);
 
+  const refreshCampaigns = useCallback(async () => {
+    try { setCampaigns(await listKeywordCampaigns()); } catch { /* API may be migrating */ }
+  }, []);
   useEffect(() => {
     let cancelled = false;
     let timer = 0;
@@ -247,7 +255,7 @@ export function ImportPage({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [refreshCollectionJobs]);
+  }, [refreshCollectionJobs, refreshCampaigns]);
 
   async function runUrlCollection() {
     // Every collection goes through a persisted job so a blocked Amazon page has
@@ -267,6 +275,16 @@ export function ImportPage({
     } catch (discoveryError) {
       setError(discoveryError instanceof Error ? discoveryError.message : "Amazon 搜索发现失败");
     } finally { setBusyAction(""); }
+  }
+
+  async function startKeywordCampaign() {
+    const keywords = campaignKeywords.split(/\n|,/).map((value) => value.trim()).filter(Boolean);
+    if (!keywords.length) return;
+    setError(""); setBusyAction("campaign");
+    try {
+      await createKeywordCampaign({ name: `关键词采集 ${new Date().toLocaleDateString("zh-CN")}`, keywords, domain: discoveryDomain, target_site_id: targetSiteId, pages_per_keyword: 2 });
+      setCampaignKeywords(""); await refreshCampaigns();
+    } catch (e) { setError(e instanceof Error ? e.message : "创建关键词任务失败"); } finally { setBusyAction(""); }
   }
 
   async function runHtmlImport() {
@@ -548,6 +566,12 @@ export function ImportPage({
             <div className="inline-warning import-warning"><ScanSearch size={17} /><span>按关键词从 Amazon 搜索结果发现 ASIN，自动加入采集队列；详情图片、规格与价格仍会从每个商品页独立核验。</span></div>
             <div className="batch-options"><label>发现数量 <select value={discoveryLimit} onChange={(event) => setDiscoveryLimit(event.target.value)}><option value="10">10 个</option><option value="20">20 个</option><option value="50">50 个</option></select></label><label>目标美客多站点 <select value={targetSiteId} onChange={(event) => setTargetSiteId(event.target.value)}>{MERCADO_LIBRE_SITES.map((site) => <option key={site.id} value={site.id}>{site.country} ({site.id})</option>)}</select></label></div>
             <div className="button-row"><button disabled={discoveryKeyword.trim().length < 2 || isBusy} onClick={discoverAndQueue}>{busyAction === "discover" ? <LoaderCircle className="spin" size={17} /> : <ScanSearch size={17} />} 发现并采集</button></div>
+            <div className="campaign-panel">
+              <strong>持续关键词采集</strong><small>每行一个关键词；后台按每词 2 页分批发现，并将商品详情加入采集队列。</small>
+              <textarea value={campaignKeywords} placeholder={"例如\nsilicone muffin pan\ndrawer organizer"} onChange={(event) => setCampaignKeywords(event.target.value)} />
+              <button disabled={!campaignKeywords.trim() || isBusy} onClick={startKeywordCampaign}>{busyAction === "campaign" ? "创建中…" : "启动关键词任务"}</button>
+              {campaigns.map((campaign) => <div className="campaign-row" key={campaign.id}><strong>{campaign.name}</strong><span>{campaign.status} · {campaign.current_keyword || "已完成"}</span><span>发现 {campaign.discovered_count} / 入队 {campaign.queued_count} / 去重 {campaign.duplicate_count}</span><small>{campaign.message}</small></div>)}
+            </div>
             {batchResult && <div className="batch-result" aria-live="polite"><div className="batch-result-summary"><strong>{batchResult.created_count} 个已加入采集队列</strong><span>{batchResult.existing_count} 个已有任务</span><span>{batchResult.duplicate_count} 个重复</span><span>{batchResult.invalid_count} 个无效</span></div><div className="batch-result-list">{batchResult.items.map((item, index) => <div className={`batch-result-row ${item.outcome}`} key={`${item.input_url}-${index}`}><span>{BATCH_LABELS[item.outcome]}</span><strong title={item.normalized_url || item.input_url}>{shortSource(item.normalized_url || item.input_url)}</strong><small>{item.job ? `任务 #${item.job.id}` : BATCH_DETAILS[item.detail] || item.detail}</small></div>)}</div></div>}
           </>
         ) : mode === "url" ? (

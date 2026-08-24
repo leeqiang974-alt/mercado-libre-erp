@@ -6,6 +6,7 @@ def import_all_models() -> None:
     import app.models.draft_listing_config  # noqa: F401
     import app.models.draft_pricing_config  # noqa: F401
     import app.models.integration_credential  # noqa: F401
+    import app.models.keyword_collection_campaign  # noqa: F401
     import app.models.meli_metadata_cache  # noqa: F401
     import app.models.product_draft  # noqa: F401
     import app.models.product_draft_approval  # noqa: F401

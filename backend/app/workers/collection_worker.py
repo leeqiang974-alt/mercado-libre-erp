@@ -13,6 +13,7 @@ from app.services.collection_jobs import (
     recover_stale_collection_jobs,
     run_collection_job,
 )
+from app.services.amazon.keyword_campaigns import run_one_keyword_campaign_step
 
 
 WorkerSummary = dict[str, int]
@@ -23,6 +24,7 @@ async def run_pending_collection_jobs(
     limit: int = 10,
     collector: Collector = collect_amazon_page,
 ) -> WorkerSummary:
+    campaign_summary = await run_one_keyword_campaign_step(db)
     recovered = recover_stale_collection_jobs(db, get_settings().job_stale_after_seconds)
     settings = get_settings()
     now = datetime.now(UTC)
@@ -45,6 +47,8 @@ async def run_pending_collection_jobs(
         "failed": 0,
         "deferred": 0,
         "recovered": recovered,
+        "campaigns": campaign_summary["campaigns"],
+        "campaign_queued": campaign_summary["queued"],
     }
     for job in jobs:
         try:
