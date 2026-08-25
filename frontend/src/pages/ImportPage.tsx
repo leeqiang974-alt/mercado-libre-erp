@@ -168,6 +168,8 @@ export function ImportPage({
   const [campaignKeywords, setCampaignKeywords] = useState("");
   const [campaigns, setCampaigns] = useState<KeywordCampaign[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | null>(null);
+  const [campaignPage, setCampaignPage] = useState(0);
+  const [completedJobs, setCompletedJobs] = useState<CollectionJobRecord[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string>("");
   const [snapshotUrl, setSnapshotUrl] = useState("");
@@ -218,12 +220,14 @@ export function ImportPage({
       const knownJobIds = Object.values(knownVariantJobsRef.current)
         .filter((job) => job.status === "pending" || job.status === "running")
         .map((job) => job.id);
-      const [jobs, knownStatuses] = await Promise.all([
+      const [jobs, knownStatuses, completed] = await Promise.all([
         listCollectionJobs(200, 0, selectedCampaignId ?? undefined),
         listCollectionJobStatuses(knownJobIds),
+        listCollectionJobs(100, 0, undefined, "completed"),
       ]);
       if (requestEpoch === collectionRequestEpoch.current) {
         setCollectionJobs(jobs);
+        setCompletedJobs(completed);
         const nextKnown = { ...knownVariantJobsRef.current };
         const freshById = new Map(
           [...jobs, ...knownStatuses].map((job) => [job.id, job]),
@@ -487,6 +491,9 @@ export function ImportPage({
     ).values(),
   ).sort((left, right) => right.id - left.id);
   const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId);
+  const campaignPageSize = 10;
+  const campaignPageCount = Math.max(1, Math.ceil(campaigns.length / campaignPageSize));
+  const visibleCampaigns = campaigns.slice(campaignPage * campaignPageSize, (campaignPage + 1) * campaignPageSize);
   const urlEntries = sourceUrls
     .split(/\r?\n/)
     .map((entry) => entry.trim())
@@ -526,7 +533,7 @@ export function ImportPage({
       {mode === "campaign" ? (
         <section className="surface campaign-dashboard">
           <div className="section-heading"><div><h3>关键词采集任务</h3><p>实时显示关键词发现、详情采集、去重和暂停原因。</p></div></div>
-          {campaigns.length === 0 ? <div className="empty-state compact-empty"><Clock3 size={24} /><strong>暂无关键词采集任务</strong></div> : campaigns.map((campaign) => (
+          {campaigns.length === 0 ? <div className="empty-state compact-empty"><Clock3 size={24} /><strong>暂无关键词采集任务</strong></div> : visibleCampaigns.map((campaign) => (
             <article className="campaign-task-card" key={campaign.id}>
               <div><strong>{campaign.name}</strong><span className={`campaign-status ${campaign.status}`}>{campaign.status === "running" ? "运行中" : campaign.status === "paused" ? "已暂停" : campaign.status === "completed" ? "已完成" : "等待中"}</span></div>
               <p>当前：{campaign.current_keyword || "全部关键词已发现"} · 第 {campaign.current_page}/{campaign.pages_per_keyword} 页 · 共 {campaign.keyword_count} 个关键词</p>
@@ -535,6 +542,11 @@ export function ImportPage({
               <div className="button-row"><button className="secondary-button" onClick={() => setSelectedCampaignId(selectedCampaignId === campaign.id ? null : campaign.id)}>{selectedCampaignId === campaign.id ? "查看全部采集任务" : "查看此关键词任务结果"}</button></div>
             </article>
           ))}
+          {campaignPageCount > 1 && <div className="pagination-row">
+            <button className="secondary-button" disabled={campaignPage === 0} onClick={() => setCampaignPage((page) => Math.max(0, page - 1))}>上一页</button>
+            <span>第 {campaignPage + 1} / {campaignPageCount} 页，共 {campaigns.length} 个任务</span>
+            <button className="secondary-button" disabled={campaignPage >= campaignPageCount - 1} onClick={() => setCampaignPage((page) => Math.min(campaignPageCount - 1, page + 1))}>下一页</button>
+          </div>}
         </section>
       ) : <section className="surface import-source">
         {mode === "html" && (
@@ -718,6 +730,24 @@ export function ImportPage({
         {status && <p className="status-line">{status}</p>}
         {error && <p className="error import-error" role="alert">{error}</p>}
       </section>}
+
+      <section className="saved-section completed-results" aria-labelledby="completed-results-title">
+        <div className="section-heading"><div>
+          <h3 id="completed-results-title">全部采集结果</h3>
+          <p>已成功采集并生成素材的商品，可直接编辑上架。</p>
+        </div></div>
+        {completedJobs.length === 0 ? <div className="empty-state compact-empty"><Clock3 size={24} /><strong>暂时还没有成功结果</strong></div> : (
+          <div className="collection-job-list">
+            {completedJobs.map((job) => <article className="collection-job completed" key={`completed-${job.id}`}>
+              <div className="collection-job-state completed"><CheckCircle2 size={16} /><span>已完成</span></div>
+              <div className="collection-job-copy"><strong>{job.source_product?.title || shortSource(job.source_url)}</strong>
+                <span>#{job.id} · {job.campaign_keyword || "独立采集"} · {job.source_product?.image_count ?? 0} 张图片</span></div>
+              <div className="collection-job-actions">{job.draft_id && <button className="secondary-button" onClick={() => void openDraftEditor(job.draft_id!)}><FilePlus2 size={16} /> 编辑上架</button>}
+                {job.source_product?.primary_image_url && <img className="completed-result-thumb" src={job.source_product.primary_image_url} alt="" />}</div>
+            </article>)}
+          </div>
+        )}
+      </section>
 
       <section className="saved-section" aria-labelledby="collection-queue-title">
         <div className="section-heading">

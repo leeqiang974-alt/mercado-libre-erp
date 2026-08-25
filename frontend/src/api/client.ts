@@ -696,9 +696,10 @@ export async function createCollectionJobsFile(
   return response.json() as Promise<CollectionBatchResult>;
 }
 
-export async function listCollectionJobs(limit = 100, offset = 0, campaignId?: number) {
+export async function listCollectionJobs(limit = 100, offset = 0, campaignId?: number, status?: CollectionJobRecord["status"]) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (campaignId) params.set("campaign_id", String(campaignId));
+  if (status) params.set("status", status);
   const response = await fetch(`${API_BASE}/api/imports/amazon-url/jobs?${params}`);
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<CollectionJobRecord[]>;

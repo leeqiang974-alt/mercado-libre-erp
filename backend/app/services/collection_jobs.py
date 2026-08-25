@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
@@ -45,11 +45,13 @@ def create_collection_jobs(
 
 
 def list_collection_jobs(
-    db: Session, *, limit: int = 100, offset: int = 0, campaign_id: int | None = None
+    db: Session, *, limit: int = 100, offset: int = 0, campaign_id: int | None = None, status: str | None = None
 ) -> list[CollectionJobRead]:
     query = db.query(CollectionJob)
     if campaign_id is not None:
         query = query.filter(CollectionJob.campaign_id == campaign_id)
+    if status is not None:
+        query = query.filter(CollectionJob.status == status)
     rows = (
         query
         .order_by(CollectionJob.id.desc())

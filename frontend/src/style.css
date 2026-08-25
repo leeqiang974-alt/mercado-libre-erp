@@ -697,6 +697,8 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 }
 .collection-job-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .collection-job-actions button { min-width: 82px; }
+.pagination-row { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 16px 0 4px; color: #697586; font-size: 13px; }
+.completed-result-thumb { width: 52px; height: 52px; object-fit: contain; border: 1px solid #d9e0e7; border-radius: 4px; background: #fff; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin { animation: spin 900ms linear infinite; }

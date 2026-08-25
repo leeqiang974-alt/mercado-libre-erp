@@ -1,4 +1,4 @@
-from typing import Annotated
+﻿from typing import Annotated
 from datetime import UTC, datetime
 import re
 from urllib.parse import urlparse
@@ -475,9 +475,10 @@ def get_amazon_url_collection_jobs(
     limit: int = Query(default=100, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     campaign_id: int | None = Query(default=None, ge=1),
+    status: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> list[CollectionJobRead]:
-    return list_collection_jobs(db, limit=limit, offset=offset, campaign_id=campaign_id)
+    return list_collection_jobs(db, limit=limit, offset=offset, campaign_id=campaign_id, status=status)
 
 
 @router.get("/amazon-url/jobs/status", response_model=list[CollectionJobRead])
