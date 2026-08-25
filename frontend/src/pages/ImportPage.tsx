@@ -170,6 +170,8 @@ export function ImportPage({
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | null>(null);
   const [campaignPage, setCampaignPage] = useState(0);
   const [completedJobs, setCompletedJobs] = useState<CollectionJobRecord[]>([]);
+  const [showCompletedResults, setShowCompletedResults] = useState(false);
+  const [completedPage, setCompletedPage] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string>("");
   const [snapshotUrl, setSnapshotUrl] = useState("");
@@ -221,9 +223,9 @@ export function ImportPage({
         .filter((job) => job.status === "pending" || job.status === "running")
         .map((job) => job.id);
       const [jobs, knownStatuses, completed] = await Promise.all([
-        listCollectionJobs(200, 0, selectedCampaignId ?? undefined),
+        selectedCampaignId === null ? Promise.resolve([] as CollectionJobRecord[]) : listCollectionJobs(200, 0, selectedCampaignId),
         listCollectionJobStatuses(knownJobIds),
-        listCollectionJobs(100, 0, undefined, "completed"),
+        showCompletedResults ? listCollectionJobs(20, completedPage * 20, undefined, "completed") : Promise.resolve([] as CollectionJobRecord[]),
       ]);
       if (requestEpoch === collectionRequestEpoch.current) {
         setCollectionJobs(jobs);
@@ -247,7 +249,7 @@ export function ImportPage({
         setError(jobError instanceof Error ? jobError.message : "Failed to load collection jobs");
       }
     }
-  }, [selectedCampaignId]);
+  }, [completedPage, selectedCampaignId, showCompletedResults]);
 
   const refreshCampaigns = useCallback(async () => {
     try { setCampaigns(await listKeywordCampaigns()); } catch { /* API may be migrating */ }
@@ -731,24 +733,6 @@ export function ImportPage({
         {error && <p className="error import-error" role="alert">{error}</p>}
       </section>}
 
-      <section className="saved-section completed-results" aria-labelledby="completed-results-title">
-        <div className="section-heading"><div>
-          <h3 id="completed-results-title">全部采集结果</h3>
-          <p>已成功采集并生成素材的商品，可直接编辑上架。</p>
-        </div></div>
-        {completedJobs.length === 0 ? <div className="empty-state compact-empty"><Clock3 size={24} /><strong>暂时还没有成功结果</strong></div> : (
-          <div className="collection-job-list">
-            {completedJobs.map((job) => <article className="collection-job completed" key={`completed-${job.id}`}>
-              <div className="collection-job-state completed"><CheckCircle2 size={16} /><span>已完成</span></div>
-              <div className="collection-job-copy"><strong>{job.source_product?.title || shortSource(job.source_url)}</strong>
-                <span>#{job.id} · {job.campaign_keyword || "独立采集"} · {job.source_product?.image_count ?? 0} 张图片</span></div>
-              <div className="collection-job-actions">{job.draft_id && <button className="secondary-button" onClick={() => void openDraftEditor(job.draft_id!)}><FilePlus2 size={16} /> 编辑上架</button>}
-                {job.source_product?.primary_image_url && <img className="completed-result-thumb" src={job.source_product.primary_image_url} alt="" />}</div>
-            </article>)}
-          </div>
-        )}
-      </section>
-
       <section className="saved-section" aria-labelledby="collection-queue-title">
         <div className="section-heading">
           <div>
@@ -1003,6 +987,21 @@ export function ImportPage({
             })}
           </div>
         )}
+      </section>
+
+      <section className={`saved-section completed-results ${showCompletedResults ? "expanded" : "collapsed"}`} aria-labelledby="completed-results-title">
+        <div className="section-heading"><div>
+          <h3 id="completed-results-title">全部采集结果</h3>
+          <p>{showCompletedResults ? "已成功采集并生成素材的商品，可直接编辑上架。" : "默认收起，按需查看所有已完成商品。"}</p>
+        </div><button className="secondary-button" onClick={() => { setShowCompletedResults((value) => !value); setCompletedPage(0); }}>{showCompletedResults ? "收起结果" : "查看已完成结果"}</button></div>
+        {showCompletedResults && (completedJobs.length === 0 ? <div className="empty-state compact-empty"><Clock3 size={24} /><strong>暂时还没有成功结果</strong></div> : <>
+          <div className="collection-job-list">{completedJobs.map((job) => <article className="collection-job completed" key={`completed-${job.id}`}>
+            <div className="collection-job-state completed"><CheckCircle2 size={16} /><span>已完成</span></div>
+            <div className="collection-job-copy"><strong>{job.source_product?.title || shortSource(job.source_url)}</strong><span>#{job.id} · {job.campaign_keyword || "独立采集"} · {job.source_product?.image_count ?? 0} 张图片</span></div>
+            <div className="collection-job-actions">{job.draft_id && <button className="secondary-button" onClick={() => void openDraftEditor(job.draft_id!)}><FilePlus2 size={16} /> 编辑上架</button>}{job.source_product?.primary_image_url && <img className="completed-result-thumb" src={job.source_product.primary_image_url} alt="" />}</div>
+          </article>)}</div>
+          <div className="pagination-row"><button className="secondary-button" disabled={completedPage === 0} onClick={() => setCompletedPage((page) => Math.max(0, page - 1))}>上一页</button><span>第 {completedPage + 1} 页</span><button className="secondary-button" disabled={completedJobs.length < 20} onClick={() => setCompletedPage((page) => page + 1)}>下一页</button></div>
+        </>)}
       </section>
     </section>
   );
