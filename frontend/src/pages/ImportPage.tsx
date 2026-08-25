@@ -252,7 +252,12 @@ export function ImportPage({
   async function refreshTaskDashboard() {
     setIsRefreshing(true);
     try {
-      await Promise.all([refreshCollectionJobs(false), refreshCampaigns()]);
+      // 任务总览只取轻量的关键词进度；商品明细只在查看某个任务结果时加载。
+      if (initialMode === "campaign" && selectedCampaignId === null) {
+        await refreshCampaigns();
+      } else {
+        await Promise.all([refreshCollectionJobs(false), refreshCampaigns()]);
+      }
       setLastRefreshedAt(new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
     } finally { setIsRefreshing(false); }
   }
@@ -260,8 +265,11 @@ export function ImportPage({
     let cancelled = false;
     let timer = 0;
     async function poll() {
-      await refreshCollectionJobs(false);
-      await refreshCampaigns();
+      if (initialMode === "campaign" && selectedCampaignId === null) {
+        await refreshCampaigns();
+      } else {
+        await Promise.all([refreshCollectionJobs(false), refreshCampaigns()]);
+      }
       if (!cancelled) {
         timer = window.setTimeout(() => void poll(), 5000);
       }
@@ -271,7 +279,7 @@ export function ImportPage({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [refreshCollectionJobs, refreshCampaigns]);
+  }, [initialMode, refreshCollectionJobs, refreshCampaigns, selectedCampaignId]);
 
   async function runUrlCollection() {
     // Every collection goes through a persisted job so a blocked Amazon page has
