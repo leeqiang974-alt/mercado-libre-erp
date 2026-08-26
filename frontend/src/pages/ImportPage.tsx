@@ -185,6 +185,7 @@ export function ImportPage({
   const [importFile, setImportFile] = useState<File | null>(null);
   const [batchResult, setBatchResult] = useState<CollectionBatchResult | null>(null);
   const [collectionJobs, setCollectionJobs] = useState<CollectionJobRecord[]>([]);
+  const [isLoadingCollectionResults, setIsLoadingCollectionResults] = useState(false);
   const [busyAction, setBusyAction] = useState("");
   const [error, setError] = useState("");
   const [sourceDetails, setSourceDetails] = useState<Record<number, SourceProductRecord>>({});
@@ -220,6 +221,7 @@ export function ImportPage({
 
   const refreshCollectionJobs = useCallback(async (showError = true) => {
     const requestEpoch = ++collectionRequestEpoch.current;
+    if (selectedCampaignId !== null) setIsLoadingCollectionResults(true);
     try {
       const knownJobIds = Object.values(knownVariantJobsRef.current)
         .filter((job) => job.status === "pending" || job.status === "running")
@@ -249,6 +251,10 @@ export function ImportPage({
     } catch (jobError) {
       if (showError && requestEpoch === collectionRequestEpoch.current) {
         setError(jobError instanceof Error ? jobError.message : "Failed to load collection jobs");
+      }
+    } finally {
+      if (requestEpoch === collectionRequestEpoch.current && selectedCampaignId !== null) {
+        setIsLoadingCollectionResults(false);
       }
     }
   }, [collectionResultPage, completedPage, selectedCampaignId, showCompletedResults]);
@@ -487,13 +493,12 @@ export function ImportPage({
   }
 
   const isBusy = Boolean(busyAction);
-  const displayedCollectionJobs = Array.from(
-    new Map(
-      [...Object.values(knownVariantJobs), ...collectionJobs]
-        .filter((job) => selectedCampaignId === null || job.campaign_id === selectedCampaignId)
-        .map((job) => [job.id, job]),
-    ).values(),
-  ).sort((left, right) => right.id - left.id);
+  // A selected campaign is a server-paginated result view. Do not merge the
+  // cached variant snapshot into it, or one page can silently grow past 20 rows.
+  const displayedCollectionJobs = selectedCampaignId !== null
+    ? collectionJobs
+    : Array.from(new Map(Object.values(knownVariantJobs).map((job) => [job.id, job])).values())
+      .sort((left, right) => right.id - left.id);
   const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId);
   const campaignPageSize = 10;
   const campaignPageCount = Math.max(1, Math.ceil(campaigns.length / campaignPageSize));
@@ -745,7 +750,9 @@ export function ImportPage({
           </div>
         </div>
 
-        {displayedCollectionJobs.length === 0 ? (
+        {isLoadingCollectionResults ? (
+          <div className="empty-state compact-empty"><LoaderCircle className="spin" size={24} /><strong>正在加载当前页结果</strong></div>
+        ) : displayedCollectionJobs.length === 0 ? (
           <div className="empty-state compact-empty">
             <Clock3 size={24} />
             <strong>暂无采集任务</strong>

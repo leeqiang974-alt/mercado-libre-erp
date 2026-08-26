@@ -66,6 +66,8 @@
 
 ## Verification
 
+- 线上 UI 修改必须在真实运行页面完成关键点击路径验收。构建成功、接口返回或部署命令成功都不等于完成；必须核对可见 DOM、分页/筛选结果和关键交互，发现点击路径超时或状态不一致时继续修复。
+
 - Backend unit tests and frontend builds are necessary but not sufficient.
 - Verify the main workflow in the running browser at desktop and mobile sizes.
 - Record what was tested with real integrations, what used fixtures, and what remains blocked by missing credentials.
