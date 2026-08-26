@@ -29,6 +29,7 @@ import {
   generateDraftContent,
   getLatestBehavioralReview,
   getSystemReadiness,
+  deleteDraft,
   listDrafts,
   listReviewJobs,
   listReviewHistory,
@@ -699,6 +700,18 @@ export function DraftsPage({
     onSelectDraft(savedDraft);
   }
 
+  async function removeSavedDraft(event: React.MouseEvent, item: ProductDraftRead) {
+    event.stopPropagation();
+    if (["published", "pending", "validating"].includes(item.publication_status || "")) return;
+    if (!window.confirm(`确定删除“${item.title || "未命名商品"}”吗？`)) return;
+    try {
+      await deleteDraft(item.id);
+      setSavedDrafts((current) => current.filter((draftItem) => draftItem.id !== item.id));
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "删除商品失败");
+    }
+  }
+
   // The listing library is also the entrypoint.  Do not render a blank page
   // when the URL is simply #drafts: the operator must always be able to pick
   // a product from the left rail.
@@ -711,6 +724,7 @@ export function DraftsPage({
           <div className="draft-rail-list">
             {savedDrafts.map((item) => (
               <button className="draft-rail-item" key={item.id} onClick={() => selectSavedDraft(item)}>
+                {!['published', 'pending', 'validating'].includes(item.publication_status || '') && <span className="draft-delete-wrap"><span className="draft-delete-icon" aria-hidden="true">×</span><span className="draft-delete-tooltip">删除商品</span><span role="button" tabIndex={0} className="draft-delete-hit" aria-label={`删除 ${item.title || "未命名商品"}`} onClick={(event) => void removeSavedDraft(event, item)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") void removeSavedDraft(event as unknown as React.MouseEvent, item); }} /></span>}
                 <ProductImage src={item.image_urls[0]} alt="" />
                 <span>
                   <strong>{item.title || "未命名商品"}</strong>

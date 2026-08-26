@@ -811,6 +811,7 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .drafts-sidebar-heading span { color: #697586; font-size: 12px; }
 .draft-rail-list { display: grid; gap: 6px; max-height: calc(100vh - 160px); overflow-y: auto; }
 .draft-rail-item {
+  position: relative;
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);
   gap: 9px;
@@ -822,6 +823,12 @@ input[readonly] { background: #eef1f4; color: #52606d; }
   color: #1f2933;
   text-align: left;
 }
+.draft-delete-wrap { position: absolute; top: 5px; right: 5px; z-index: 2; display: none; }
+.draft-rail-item:hover .draft-delete-wrap { display: block; }
+.draft-delete-icon { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: #dc2626; color: #111827; font-size: 18px; font-weight: 900; line-height: 16px; pointer-events: none; }
+.draft-delete-hit { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.draft-delete-tooltip { position: absolute; right: 24px; top: -2px; display: none; white-space: nowrap; padding: 4px 7px; border-radius: 4px; background: #111827; color: #fff; font-size: 11px; pointer-events: none; }
+.draft-delete-wrap:hover .draft-delete-tooltip { display: block; }
 .draft-rail-item:hover { background: #fff7ed; border-color: #fed7aa; }
 .draft-rail-item.selected { background: #fff7ed; border-color: #ea580c; box-shadow: inset 3px 0 #ea580c; }
 .draft-rail-item .product-image { width: 44px; height: 44px; object-fit: contain; background: #fafaf9; }

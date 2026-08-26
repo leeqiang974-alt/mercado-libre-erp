@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -78,6 +78,28 @@ def read_draft(
     if draft is None:
         raise HTTPException(status_code=404, detail="Product draft not found.")
     return to_draft_read(draft)
+
+
+@router.delete("/{product_draft_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_draft(product_draft_id: int, db: Session = Depends(get_db)) -> Response:
+    draft = db.get(ProductDraft, product_draft_id)
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Product draft not found.")
+    active_publish = db.scalar(
+        select(PublishJob).where(
+            PublishJob.product_draft_id == product_draft_id,
+            PublishJob.status.in_([
+                PublishJobStatus.PENDING,
+                PublishJobStatus.VALIDATING,
+                PublishJobStatus.PUBLISHED,
+            ]),
+        ).limit(1)
+    )
+    if active_publish is not None:
+        raise HTTPException(status_code=409, detail="published_or_active_draft_cannot_be_deleted")
+    db.delete(draft)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.put("/{product_draft_id}/content", response_model=ProductDraftRead)

@@ -922,6 +922,11 @@ export async function getDraft(productDraftId: number) {
   return response.json() as Promise<ProductDraftRead>;
 }
 
+export async function deleteDraft(productDraftId: number) {
+  const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}`, { method: "DELETE" });
+  if (!response.ok) throw new Error(await response.text());
+}
+
 export async function saveDraftContent(productDraftId: number, payload: DraftContentUpdate) {
   const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/content`, {
     method: "PUT",
