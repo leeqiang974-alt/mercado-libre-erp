@@ -489,6 +489,7 @@ export type KeywordCampaign = {
   id: number; name: string; domain: string; target_site_id: string; keyword_count: number;
   pages_per_keyword: number; status: string; current_keyword: string | null; current_page: number;
   discovered_count: number; queued_count: number; duplicate_count: number; message: string;
+  keywords: Array<{ keyword: string; discovered: number; processed: number; completed: number; running: number; pending: number; failed: number; needs_manual_action: number; status: string }>;
 };
 
 export type AmazonSourceVariant = {

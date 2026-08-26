@@ -111,15 +111,45 @@ class KeywordCampaignRead(BaseModel):
     queued_count: int
     duplicate_count: int
     message: str
+    keywords: list[dict[str, int | str]] = []
 
 
-def _campaign_read(row: KeywordCollectionCampaign) -> KeywordCampaignRead:
+def _campaign_read(row: KeywordCollectionCampaign, db: Session) -> KeywordCampaignRead:
     keywords = row.keywords_json or []
     current = keywords[row.current_keyword_index] if row.current_keyword_index < len(keywords) else None
+    progress_rows = (
+        db.query(CollectionJob.campaign_keyword, CollectionJob.status, func.count(CollectionJob.id))
+        .filter(CollectionJob.campaign_id == row.id)
+        .group_by(CollectionJob.campaign_keyword, CollectionJob.status)
+        .all()
+    )
+    progress: dict[str, dict[str, int | str]] = {
+        keyword: {
+            "keyword": keyword,
+            "discovered": 0,
+            "completed": 0,
+            "running": 0,
+            "pending": 0,
+            "failed": 0,
+            "needs_manual_action": 0,
+        }
+        for keyword in keywords
+    }
+    for keyword, status, count in progress_rows:
+        if not keyword:
+            continue
+        item = progress.setdefault(keyword, {"keyword": keyword, "discovered": 0, "completed": 0, "running": 0, "pending": 0, "failed": 0, "needs_manual_action": 0})
+        item["discovered"] = int(item["discovered"]) + int(count)
+        if status in item:
+            item[status] = int(item[status]) + int(count)
+    for item in progress.values():
+        item["processed"] = int(item["completed"]) + int(item["failed"]) + int(item["needs_manual_action"])
+        item["status"] = "处理中" if int(item["running"]) else ("待处理" if int(item["pending"]) else ("已完成" if int(item["processed"]) else "未发现结果"))
     return KeywordCampaignRead(id=row.id, name=row.name, domain=row.domain, target_site_id=row.target_site_id,
         keyword_count=len(keywords), pages_per_keyword=row.pages_per_keyword, status=row.status,
         current_keyword=current, current_page=row.current_page, discovered_count=row.discovered_count,
-        queued_count=row.queued_count, duplicate_count=row.duplicate_count, message=row.message)
+        queued_count=row.queued_count, duplicate_count=row.duplicate_count, message=row.message,
+        keywords=list(progress.values()))
 
 
 @router.post("/amazon-html")
@@ -358,12 +388,12 @@ def create_keyword_campaign(payload: KeywordCampaignCreate, db: Session = Depend
         status=KeywordCampaignStatus.PENDING.value, message="等待后台按关键词发现商品。")
     db.add(row)
     db.commit(); db.refresh(row)
-    return _campaign_read(row)
+    return _campaign_read(row, db)
 
 
 @router.get("/amazon-search/campaigns", response_model=list[KeywordCampaignRead])
 def list_keyword_campaigns(db: Session = Depends(get_db)) -> list[KeywordCampaignRead]:
-    return [_campaign_read(row) for row in db.query(KeywordCollectionCampaign).order_by(KeywordCollectionCampaign.id.desc()).limit(30).all()]
+    return [_campaign_read(row, db) for row in db.query(KeywordCollectionCampaign).order_by(KeywordCollectionCampaign.id.desc()).limit(30).all()]
 
 
 @router.post("/amazon-url/jobs/file", response_model=CollectionBatchRead)

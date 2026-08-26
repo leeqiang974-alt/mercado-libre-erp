@@ -169,6 +169,7 @@ export function ImportPage({
   const [campaigns, setCampaigns] = useState<KeywordCampaign[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | null>(null);
   const [campaignPage, setCampaignPage] = useState(0);
+  const [keywordPage, setKeywordPage] = useState(0);
   const [completedJobs, setCompletedJobs] = useState<CollectionJobRecord[]>([]);
   const [showCompletedResults, setShowCompletedResults] = useState(false);
   const [completedPage, setCompletedPage] = useState(0);
@@ -538,10 +539,12 @@ export function ImportPage({
           {campaigns.length === 0 ? <div className="empty-state compact-empty"><Clock3 size={24} /><strong>暂无关键词采集任务</strong></div> : visibleCampaigns.map((campaign) => (
             <article className="campaign-task-card" key={campaign.id}>
               <div><strong>{campaign.name}</strong><span className={`campaign-status ${campaign.status}`}>{campaign.status === "running" ? "运行中" : campaign.status === "paused" ? "已暂停" : campaign.status === "completed" ? "已完成" : "等待中"}</span></div>
-              <p>当前：{campaign.current_keyword || "全部关键词已发现"} · 第 {campaign.current_page}/{campaign.pages_per_keyword} 页 · 共 {campaign.keyword_count} 个关键词</p>
-              <div className="campaign-metrics"><span>发现 <b>{campaign.discovered_count}</b></span><span>已入队 <b>{campaign.queued_count}</b></span><span>已去重 <b>{campaign.duplicate_count}</b></span></div>
+              <p>当前关键词：<b>{campaign.current_keyword || "全部关键词已发现"}</b> · 第 {campaign.current_page}/{campaign.pages_per_keyword} 页</p>
+              {(() => { const processed = campaign.keywords.filter((item) => item.processed > 0).length; const running = campaign.keywords.filter((item) => item.running > 0).length; const pending = campaign.keywords.filter((item) => item.pending > 0).length; return <div className="campaign-metrics"><span>总关键词 <b>{campaign.keyword_count}</b></span><span>已处理 <b>{processed}</b></span><span>处理中 <b>{running}</b></span><span>待处理 <b>{pending}</b></span><span>发现商品 <b>{campaign.discovered_count}</b></span></div>; })()}
               <small>{campaign.message}</small>
               <div className="button-row"><button className="secondary-button" onClick={() => setSelectedCampaignId(selectedCampaignId === campaign.id ? null : campaign.id)}>{selectedCampaignId === campaign.id ? "查看全部采集任务" : "查看此关键词任务结果"}</button></div>
+              <div className="keyword-progress-table"><div className="keyword-progress-head"><span>关键词</span><span>状态</span><span>已处理</span><span>待处理</span><span>商品</span></div>{campaign.keywords.slice(keywordPage * 10, keywordPage * 10 + 10).map((item) => <button className="keyword-progress-row" key={item.keyword} onClick={() => setSelectedCampaignId(campaign.id)}><strong>{item.keyword}</strong><span>{item.status}</span><span>{item.processed}</span><span>{item.pending}</span><span>{item.discovered}</span></button>)}</div>
+              {campaign.keywords.length > 10 && <div className="pagination-row"><button className="secondary-button" disabled={keywordPage === 0} onClick={() => setKeywordPage((page) => Math.max(0, page - 1))}>上一页关键词</button><span>第 {keywordPage + 1} / {Math.ceil(campaign.keywords.length / 10)} 页</span><button className="secondary-button" disabled={keywordPage >= Math.ceil(campaign.keywords.length / 10) - 1} onClick={() => setKeywordPage((page) => Math.min(Math.ceil(campaign.keywords.length / 10) - 1, page + 1))}>下一页关键词</button></div>}
             </article>
           ))}
           {campaignPageCount > 1 && <div className="pagination-row">

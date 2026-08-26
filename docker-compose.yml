@@ -85,7 +85,7 @@ services:
       - ./data/amazon-browser:/data/amazon-browser
     command: >-
       sh -c 'exec xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24 -nolisten tcp"
-      python -m app.worker --queue collection --loop --interval 30 --limit 10'
+      python -m app.worker --queue collection --loop --interval 8 --limit 1'
     restart: unless-stopped
 
   publish_worker:
