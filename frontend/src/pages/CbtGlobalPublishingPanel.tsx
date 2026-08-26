@@ -216,7 +216,7 @@ export function CbtGlobalPublishingPanel({
   const [imageZoom, setImageZoom] = useState(1);
   const offersInitializedRef = useRef(false);
 
-  const cbtStores = stores.filter((store) => store.site_id === "CBT" && store.oauth_status === "connected");
+  const cbtStores = stores.filter((store) => store.site_id === "CBT" && store.oauth_status === "connected" && store.is_enabled);
   const remoteMarkets = useMemo(
     () => (profile ? remoteMarketsForProfile(profile) : []),
     [profile],
@@ -619,7 +619,7 @@ export function CbtGlobalPublishingPanel({
       <main className="wf-editor-main">
       <section id="store-category" className="surface wf-section">
         <div className="wf-section-title"><span>1</span><div><h3>店铺和类目</h3><p>先确认跨境店和最底层 CBT 分类，确认后才加载官方属性。</p></div><button className="icon-button" title="刷新店铺能力" disabled={!storeId || busy === "profile"} onClick={() => setProfileReloadKey((value) => value + 1)}><RefreshCw size={17} /></button></div>
-        <div className="wf-form-row"><label>店铺 *<select value={storeId} onChange={(event) => { setStoreId(event.target.value); setOffers([]); setHasSavedConfig(false); offersInitializedRef.current = false; setPreview(null); }}><option value="">选择 CBT 店铺</option>{cbtStores.map((store) => <option key={store.id} value={store.id}>{store.display_name} · 卖家 {store.seller_id}</option>)}</select></label>
+        <div className="wf-form-row"><label>上架店铺 *<select value={storeId} onChange={(event) => { setStoreId(event.target.value); setOffers([]); setHasSavedConfig(false); offersInitializedRef.current = false; setPreview(null); }}><option value="">选择已启用的 CBT 店铺</option>{cbtStores.map((store) => <option key={store.id} value={store.id}>{store.display_name} · 卖家 {store.seller_id}</option>)}</select><small>商品、授权令牌、发布记录和限流将按此店铺独立执行。</small></label>
           <div className="wf-sites"><strong>同时发布到站点</strong><label><input type="checkbox" checked={allRemoteSelected} disabled={profile?.model !== "traditional_global" || remoteMarkets.length === 0} onChange={toggleAllRemoteMarkets} /> 全选</label>{remoteMarkets.map((market) => <label key={market.site_id}><input type="checkbox" checked={offers.some((offer) => offer.site_id === market.site_id)} onChange={() => toggleMarket(market.site_id)} /> {MARKET_NAMES[market.site_id]}</label>)}<label className="is-disabled"><input type="checkbox" disabled /> 墨西哥（FULL）</label></div></div>
         {profile && <p className="section-note">卖家 {profile.seller_id} · {profile.model === "traditional_global" ? "传统 Global Selling" : "User Products"}。Remote 站点默认全部勾选；墨西哥 FULL 由独立流程处理。</p>}
         <div className="wf-category-line"><label>商品英文标题<small>系统默认用此标题智能匹配；需要时可修改关键词。</small><input value={categorySearchQuery} placeholder="例如 silicone muffin pan" onChange={(event) => setCategorySearchQuery(event.target.value)} /></label><button onClick={predictCategory} disabled={busy === "category"}><Search size={16} /> 一键智能匹配</button><button className="secondary-button" onClick={loadAttributes} disabled={!categoryId.startsWith("CBT") || busy === "attributes"}><ListChecks size={16} /> 确认分类</button></div><label>已选最终 CBT 分类 *<input readOnly value={categoryId} placeholder="先点击“一键智能匹配”，从推荐中选一个即可" /></label>

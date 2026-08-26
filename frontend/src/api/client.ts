@@ -171,6 +171,7 @@ export type StoreRecord = {
   seller_id: string;
   display_name: string;
   oauth_status: string;
+  is_enabled: boolean;
 };
 
 export type CbtMarketplace = {
@@ -995,6 +996,14 @@ export async function listStores() {
     throw new Error("店铺接口返回了无法识别的数据格式");
   }
   return payload as StoreRecord[];
+}
+
+export async function updateStore(storeId: number, payload: { display_name?: string; is_enabled?: boolean }) {
+  const response = await fetch(`${API_BASE}/api/stores/${storeId}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<StoreRecord>;
 }
 
 export async function getStoreShippingOptions(storeId: number) {

@@ -557,9 +557,14 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .diagnostic-result-row small { text-align: right; color: #697586; }
 .diagnostic-checked-at { color: #697586; display: block; margin-top: 6px; text-align: right; }
 .store-list { border: 1px solid #dde3ea; background: white; }
-.store-row { display: grid; grid-template-columns: 38px minmax(0, 1fr) 90px 120px; gap: 12px; align-items: center; padding: 14px 16px; border-bottom: 1px solid #e4e8ed; }
+.store-row { display: grid; grid-template-columns: 38px minmax(160px, 1fr) 70px 92px auto; gap: 12px; align-items: center; padding: 14px 16px; border-bottom: 1px solid #e4e8ed; }
 .store-row:last-child { border-bottom: 0; }
 .store-row p { margin: 3px 0 0; color: #697586; font-size: 12px; }
+.store-row.disabled { background: #f8fafc; opacity: .72; }
+.connection-status.disabled { color: #64748b; background: #e2e8f0; }
+.store-row-actions, .store-alias-editor { display: flex; gap: 6px; align-items: center; }
+.store-alias-editor input { min-width: 160px; height: 30px; padding: 4px 7px; font-size: 13px; }
+.store-operations-heading { margin-top: 32px; }
 .store-mark { width: 34px; height: 34px; display: grid; place-items: center; background: #eef5ff; color: #175cd3; }
 .store-site { display: grid; gap: 2px; }
 .store-site span { color: #697586; font-size: 11px; }
@@ -722,6 +727,7 @@ input[readonly] { background: #eef1f4; color: #52606d; }
   .page-actions select { width: 100%; min-width: 0; }
   .page-actions button { flex: 1; }
   .store-row { grid-template-columns: 38px minmax(0, 1fr); }
+  .store-row > :nth-child(n+3) { grid-column: 2; }
   .store-site, .connection-status { grid-column: 2; }
   .import-mode-switch { width: 100%; box-sizing: border-box; }
   .batch-options { align-items: flex-start; flex-direction: column; gap: 8px; }

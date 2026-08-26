@@ -36,7 +36,7 @@ def upsert_cbt_listing_config(
     store = db.get(Store, payload.store_id)
     if store is None:
         raise HTTPException(status_code=404, detail="Store not found.")
-    if store.oauth_status != "connected" or store.site_id.strip().upper() != "CBT":
+    if not store.is_enabled or store.oauth_status != "connected" or store.site_id.strip().upper() != "CBT":
         raise HTTPException(status_code=422, detail="A connected CBT Global Selling store is required.")
 
     config = (

@@ -9,6 +9,7 @@ import {
   runIntegrationDiagnostics,
   saveIntegrationCredentials,
   saveProviderModelPrice,
+  updateStore,
   type IntegrationDiagnosticResult,
   type IntegrationDiagnostics,
   type IntegrationCredentialStatus,
@@ -23,6 +24,9 @@ export function StoresPage() {
   const [stores, setStores] = useState<StoreRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [authorizationSiteId, setAuthorizationSiteId] = useState("MLM");
+  const [editingStoreId, setEditingStoreId] = useState<string | null>(null);
+  const [storeAlias, setStoreAlias] = useState("");
+  const [savingStoreId, setSavingStoreId] = useState<string | null>(null);
   const [credentialStatus, setCredentialStatus] = useState<IntegrationCredentialStatus | null>(null);
   const [credentials, setCredentials] = useState({
     meli_client_id: "",
@@ -130,13 +134,25 @@ export function StoresPage() {
   }
 
   async function startAuthorization() {
-    setStatus("Preparing authorization link");
+    setStatus("正在打开美客多授权页面，请在新页面登录要绑定的卖家账号。");
     try {
       const result = await getMeliAuthorizationUrl(authorizationSiteId);
       window.location.assign(result.authorization_url);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Authorization failed");
     }
+  }
+
+  async function saveStore(store: StoreRecord, payload: { display_name?: string; is_enabled?: boolean }) {
+    setSavingStoreId(store.id); setStatus("");
+    try {
+      const updated = await updateStore(Number(store.id), payload);
+      setStores((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setEditingStoreId(null);
+      setStatus(payload.is_enabled === false ? "店铺已停用，不会出现在上架店铺选择中。" : "店铺设置已保存。");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "保存店铺设置失败");
+    } finally { setSavingStoreId(null); }
   }
 
   async function diagnoseConnections() {
@@ -211,12 +227,12 @@ export function StoresPage() {
     <section className="workspace">
       <header className="page-header">
         <div>
-          <span className="eyebrow">Account connections</span>
-          <h2>Authorized stores</h2>
-          <p>Connect each Mercado Libre seller account before publishing.</p>
+          <span className="eyebrow">多店铺运营</span>
+          <h2>店铺管理</h2>
+          <p>每个卖家账号独立授权、独立限流；上架时选择具体店铺。</p>
         </div>
         <div className="page-actions">
-          <label>Authorization site
+          <label>新店铺站点
             <select
               value={authorizationSiteId}
               onChange={(event) => setAuthorizationSiteId(event.target.value)}
@@ -227,10 +243,10 @@ export function StoresPage() {
             </select>
           </label>
           <button className="secondary-button icon-text" onClick={() => void refreshStores()} disabled={loading}>
-            <RefreshCw size={16} /> Refresh
+            <RefreshCw size={16} /> 刷新
           </button>
           <button className="icon-text" onClick={startAuthorization} disabled={loading || !credentialStatus?.meli_client_id_configured || !credentialStatus?.meli_client_secret_configured}>
-            <Link2 size={16} /> Connect store
+            <Link2 size={16} /> 绑定新店铺
           </button>
         </div>
       </header>
@@ -348,35 +364,35 @@ export function StoresPage() {
         </div>
       </section>
 
-      <div className="section-heading">
+      <div className="section-heading store-operations-heading">
         <div>
-          <h3>Seller accounts</h3>
-          <p>{stores.length} connected</p>
+          <h3>已绑定店铺</h3>
+          <p>共 {stores.length} 个 · 已启用 {stores.filter((store) => store.is_enabled).length} 个</p>
         </div>
       </div>
 
-      {loading && <div className="empty-state">Loading stores...</div>}
+      {loading && <div className="empty-state">正在加载店铺…</div>}
       {!loading && stores.length === 0 && (
         <div className="empty-state">
           <StoreIcon size={28} />
-          <strong>No stores connected</strong>
-          <p>Use Connect store to authorize a seller account.</p>
+          <strong>还没有绑定店铺</strong>
+          <p>选择站点后点击“绑定新店铺”，在美客多登录并授权卖家账号。</p>
         </div>
       )}
       {!loading && stores.length > 0 && (
         <div className="store-list">
           {stores.map((store) => (
-            <article className="store-row" key={store.id}>
+            <article className={`store-row ${store.is_enabled ? "" : "disabled"}`} key={store.id}>
               <div className="store-mark"><StoreIcon size={18} /></div>
               <div>
-                <strong>{store.display_name}</strong>
-                <p>Seller {store.seller_id}</p>
+                {editingStoreId === store.id ? <div className="store-alias-editor"><input autoFocus value={storeAlias} onChange={(event) => setStoreAlias(event.target.value)} /><button className="tiny-button" disabled={savingStoreId === store.id || !storeAlias.trim()} onClick={() => void saveStore(store, { display_name: storeAlias.trim() })}>保存</button></div> : <><strong>{store.display_name}</strong><p>卖家 ID：{store.seller_id}</p></>}
               </div>
               <div className="store-site">
-                <span>Site</span>
+                <span>站点</span>
                 <strong>{store.site_id}</strong>
               </div>
-              <span className="connection-status"><CheckCircle2 size={15} /> Connected</span>
+              <span className={`connection-status ${store.is_enabled ? "" : "disabled"}`}><CheckCircle2 size={15} /> {store.is_enabled ? "已启用" : "已停用"}</span>
+              <div className="store-row-actions"><button className="tiny-button" onClick={() => { setEditingStoreId(store.id); setStoreAlias(store.display_name); }}>改名称</button><button className="tiny-button" disabled={savingStoreId === store.id} onClick={() => void saveStore(store, { is_enabled: !store.is_enabled })}>{store.is_enabled ? "停用" : "启用"}</button></div>
             </article>
           ))}
         </div>

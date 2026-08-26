@@ -3,6 +3,7 @@ from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -31,6 +32,11 @@ from app.services.meli.category_i18n import add_category_translations, translate
 
 router = APIRouter(prefix="/api/stores", tags=["stores"])
 settings = get_settings()
+
+
+class StoreOperationsUpdate(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=200)
+    is_enabled: bool | None = None
 
 
 def create_oauth_client(db: Session) -> MercadoLibreOAuthClient:
@@ -150,7 +156,7 @@ async def meli_callback(
 
 
 @router.get("")
-def list_stores(db: Session = Depends(get_db)) -> list[dict[str, str]]:
+def list_stores(db: Session = Depends(get_db)) -> list[dict[str, object]]:
     return [
         {
             "id": str(store.id),
@@ -158,9 +164,23 @@ def list_stores(db: Session = Depends(get_db)) -> list[dict[str, str]]:
             "seller_id": store.seller_id,
             "display_name": store.display_name,
             "oauth_status": store.oauth_status,
+            "is_enabled": store.is_enabled,
         }
         for store in db.query(Store).order_by(Store.id.desc()).all()
     ]
+
+
+@router.patch("/{store_id}")
+def update_store_operations(store_id: int, payload: StoreOperationsUpdate, db: Session = Depends(get_db)) -> dict[str, object]:
+    store = db.get(Store, store_id)
+    if store is None:
+        raise HTTPException(status_code=404, detail="Store not found.")
+    if payload.display_name is not None:
+        store.display_name = " ".join(payload.display_name.split())
+    if payload.is_enabled is not None:
+        store.is_enabled = payload.is_enabled
+    db.commit()
+    return {"id": str(store.id), "site_id": store.site_id, "seller_id": store.seller_id, "display_name": store.display_name, "oauth_status": store.oauth_status, "is_enabled": store.is_enabled}
 
 
 @router.get("/{store_id}/cbt-publishing-profile")

@@ -26,6 +26,7 @@ const HASH_PAGE_ALIASES: Record<string, string> = {
   products: "products",
   "store-products": "products",
   "collection-tasks": "collection-tasks",
+  stores: "stores",
   publishing: "publishing",
 };
 
