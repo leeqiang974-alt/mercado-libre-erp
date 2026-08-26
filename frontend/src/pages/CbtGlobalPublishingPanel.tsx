@@ -21,6 +21,7 @@ import {
   getDraftPricing,
   executeCbtPublishFromDraft,
   getSystemReadiness,
+  deleteDraft,
   listDrafts,
   listStores,
   mirrorDraftImagesToOss,
@@ -264,6 +265,19 @@ export function CbtGlobalPublishingPanel({
   useEffect(() => {
     listDrafts().then(setListingRail).catch(() => undefined);
   }, [draftId]);
+
+  async function removeListingDraft(event: { stopPropagation: () => void }, item: ProductDraftRead) {
+    event.stopPropagation();
+    if (["published", "pending", "validating"].includes(item.publication_status || "")) return;
+    if (!window.confirm(`确定删除“${item.title || "未命名商品"}”吗？`)) return;
+    try {
+      await deleteDraft(item.id);
+      setListingRail((current) => current.filter((draftItem) => draftItem.id !== item.id));
+      if (item.id === draftId) window.location.href = "/#drafts";
+    } catch (deleteError) {
+      setStatus(deleteError instanceof Error ? deleteError.message : "删除商品失败");
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -598,7 +612,9 @@ export function CbtGlobalPublishingPanel({
       <aside className="drafts-sidebar surface wf-listing-rail">
         <div className="drafts-sidebar-heading"><h3>上架库</h3><span>{listingRail.length} 个</span></div>
         <p className="section-note">选择商品后，在右侧完成分类、素材、售价和站点配置。</p>
-        <div className="draft-rail-list">{listingRail.map((item) => <button className={`draft-rail-item ${item.id === draftId ? "selected" : ""}`} key={item.id} onClick={() => { window.location.href = `/?draft_id=${item.id}#drafts`; }}><img className="product-image" src={item.image_urls[0] || ""} alt="" /><span><strong>{item.title || "未命名商品"}</strong><small>#{item.id} · {item.target_site_id}</small><small>{item.publication_status === "published" ? `已发布：${item.published_sites.join("、") || "CBT"}` : item.publication_status === "pending" || item.publication_status === "validating" ? "发布中" : item.publication_status === "failed" || item.publication_status === "blocked" ? "发布失败，可修改后重试" : "未发布"}</small></span></button>)}</div>
+        <div className="draft-rail-list">{listingRail.map((item) => <button className={`draft-rail-item ${item.id === draftId ? "selected" : ""}`} key={item.id} onClick={() => { window.location.href = `/?draft_id=${item.id}#drafts`; }}>
+          {!['published', 'pending', 'validating'].includes(item.publication_status || '') && <span className="draft-delete-wrap"><span className="draft-delete-icon" aria-hidden="true">×</span><span className="draft-delete-tooltip">删除商品</span><span role="button" tabIndex={0} className="draft-delete-hit" aria-label={`删除 ${item.title || "未命名商品"}`} onClick={(event) => void removeListingDraft(event, item)} /></span>}
+          <img className="product-image" src={item.image_urls[0] || ""} alt="" /><span><strong>{item.title || "未命名商品"}</strong><small>#{item.id} · {item.target_site_id}</small><small>{item.publication_status === "published" ? `已发布：${item.published_sites.join("、") || "CBT"}` : item.publication_status === "pending" || item.publication_status === "validating" ? "发布中" : item.publication_status === "failed" || item.publication_status === "blocked" ? "发布失败，可修改后重试" : "未发布"}</small></span></button>)}</div>
       </aside>
       <main className="wf-editor-main">
       <section id="store-category" className="surface wf-section">
