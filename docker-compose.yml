@@ -74,7 +74,9 @@ services:
       DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
       AMAZON_BROWSER_PROFILE_DIR: /data/amazon-browser/worker
-      AMAZON_BROWSER_HEADLESS: ${AMAZON_BROWSER_HEADLESS:-false}
+      # The worker has no interactive display. Keep headed browsing for the
+      # operator-facing API, but run background collection headlessly.
+      AMAZON_BROWSER_HEADLESS: ${AMAZON_BROWSER_HEADLESS:-true}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -83,9 +85,7 @@ services:
     volumes:
       - ./backend/app:/app/app:ro
       - ./data/amazon-browser:/data/amazon-browser
-    command: >-
-      sh -c 'exec xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24 -nolisten tcp"
-      python -m app.worker --queue collection --loop --interval 8 --limit 1'
+    command: ["python", "-m", "app.worker", "--queue", "collection", "--loop", "--interval", "8", "--limit", "1"]
     restart: unless-stopped
 
   publish_worker:
