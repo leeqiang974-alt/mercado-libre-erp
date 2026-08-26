@@ -168,6 +168,7 @@ export function ImportPage({
   const [campaignKeywords, setCampaignKeywords] = useState("");
   const [campaigns, setCampaigns] = useState<KeywordCampaign[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | null>(null);
+  const [collectionResultPage, setCollectionResultPage] = useState(0);
   const [campaignPage, setCampaignPage] = useState(0);
   const [keywordPage, setKeywordPage] = useState(0);
   const [completedJobs, setCompletedJobs] = useState<CollectionJobRecord[]>([]);
@@ -224,7 +225,7 @@ export function ImportPage({
         .filter((job) => job.status === "pending" || job.status === "running")
         .map((job) => job.id);
       const [jobs, knownStatuses, completed] = await Promise.all([
-        selectedCampaignId === null ? Promise.resolve([] as CollectionJobRecord[]) : listCollectionJobs(200, 0, selectedCampaignId),
+        selectedCampaignId === null ? Promise.resolve([] as CollectionJobRecord[]) : listCollectionJobs(20, collectionResultPage * 20, selectedCampaignId),
         listCollectionJobStatuses(knownJobIds),
         showCompletedResults ? listCollectionJobs(20, completedPage * 20, undefined, "completed") : Promise.resolve([] as CollectionJobRecord[]),
       ]);
@@ -250,7 +251,7 @@ export function ImportPage({
         setError(jobError instanceof Error ? jobError.message : "Failed to load collection jobs");
       }
     }
-  }, [completedPage, selectedCampaignId, showCompletedResults]);
+  }, [collectionResultPage, completedPage, selectedCampaignId, showCompletedResults]);
 
   const refreshCampaigns = useCallback(async () => {
     try { setCampaigns(await listKeywordCampaigns()); } catch { /* API may be migrating */ }
@@ -542,7 +543,7 @@ export function ImportPage({
               <p>当前关键词：<b>{campaign.current_keyword || "全部关键词已发现"}</b> · 第 {campaign.current_page}/{campaign.pages_per_keyword} 页</p>
               {(() => { const processed = campaign.keywords.filter((item) => item.processed > 0).length; const running = campaign.keywords.filter((item) => item.running > 0).length; const pending = campaign.keywords.filter((item) => item.pending > 0).length; return <div className="campaign-metrics"><span>总关键词 <b>{campaign.keyword_count}</b></span><span>已处理 <b>{processed}</b></span><span>处理中 <b>{running}</b></span><span>待处理 <b>{pending}</b></span><span>发现商品 <b>{campaign.discovered_count}</b></span></div>; })()}
               <small>{campaign.message}</small>
-              <div className="button-row"><button className="secondary-button" onClick={() => setSelectedCampaignId(selectedCampaignId === campaign.id ? null : campaign.id)}>{selectedCampaignId === campaign.id ? "查看全部采集任务" : "查看此关键词任务结果"}</button></div>
+              <div className="button-row"><button className="secondary-button" onClick={() => { setCollectionResultPage(0); setSelectedCampaignId(selectedCampaignId === campaign.id ? null : campaign.id); }}>{selectedCampaignId === campaign.id ? "收起采集结果" : "查看采集结果"}</button></div>
               <div className="keyword-progress-table"><div className="keyword-progress-head"><span>关键词</span><span>状态</span><span>已处理</span><span>待处理</span><span>商品</span></div>{campaign.keywords.slice(keywordPage * 10, keywordPage * 10 + 10).map((item) => <button className="keyword-progress-row" key={item.keyword} onClick={() => setSelectedCampaignId(campaign.id)}><strong>{item.keyword}</strong><span>{item.status}</span><span>{item.processed}</span><span>{item.pending}</span><span>{item.discovered}</span></button>)}</div>
               {campaign.keywords.length > 10 && <div className="pagination-row"><button className="secondary-button" disabled={keywordPage === 0} onClick={() => setKeywordPage((page) => Math.max(0, page - 1))}>上一页关键词</button><span>第 {keywordPage + 1} / {Math.ceil(campaign.keywords.length / 10)} 页</span><button className="secondary-button" disabled={keywordPage >= Math.ceil(campaign.keywords.length / 10) - 1} onClick={() => setKeywordPage((page) => Math.min(Math.ceil(campaign.keywords.length / 10) - 1, page + 1))}>下一页关键词</button></div>}
             </article>
@@ -740,7 +741,7 @@ export function ImportPage({
         <div className="section-heading">
           <div>
               <h3 id="collection-queue-title">{selectedCampaign ? `${selectedCampaign.name} · 采集结果` : "采集库"}</h3>
-              <p>{selectedCampaign ? "按关键词显示该任务采集到的商品；完成后可直接编辑上架。" : `${displayedCollectionJobs.length} 个采集任务`}</p>
+              <p>{selectedCampaign ? `按任务显示采集结果 · 第 ${collectionResultPage + 1} 页，每页 20 条` : `${displayedCollectionJobs.length} 个采集任务`}</p>
           </div>
         </div>
 
@@ -750,6 +751,7 @@ export function ImportPage({
             <strong>暂无采集任务</strong>
           </div>
         ) : (
+          <>
           <div className="collection-job-list">
             {displayedCollectionJobs.map((job) => {
               const isDeferred = job.status === "pending"
@@ -989,6 +991,8 @@ export function ImportPage({
               );
             })}
           </div>
+          {selectedCampaign && <div className="pagination-row"><button className="secondary-button" disabled={collectionResultPage === 0} onClick={() => setCollectionResultPage((page) => Math.max(0, page - 1))}>上一页结果</button><span>第 {collectionResultPage + 1} 页 · 每页 20 条</span><button className="secondary-button" disabled={displayedCollectionJobs.length < 20} onClick={() => setCollectionResultPage((page) => page + 1)}>下一页结果</button></div>}
+          </>
         )}
       </section>
 
