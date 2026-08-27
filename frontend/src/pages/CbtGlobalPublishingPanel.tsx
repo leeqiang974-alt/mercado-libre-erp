@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Globe2,
@@ -179,6 +179,7 @@ export function CbtGlobalPublishingPanel({
 }) {
   const [stores, setStores] = useState<StoreRecord[]>([]);
   const [listingRail, setListingRail] = useState<ProductDraftRead[]>([]);
+  const [listingPage, setListingPage] = useState(1);
   const [storeId, setStoreId] = useState("");
   const [profile, setProfile] = useState<CbtPublishingProfile | null>(null);
   const [profileReloadKey, setProfileReloadKey] = useState(0);
@@ -209,6 +210,16 @@ export function CbtGlobalPublishingPanel({
   const [readiness, setReadiness] = useState<SystemReadiness | null>(null);
   const [pricing, setPricing] = useState<DraftPricing | null>(null);
   const [busy, setBusy] = useState("");
+  const LISTING_PAGE_SIZE = 20;
+  const pendingListingRail = useMemo(
+    () => listingRail.filter((item) => item.publication_status !== "published"),
+    [listingRail],
+  );
+  const listingPageCount = Math.max(1, Math.ceil(pendingListingRail.length / LISTING_PAGE_SIZE));
+  const listingPageItems = pendingListingRail.slice(
+    (listingPage - 1) * LISTING_PAGE_SIZE,
+    listingPage * LISTING_PAGE_SIZE,
+  );
   const [status, setStatus] = useState("");
   const [configLoaded, setConfigLoaded] = useState(false);
   const [hasSavedConfig, setHasSavedConfig] = useState(false);
@@ -263,8 +274,16 @@ export function CbtGlobalPublishingPanel({
   );
 
   useEffect(() => {
-    listDrafts().then(setListingRail).catch(() => undefined);
+    listDrafts().then((items) => {
+      setListingRail(items);
+      const currentIndex = items.filter((item) => item.publication_status !== "published").findIndex((item) => item.id === draftId);
+      setListingPage(currentIndex >= 0 ? Math.floor(currentIndex / LISTING_PAGE_SIZE) + 1 : 1);
+    }).catch(() => undefined);
   }, [draftId]);
+
+  useEffect(() => {
+    setListingPage((page) => Math.min(Math.max(page, 1), listingPageCount));
+  }, [listingPageCount]);
 
   async function removeListingDraft(event: { stopPropagation: () => void }, item: ProductDraftRead) {
     event.stopPropagation();
@@ -610,11 +629,16 @@ export function CbtGlobalPublishingPanel({
 
     <div className="wf-listing-layout">
       <aside className="drafts-sidebar surface wf-listing-rail">
-        <div className="drafts-sidebar-heading"><h3>上架库</h3><span>{listingRail.length} 个</span></div>
+        <div className="drafts-sidebar-heading"><h3>待上架库</h3><span>{pendingListingRail.length} 个</span></div>
         <p className="section-note">选择商品后，在右侧完成分类、素材、售价和站点配置。</p>
-        <div className="draft-rail-list">{listingRail.map((item) => <button className={`draft-rail-item ${item.id === draftId ? "selected" : ""}`} key={item.id} onClick={() => { window.location.href = `/?draft_id=${item.id}#drafts`; }}>
+        <div className="draft-rail-list">{listingPageItems.map((item) => <button className={`draft-rail-item ${item.id === draftId ? "selected" : ""}`} key={item.id} onClick={() => { window.location.href = `/?draft_id=${item.id}#drafts`; }}>
           {!['published', 'pending', 'validating'].includes(item.publication_status || '') && <span className="draft-delete-wrap"><span className="draft-delete-icon" aria-hidden="true">×</span><span className="draft-delete-tooltip">删除商品</span><span role="button" tabIndex={0} className="draft-delete-hit" aria-label={`删除 ${item.title || "未命名商品"}`} onClick={(event) => void removeListingDraft(event, item)} /></span>}
           <img className="product-image" src={item.image_urls[0] || ""} alt="" /><span><strong>{item.title || "未命名商品"}</strong><small>#{item.id} · {item.target_site_id}</small><small>{item.publication_status === "published" ? `已发布：${item.published_sites.join("、") || "CBT"}` : item.publication_status === "pending" || item.publication_status === "validating" ? "发布中" : item.publication_status === "failed" || item.publication_status === "blocked" ? "发布失败，可修改后重试" : "未发布"}</small></span></button>)}</div>
+        <div className="listing-pagination" aria-label="上架库分页">
+          <button type="button" className="tiny-button" disabled={listingPage <= 1} onClick={() => setListingPage((page) => page - 1)}>上一页</button>
+          <span>第 {listingPage}/{listingPageCount} 页</span>
+          <button type="button" className="tiny-button" disabled={listingPage >= listingPageCount} onClick={() => setListingPage((page) => page + 1)}>下一页</button>
+        </div>
       </aside>
       <main className="wf-editor-main">
       <section id="store-category" className="surface wf-section">
@@ -649,4 +673,5 @@ export function CbtGlobalPublishingPanel({
     <footer className="wf-action-bar"><span>{status || (saved ? "配置已保存" : "请先完成必填内容")}</span><div><button className="secondary-button" onClick={onBackToEditing}>取消</button><button disabled={busy === "save"} onClick={saveConfig}><Save size={16} /> 保存</button><button className="secondary-button" disabled={busy === "preview"} onClick={previewPayload}><ListChecks size={16} /> 预检</button><button disabled={!preview?.allowed || !readiness?.mercado_libre.live_publish_enabled || busy === "execute"} onClick={executePublish}><Globe2 size={16} /> 立即发布</button></div></footer>
   </section>;
 }
+
 
