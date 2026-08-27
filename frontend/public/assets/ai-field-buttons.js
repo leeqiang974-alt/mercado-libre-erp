@@ -83,7 +83,19 @@
     if (description && descriptionHost) addButton(descriptionHost, description, "description");
   };
 
-  const observer = new MutationObserver(mount);
+  let focusedSelectedDraft = false;
+  const focusSelectedDraft = () => {
+    if (focusedSelectedDraft) return;
+    const rail = document.querySelector(".wf-listing-rail .draft-rail-list, .draft-rail-list");
+    if (!rail) return;
+    const selected = rail.querySelector(".draft-rail-item.selected") || [...rail.querySelectorAll(".draft-rail-item")].find((item) => item.textContent.includes(`#${draftId}`));
+    if (!selected) return;
+    selected.scrollIntoView({ block: "center" });
+    focusedSelectedDraft = true;
+  };
+
+  const observer = new MutationObserver(() => { mount(); focusSelectedDraft(); });
   observer.observe(document.documentElement, { childList: true, subtree: true });
   mount();
+  focusSelectedDraft();
 })();
