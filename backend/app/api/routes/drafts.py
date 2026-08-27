@@ -46,8 +46,14 @@ router = APIRouter(prefix="/api/drafts", tags=["drafts"])
 
 
 @router.get("", response_model=list[ProductDraftRead])
-def list_drafts(db: Session = Depends(get_db)) -> list[ProductDraftRead]:
-    drafts = list_product_drafts(db)
+def list_drafts(
+    compact: bool = Query(default=False),
+    limit: int = Query(default=60, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> list[ProductDraftRead]:
+    # The listing rail only needs card metadata. Loading every description and
+    # media array made #drafts unresponsive once the library grew large.
+    drafts = list_product_drafts(db, limit=limit, compact=compact)
     jobs = db.query(PublishJob).order_by(PublishJob.id.desc()).all()
     latest: dict[int, PublishJob] = {}
     for job in jobs:
@@ -155,7 +161,7 @@ async def generate_content(
     db: Session = Depends(get_db),
 ) -> DraftContentGenerationResponse:
     draft, content, model = await generate_and_save_draft_content(
-        db, get_settings(), product_draft_id, payload.category_id
+        db, get_settings(), product_draft_id, payload.category_id, set(payload.fields)
     )
     return DraftContentGenerationResponse(
         draft=to_draft_read(draft),
@@ -276,3 +282,4 @@ def approve_draft(
     db: Session = Depends(get_db),
 ) -> DraftApprovalRead:
     return to_approval_read(approve_product_draft(db, product_draft_id, payload))
+
