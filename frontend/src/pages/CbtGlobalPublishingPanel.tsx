@@ -440,6 +440,8 @@ export function CbtGlobalPublishingPanel({
         } catch { return prediction; }
       }));
       setPredictions(enriched);
+      const leaf = enriched.find((item) => item.is_leaf === true);
+      if (leaf) await selectCategory(String(leaf.category_id ?? ""), leaf);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "CBT 类目预测失败");
     } finally { setBusy(""); }
@@ -458,11 +460,35 @@ export function CbtGlobalPublishingPanel({
         return String(row.name_zh ?? row.name ?? "");
       }).filter(Boolean).join(" > ") : "CBT 全部分类");
       if (nextCategoryId && result.children.length === 0) {
-        setCategoryId(nextCategoryId); setCategoryLeafVerified(false); setCategoryPath(""); setAttributeDefinitions([]);
-        setStatus("已选择最底层分类，请点击“确认最终分类”读取官方属性。");
+        await selectCategory(nextCategoryId, detail as Record<string, unknown>);
       }
     } catch (error) { setStatus(error instanceof Error ? error.message : "读取 CBT 分类目录失败"); }
     finally { setBusy(""); }
+  }
+
+  async function selectCategory(nextCategoryId: string, prediction?: Record<string, unknown>) {
+    if (!nextCategoryId) return;
+    setCategoryId(nextCategoryId);
+    setBusy("attributes");
+    try {
+      const details = await getCategoryDetails(nextCategoryId);
+      if (!details.verified || !details.leaf) throw new Error("该推荐不是最底层分类，请选择带有叶子标记的分类。");
+      const confirmed = await confirmDraftCategory(draftId, {
+        expected_content_version: draft.content_version ?? 1,
+        target_site_id: "CBT",
+        category_id: nextCategoryId,
+      });
+      onDraftChange(confirmed.draft);
+      setListingRail((current) => current.map((item) => item.id === confirmed.draft.id ? confirmed.draft : item));
+      setCategoryLeafVerified(true);
+      setCategoryPath((details.path_from_root_zh ?? details.path_from_root).map((item) => item.name_zh || item.name).filter(Boolean).join(" > "));
+      const attributesResult = await getCategoryAttributes(nextCategoryId);
+      setAttributeDefinitions(attributesResult.attributes);
+      setStatus("已自动选择并确认最底层分类，官方属性已加载。");
+    } catch (error) {
+      setCategoryLeafVerified(false);
+      setStatus(error instanceof Error ? error.message : "自动确认分类失败");
+    } finally { setBusy(""); }
   }
 
   async function loadAttributes() {
@@ -666,9 +692,9 @@ export function CbtGlobalPublishingPanel({
         <div className="wf-form-row"><label>上架店铺 *<select value={storeId} onChange={(event) => { setStoreId(event.target.value); setOffers([]); setHasSavedConfig(false); offersInitializedRef.current = false; setPreview(null); }}><option value="">选择已启用的 CBT 店铺</option>{cbtStores.map((store) => <option key={store.id} value={store.id}>{store.display_name} · 卖家 {store.seller_id}</option>)}</select><small>商品、授权令牌、发布记录和限流将按此店铺独立执行。</small></label>
           <div className="wf-sites"><strong>同时发布到站点</strong><label><input type="checkbox" checked={allRemoteSelected} disabled={profile?.model !== "traditional_global" || remoteMarkets.length === 0} onChange={toggleAllRemoteMarkets} /> 全选</label>{remoteMarkets.map((market) => <label key={market.site_id}><input type="checkbox" checked={offers.some((offer) => offer.site_id === market.site_id)} onChange={() => toggleMarket(market.site_id)} /> {MARKET_NAMES[market.site_id]}</label>)}<label className="is-disabled"><input type="checkbox" disabled /> 墨西哥（FULL）</label></div></div>
         {profile && <p className="section-note">卖家 {profile.seller_id} · {profile.model === "traditional_global" ? "传统 Global Selling" : "User Products"}。Remote 站点默认全部勾选；墨西哥 FULL 由独立流程处理。</p>}
-        <div className="wf-category-line"><label>商品英文标题<small>系统默认用此标题智能匹配；需要时可修改关键词。</small><input value={categorySearchQuery} placeholder="例如 silicone muffin pan" onChange={(event) => setCategorySearchQuery(event.target.value)} /></label><button onClick={predictCategory} disabled={busy === "category"}><Search size={16} /> 一键智能匹配</button><button className="secondary-button" onClick={loadAttributes} disabled={!categoryId.startsWith("CBT") || busy === "attributes"}><ListChecks size={16} /> 确认分类</button></div><label>已选最终 CBT 分类 *<input readOnly value={categoryId} placeholder="先点击“一键智能匹配”，从推荐中选一个即可" /></label>
+          <div className="wf-category-line"><label>商品英文标题<small>系统默认用此标题智能匹配；需要时可修改关键词。</small><input value={categorySearchQuery} placeholder="例如 silicone muffin pan" onChange={(event) => setCategorySearchQuery(event.target.value)} /></label><button onClick={predictCategory} disabled={busy === "category" || busy === "attributes"}><Search size={16} /> 一键智能匹配</button></div><label>已选最终 CBT 分类 *<input readOnly value={categoryId} placeholder="点击“一键智能匹配”后自动选择最底层分类" /></label>
         {categoryPath && <p className="category-path-label">{categoryPath}{categoryId ? ` · ${categoryLeafVerified ? "最终 CBT 最底层分类已确认" : "待确认最终 CBT 分类"}` : " · 请在上方选择对应的 CBT 最底层分类"}</p>}
-        {predictions.length > 0 && <div className="prediction-list">{predictions.map((item) => { const id = String(item.category_id ?? ""); const name = String(item.category_name_zh ?? item.category_name ?? item.domain_name ?? id); return <button key={id} onClick={() => { const suggested = Array.isArray(item.attributes) ? item.attributes : []; setCategoryId(id); setCategoryLeafVerified(false); setCategoryPath(""); setAttributeDefinitions([]); setShowCategoryTree(false); setAttributes((current) => ({ ...current, ...Object.fromEntries(suggested.filter((value) => typeof value === "object" && value !== null).map((value) => { const row = value as Record<string, unknown>; return [String(row.id ?? ""), String(row.value_name ?? "")]; }).filter(([id, value]) => id && value && !current[id])) })); }}><strong>{name}</strong><small>{String(item.parent_path ?? "正在读取母级分类路径")}</small><small>{id} · 点击选择；预测属性会自动带入空白项</small></button>; })}</div>}
+        {predictions.length > 0 && <div className="prediction-list">{predictions.map((item) => { const id = String(item.category_id ?? ""); const name = String(item.category_name_zh ?? item.category_name ?? item.domain_name ?? id); const isSelected = id === categoryId; return <button className={isSelected ? "selected" : ""} key={id} onClick={() => void selectCategory(id, item)}><strong>{name}{item.is_leaf === true ? " · 最底层" : ""}</strong><small>{String(item.parent_path ?? "正在读取母级分类路径")}</small><small>{id} · {isSelected ? "已自动确认并加载属性" : "点击后自动选择并确认"}</small></button>; })}</div>}
         <div className="section-note">智能推荐不合适？<button className="tiny-button" type="button" onClick={() => setShowCategoryTree((value) => !value)}>{showCategoryTree ? "收起手动分类" : "手动浏览分类"}</button></div>
         {showCategoryTree && <div className="prediction-list"><div className="section-note"><strong>官方 CBT 分类目录</strong> · {categoryTreePath || "正在读取"} <button className="tiny-button" type="button" onClick={() => browseCategoryTree()} disabled={busy === "category-tree"}>返回根分类</button></div>{categoryTree.map((item) => { const id = String(item.id ?? ""); const name = String(item.name_zh ?? item.name ?? id); return <button key={id} type="button" onClick={() => browseCategoryTree(id)}><strong>{name}</strong><small>{id} · 点击展开；没有子分类时即选为最终候选</small></button>; })}</div>}
       </section>
