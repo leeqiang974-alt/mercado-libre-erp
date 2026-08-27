@@ -912,7 +912,7 @@ export async function deactivateProviderModelPrice(priceId: number) {
 }
 
 export async function listDrafts() {
-  const response = await fetch(`${API_BASE}/api/drafts`);
+  const response = await fetch(`${API_BASE}/api/drafts?limit=1000&compact=true`);
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<ProductDraftRead[]>;
 }
