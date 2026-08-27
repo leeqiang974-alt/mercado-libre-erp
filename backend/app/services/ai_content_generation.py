@@ -28,6 +28,7 @@ async def generate_and_save_draft_content(
     settings: Settings,
     product_draft_id: int,
     category_id: str,
+    fields: set[str] | None = None,
 ) -> tuple[ProductDraft, GeneratedListingContent, str]:
     draft = db.get(ProductDraft, product_draft_id)
     if draft is None:
@@ -42,19 +43,27 @@ async def generate_and_save_draft_content(
         raise HTTPException(status_code=409, detail="category_attributes_not_verified")
 
     credentials = resolve_integration_credentials(db, settings)
-    if not credentials.volcengine_api_key:
-        raise HTTPException(status_code=503, detail="volcengine_api_key_required")
+    provider = credentials.content_generation_provider
+    if provider not in {"deepseek", "volcengine"}:
+        provider = "deepseek"
+    api_key = credentials.deepseek_api_key if provider == "deepseek" else credentials.volcengine_api_key
+    if not api_key:
+        raise HTTPException(status_code=503, detail=f"{provider}_api_key_required")
+    base_url = settings.deepseek_base_url if provider == "deepseek" else settings.volcengine_base_url
+    model = settings.deepseek_model if provider == "deepseek" else settings.volcengine_model
 
     source = db.get(SourceProduct, draft.source_product_id) if draft.source_product_id else None
     prompt = _build_prompt(draft, source, normalized_category)
-    generated = await _request_content(settings=settings, api_key=credentials.volcengine_api_key, prompt=prompt)
+    generated = await _request_content(base_url=base_url, model=model, provider=provider, api_key=api_key, prompt=prompt)
     source_brand = source.brand if source else ""
     try:
         content = _validate_generated(generated, source_brand)
     except ValueError as first_error:
         generated = await _request_content(
-            settings=settings,
-            api_key=credentials.volcengine_api_key,
+            base_url=base_url,
+            model=model,
+            provider=provider,
+            api_key=api_key,
             prompt=f"{prompt}\nThe previous output failed this validation: {first_error}. Return corrected JSON only.",
         )
         try:
@@ -65,13 +74,18 @@ async def generate_and_save_draft_content(
                 detail={"code": "generated_content_invalid", "reason": str(exc)},
             ) from exc
 
-    draft.title = content.title
+    selected_fields = fields or {"title", "description"}
+    if not selected_fields <= {"title", "description"}:
+        raise HTTPException(status_code=422, detail="invalid_content_fields")
     content = GeneratedListingContent(
         title=content.title,
         description=sanitize_unbranded_description(content.description, source_brand),
         brand="Unbranded",
     )
-    draft.description = content.description
+    if "title" in selected_fields:
+        draft.title = content.title
+    if "description" in selected_fields:
+        draft.description = content.description
     draft.brand = "Unbranded"
     draft.target_category_id = normalized_category
     draft.content_version += 1
@@ -79,28 +93,32 @@ async def generate_and_save_draft_content(
     create_audit_event(
         db=db,
         actor_type="system",
-        actor_id="volcengine",
+        actor_id=provider,
         action="draft.ai_content_generated",
         entity_type="product_draft",
         entity_id=str(product_draft_id),
         after={
             "content_version": draft.content_version,
-            "model": settings.volcengine_model,
+            "model": model,
+            "provider": provider,
             "category_id": normalized_category,
             "title_length": len(content.title),
             "description_length": len(content.description),
+            "updated_fields": sorted(selected_fields),
         },
         commit=False,
     )
     db.commit()
     db.refresh(draft)
-    return draft, content, settings.volcengine_model
+    return draft, content, model
 
 
-async def _request_content(*, settings: Settings, api_key: str, prompt: str) -> dict[str, object]:
-    url = f"{settings.volcengine_base_url.rstrip('/')}/chat/completions"
+async def _request_content(
+    *, base_url: str, model: str, provider: str, api_key: str, prompt: str
+) -> dict[str, object]:
+    url = f"{base_url.rstrip('/')}/chat/completions"
     payload = {
-        "model": settings.volcengine_model,
+        "model": model,
         "temperature": 0.2,
         "messages": [
             {"role": "system", "content": "You create compliant Mercado Libre product copy. Return JSON only."},
@@ -117,9 +135,9 @@ async def _request_content(*, settings: Settings, api_key: str, prompt: str) -> 
             response.raise_for_status()
             body = response.json()
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail={"code": "volcengine_unreachable"}) from exc
+        raise HTTPException(status_code=502, detail={"code": f"{provider}_unreachable"}) from exc
     except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail={"code": "volcengine_invalid_response"}) from exc
+        raise HTTPException(status_code=502, detail={"code": f"{provider}_invalid_response"}) from exc
     try:
         raw = body["choices"][0]["message"]["content"]
         if not isinstance(raw, str):
@@ -130,7 +148,7 @@ async def _request_content(*, settings: Settings, api_key: str, prompt: str) -> 
             raise TypeError
         return parsed
     except (KeyError, IndexError, TypeError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail={"code": "volcengine_invalid_response"}) from exc
+        raise HTTPException(status_code=502, detail={"code": f"{provider}_invalid_response"}) from exc
 
 
 def _validate_generated(value: dict[str, object], source_brand: str = "") -> GeneratedListingContent:
@@ -175,3 +193,4 @@ SOURCE DESCRIPTION: {source_description}
 SOURCE BULLETS: {json.dumps(bullets, ensure_ascii=True)}
 SOURCE TECHNICAL DETAILS: {json.dumps(details, ensure_ascii=True)}
 """
+
