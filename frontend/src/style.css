@@ -2010,3 +2010,9 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .wf-action-bar .check-row { font-size:12px; margin:0; white-space:nowrap; }
 @media (max-width: 1280px) { .wf-listing-layout { grid-template-columns:220px minmax(0, 1fr); } .wf-editor-main { margin-right:0; } .wf-step-nav { display:none; } }
 @media (max-width: 760px) { .wf-listing-layout { display:block; } .wf-listing-rail { display:none; } .wf-header, .wf-action-bar { align-items:stretch; flex-direction:column; } .wf-action-bar > span { max-width:none; } .wf-action-bar > div { flex-wrap:wrap; } .wf-form-row, .wf-category-line, .wf-sku-row { grid-template-columns:1fr; } .wf-sites { gap:6px; } .wf-editor-main { display:block; } .wf-section { margin-bottom:12px; } }
+
+/* 仅为已部署页面补充的独立 AI 文案按钮，不改变既有分类或采集流程。 */
+.ai-field-button { margin-left: 8px; min-width: 42px; }
+.ai-description-action { display: flex; justify-content: flex-end; margin: -2px 0 6px; }
+.ai-field-note { display: block; margin-top: 5px; font-size: 12px; }
+
