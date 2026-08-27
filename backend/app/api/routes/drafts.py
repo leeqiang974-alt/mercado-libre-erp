@@ -48,7 +48,7 @@ router = APIRouter(prefix="/api/drafts", tags=["drafts"])
 @router.get("", response_model=list[ProductDraftRead])
 def list_drafts(
     compact: bool = Query(default=False),
-    limit: int = Query(default=60, ge=1, le=100),
+    limit: int = Query(default=100, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> list[ProductDraftRead]:
     # The listing rail only needs card metadata. Loading every description and
