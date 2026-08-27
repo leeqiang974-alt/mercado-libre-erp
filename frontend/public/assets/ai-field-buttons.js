@@ -94,8 +94,44 @@
     focusedSelectedDraft = true;
   };
 
-  const observer = new MutationObserver(() => { mount(); focusSelectedDraft(); });
+  let currentDraftCardLoading = false;
+  const ensureCurrentDraftCard = async () => {
+    const rail = document.querySelector(".wf-listing-rail .draft-rail-list, .draft-rail-list");
+    if (!rail || rail.querySelector(".draft-rail-item.selected") || [...rail.querySelectorAll(".draft-rail-item")].some((item) => item.textContent.includes(`#${draftId}`)) || currentDraftCardLoading) return;
+    currentDraftCardLoading = true;
+    try {
+      const response = await fetch(`/api/drafts/${draftId}`);
+      if (!response.ok) return;
+      const draft = await response.json();
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "draft-rail-item selected";
+      card.dataset.aiCurrentDraft = "true";
+      card.addEventListener("click", () => window.location.assign(`/?draft_id=${draftId}#drafts`));
+      const image = document.createElement("img");
+      image.className = "product-image";
+      image.src = draft.image_urls?.[0] || "";
+      image.alt = "";
+      const meta = document.createElement("span");
+      const title = document.createElement("strong");
+      title.textContent = draft.title || "未命名商品";
+      const id = document.createElement("small");
+      id.textContent = `#${draft.id} · ${draft.target_site_id || "CBT"}`;
+      const status = document.createElement("small");
+      status.textContent = "当前编辑";
+      meta.append(title, id, status);
+      card.append(image, meta);
+      rail.prepend(card);
+      focusedSelectedDraft = false;
+      focusSelectedDraft();
+    } finally {
+      currentDraftCardLoading = false;
+    }
+  };
+
+  const observer = new MutationObserver(() => { mount(); void ensureCurrentDraftCard(); focusSelectedDraft(); });
   observer.observe(document.documentElement, { childList: true, subtree: true });
   mount();
+  void ensureCurrentDraftCard();
   focusSelectedDraft();
 })();
