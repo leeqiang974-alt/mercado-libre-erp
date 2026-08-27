@@ -2008,6 +2008,8 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .wf-action-bar > span { color:#667085; font-size:12px; max-width:40%; }
 .wf-action-bar > div { align-items:center; display:flex; gap:9px; }
 .wf-action-bar .check-row { font-size:12px; margin:0; white-space:nowrap; }
+.listing-pagination { align-items:center; border-top:1px solid #e7ebef; display:flex; flex:0 0 auto; gap:6px; justify-content:space-between; padding:8px 0 0; }
+.listing-pagination span { color:#667085; font-size:11px; white-space:nowrap; }
 @media (max-width: 1280px) { .wf-listing-layout { grid-template-columns:220px minmax(0, 1fr); } .wf-editor-main { margin-right:0; } .wf-step-nav { display:none; } }
 @media (max-width: 760px) { .wf-listing-layout { display:block; } .wf-listing-rail { display:none; } .wf-header, .wf-action-bar { align-items:stretch; flex-direction:column; } .wf-action-bar > span { max-width:none; } .wf-action-bar > div { flex-wrap:wrap; } .wf-form-row, .wf-category-line, .wf-sku-row { grid-template-columns:1fr; } .wf-sites { gap:6px; } .wf-editor-main { display:block; } .wf-section { margin-bottom:12px; } }
 
