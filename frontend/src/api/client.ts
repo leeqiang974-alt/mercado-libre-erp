@@ -959,11 +959,11 @@ export async function confirmDraftCategory(
   return response.json() as Promise<DraftCategoryResult>;
 }
 
-export async function generateDraftContent(productDraftId: number, categoryId: string) {
+export async function generateDraftContent(productDraftId: number, categoryId: string, fields: Array<"title" | "description"> = ["title", "description"]) {
   const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/generate-content`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ category_id: categoryId, language: "en" }),
+    body: JSON.stringify({ category_id: categoryId, language: "en", fields }),
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<GeneratedDraftContent>;
@@ -1418,3 +1418,4 @@ function readableProviderError(code: string) {
   };
   return messages[code] ?? "request failed";
 }
+
