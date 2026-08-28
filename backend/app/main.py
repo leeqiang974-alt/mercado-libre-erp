@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.api.routes import (
     audit_events,
+    alibaba_1688,
     drafts,
     erp,
     imports,
@@ -59,6 +60,7 @@ app.include_router(publishing.router)
 app.include_router(stores.router)
 app.include_router(audit_events.router)
 app.include_router(integrations.router)
+app.include_router(alibaba_1688.router)
 app.include_router(erp.router)
 
 
