@@ -1380,6 +1380,15 @@ export async function listAuditEvents(limit = 100) {
   return response.json() as Promise<AuditEventRecord[]>;
 }
 
+export type Alibaba1688SimilarOffer = { rank: number; match_level: string; offer_id: string; title: string; price: number | string | null; image_url: string; supply_amount: number | null; province: string; city: string };
+export type Alibaba1688SimilarResult = { draft_id: number; cover_image: string; total: number | null; offers: Alibaba1688SimilarOffer[] };
+
+export async function searchAlibaba1688SimilarOffers(productDraftId: number) {
+  const response = await fetch(`${API_BASE}/api/integrations/1688/drafts/${productDraftId}/similar-offers`, { method: "POST" });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<Alibaba1688SimilarResult>;
+}
+
 function reviewUrl(provider: "local" | "claude" | "nvidia", productDraftId?: number | null) {
   const query = productDraftId ? `?product_draft_id=${productDraftId}` : "";
   return `${API_BASE}/api/reviews/${provider}${query}`;
