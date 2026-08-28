@@ -1,4 +1,4 @@
-﻿from typing import Annotated
+from typing import Annotated
 from datetime import UTC, datetime
 import re
 from urllib.parse import urlparse
@@ -22,7 +22,8 @@ from app.services.amazon.normalizer import normalize_amazon_product
 from app.services.amazon.import_file import MAX_IMPORT_FILE_BYTES, parse_amazon_url_file
 from app.services.amazon.discovery import discover_amazon_products
 from app.services.amazon.throttle import record_domain_outcome, reserve_domain_request
-from app.services.drafts import create_product_draft, to_draft_read
+from app.services.drafts import create_product_draft, to_draft_read, update_draft_content
+from app.services.amazon.media import select_listing_images
 from app.services.audit_events import create_audit_event
 from app.services.source_products import (
     EXACT_PAGE_EVIDENCE_STATUSES,
@@ -52,6 +53,7 @@ from app.models.keyword_collection_campaign import KeywordCampaignStatus, Keywor
 from app.services.amazon.keyword_campaigns import normalize_keywords
 from app.services.meli.sites import SITE_CURRENCIES
 from app.schemas.source_products import (
+    AmazonSourceSnapshot,
     SourceProductRead,
     SourceVariantCollectionCreate,
     SourceVariantDraftCreate,
@@ -80,6 +82,12 @@ class AmazonUrlBatchImport(BaseModel):
     source_urls: list[AmazonProductUrl] = Field(min_length=1, max_length=100)
     target_site_id: str = "MLM"
     allow_existing: bool = False
+
+
+class AmazonExtensionCapture(BaseModel):
+    source_url: AmazonProductUrl
+    target_site_id: str = "CBT"
+    snapshot: dict = Field(default_factory=dict)
 
 
 class AmazonDiscoveryImport(BaseModel):
@@ -533,6 +541,49 @@ def get_source_product(
     return to_source_product_read(source)
 
 
+@router.post("/source-products/{source_product_id}/extension-capture")
+def capture_source_product_from_extension(
+    source_product_id: int,
+    payload: AmazonExtensionCapture,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    source = db.scalar(select(SourceProduct).where(SourceProduct.id == source_product_id).with_for_update())
+    if source is None:
+        raise HTTPException(status_code=404, detail="source_product_not_found")
+    source_url = _normalized_amazon_url_or_422(payload.source_url)
+    if normalize_amazon_product_url(source.source_url) != source_url:
+        raise HTTPException(status_code=409, detail="source_product_url_mismatch")
+    raw_snapshot = dict(payload.snapshot)
+    video_urls = [str(value).strip() for value in raw_snapshot.pop("video_urls", []) if str(value).strip()]
+    try:
+        snapshot = AmazonSourceSnapshot.model_validate({**raw_snapshot, "source_url": source_url})
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid_extension_snapshot: {exc}") from exc
+    source.source_url = source_url
+    source.asin = snapshot.source_url.rsplit("/", 1)[-1].upper()
+    source.raw_status = SourceProductStatus.COLLECTED
+    source.collection_method = "browser_extension"
+    source.collected_at = datetime.now(UTC)
+    source.collection_error = ""
+    source.title = snapshot.title
+    source.brand = snapshot.brand
+    source.source_price = snapshot.price.amount
+    source.source_currency = snapshot.price.currency
+    source.description = snapshot.description
+    source.bullets_json = snapshot.bullets
+    source.image_urls_json = select_listing_images(snapshot.images)
+    source.variants_json = [{**variant.model_dump(), "image_urls": select_listing_images(variant.image_urls)} for variant in snapshot.variants]
+    source.technical_details_json = snapshot.technical_details
+    source.measurements_json = snapshot.measurements.model_dump(exclude_none=True)
+    drafts = db.query(ProductDraft).filter(ProductDraft.source_product_id == source.id).all()
+    for draft in drafts:
+        variant = next((row for row in source.variants_json if str(row.get("asin", "")).upper() == (draft.source_variant_asin or "").upper()), None)
+        images = variant.get("image_urls", []) if variant and variant.get("image_urls") else source.image_urls_json
+        update_draft_content(db, draft.id, expected_content_version=draft.content_version, image_urls_json=images, video_urls_json=video_urls)
+    db.commit()
+    return {"ok": True, "source_product_id": source.id, "draft_count": len(drafts), "image_count": len(source.image_urls_json), "video_count": len(video_urls)}
+
+
 @router.post(
     "/source-products/{source_product_id}/variants/{variant_asin}/draft",
     response_model=ProductDraftRead,
@@ -792,3 +843,4 @@ def _existing_collection_jobs(
             if normalized in missing:
                 existing_by_url.setdefault(normalized, row)
     return existing_by_url
+
