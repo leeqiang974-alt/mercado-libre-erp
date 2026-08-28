@@ -835,6 +835,14 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .draft-delete-hit { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; }
 .draft-delete-tooltip { position: absolute; right: 24px; top: -2px; display: none; white-space: nowrap; padding: 4px 7px; border-radius: 4px; background: #111827; color: #fff; font-size: 11px; pointer-events: none; }
 .draft-delete-wrap:hover .draft-delete-tooltip { display: block; }
+.draft-recollect-wrap { position: absolute; top: 27px; right: 5px; z-index: 2; display: none; }
+.draft-rail-item:hover .draft-recollect-wrap { display: block; }
+.draft-recollect-icon { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: #16a34a; color: #0b2615; font-size: 11px; font-weight: 900; line-height: 18px; pointer-events: none; }
+.draft-recollect-hit { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.draft-recollect-tooltip { position: absolute; right: 24px; top: -2px; display: none; white-space: nowrap; padding: 4px 7px; border-radius: 4px; background: #111827; color: #fff; font-size: 11px; pointer-events: none; }
+.draft-recollect-wrap:hover .draft-recollect-tooltip { display: block; }
+.draft-recollect-spinner { position: absolute; inset: 3px; border: 2px solid rgba(255,255,255,.7); border-top-color: #166534; border-radius: 50%; animation: draft-recollect-spin .8s linear infinite; pointer-events: none; }
+@keyframes draft-recollect-spin { to { transform: rotate(360deg); } }
 .draft-rail-item:hover { background: #fff7ed; border-color: #fed7aa; }
 .draft-rail-item.selected { background: #fff7ed; border-color: #ea580c; box-shadow: inset 3px 0 #ea580c; }
 .draft-rail-item .product-image { width: 44px; height: 44px; object-fit: contain; background: #fafaf9; }
