@@ -114,6 +114,12 @@ function defaultSku(draftId: number) {
   return `xy${String(draftId).padStart(6, "0")}`;
 }
 
+// The rail is an operator control, so one draft must never be rendered twice.
+// This also protects the UI from a stale/repeated response during a refresh.
+function uniqueDrafts(items: ProductDraftRead[]) {
+  return Array.from(new Map(items.map((item) => [item.id, item])).values());
+}
+
 function attributeNameZh(attribute: Record<string, unknown> | undefined, id: string) {
   return ATTRIBUTE_NAMES_ZH[id] ?? String(attribute?.name_zh ?? attribute?.name ?? id);
 }
@@ -169,12 +175,14 @@ export function CbtGlobalPublishingPanel({
   draft,
   draftId,
   onDraftChange,
+  onSelectDraft,
   onReviewInvalidated,
   onBackToEditing,
 }: {
   draft: ProductDraft;
   draftId: number;
   onDraftChange: (draft: ProductDraft) => void;
+  onSelectDraft?: (draft: ProductDraftRead) => void;
   onReviewInvalidated: () => void;
   onBackToEditing: () => void;
 }) {
@@ -278,11 +286,38 @@ export function CbtGlobalPublishingPanel({
 
   useEffect(() => {
     listDrafts().then((items) => {
-      setListingRail(items);
-      const currentIndex = items.filter((item) => item.publication_status !== "published").findIndex((item) => item.id === draftId);
+      const uniqueItems = uniqueDrafts(items);
+      setListingRail(uniqueItems);
+      const currentIndex = uniqueItems.filter((item) => item.publication_status !== "published").findIndex((item) => item.id === draftId);
       setListingPage(currentIndex >= 0 ? Math.floor(currentIndex / LISTING_PAGE_SIZE) + 1 : 1);
     }).catch(() => undefined);
   }, [draftId]);
+
+  // Selecting another card is an in-page edit-context change, not a document
+  // navigation. Reset the visible form immediately so the previous product's
+  // data cannot flash while the new configuration is loading.
+  useEffect(() => {
+    setCategorySearchQuery(normalizeCbtTitle(draft.title));
+    setGlobalTitle(normalizeCbtTitle(draft.title));
+    setDescription(sanitizeCbtDescription(draft.description));
+    setFamilyName(defaultSku(draftId));
+    setPriceUsd(draft.currency === "USD" && draft.price ? String(draft.price) : "");
+    setQuantity("999");
+    setCategoryId("");
+    setCategoryLeafVerified(false);
+    setCategoryPath("");
+    setPredictions([]);
+    setAttributeDefinitions([]);
+    setAttributes({ BRAND: "Unbranded", ITEM_CONDITION: "new", SELLER_SKU: defaultSku(draftId), MODEL: defaultSku(draftId) });
+    setOffers([]);
+    setSaved(null);
+    setPreview(null);
+    setExecution(null);
+    setStatus("");
+    setConfigLoaded(false);
+    setHasSavedConfig(false);
+    offersInitializedRef.current = false;
+  }, [draftId, draft.title, draft.description, draft.currency, draft.price]);
 
   useEffect(() => {
     setListingPage((page) => Math.min(Math.max(page, 1), listingPageCount));
@@ -311,10 +346,18 @@ export function CbtGlobalPublishingPanel({
     if (!window.confirm(`确定删除“${item.title || "未命名商品"}”吗？`)) return;
     try {
       await deleteDraft(item.id);
-      setListingRail((current) => current.filter((draftItem) => draftItem.id !== item.id));
-      if (item.id === draftId) window.location.href = "/#drafts";
+      // Re-read after a successful delete. The card is removed only after the
+      // server confirms it is gone, which avoids a misleading local-only UI.
+      const remaining = uniqueDrafts(await listDrafts());
+      setListingRail(remaining);
+      setStatus(`已删除商品 #${item.id}。`);
+      if (item.id === draftId) {
+        const next = remaining.find((candidate) => candidate.publication_status !== "published");
+        if (next && onSelectDraft) onSelectDraft(next);
+        else onBackToEditing();
+      }
     } catch (deleteError) {
-      setStatus(deleteError instanceof Error ? deleteError.message : "删除商品失败");
+      setStatus(`未删除商品 #${item.id}：${deleteError instanceof Error ? deleteError.message : "服务器拒绝了删除请求"}`);
     }
   }
 
@@ -494,7 +537,7 @@ export function CbtGlobalPublishingPanel({
       });
       if (!result.ok) throw new Error(result.error || "重新采集素材失败");
       const refreshed = await listDrafts();
-      setListingRail(refreshed);
+      setListingRail(uniqueDrafts(refreshed));
       const current = refreshed.find((row) => row.id === draftId);
       if (current) onDraftChange(current);
       const updated = refreshed.find((row) => row.id === item.id);
@@ -717,7 +760,8 @@ export function CbtGlobalPublishingPanel({
         <p className="section-note">选择商品后，在右侧完成分类、素材、售价和站点配置。</p>
         <label className="listing-search"><Search size={14} /><input value={listingSearch} placeholder="定位商品编号或标题" onChange={(event) => setListingSearch(event.target.value)} /></label>
         {listingSearch.trim() && <p className="listing-search-result">{pendingListingRail.some((item) => String(item.id) === listingSearch.trim()) || pendingListingRail.some((item) => String(item.title ?? "").toLowerCase().includes(listingSearch.trim().toLowerCase())) ? "已定位，保留前后商品" : "未找到，当前显示原列表"}</p>}
-        <div className="draft-rail-list">{listingPageItems.map((item) => <button className={`draft-rail-item ${item.id === draftId ? "selected" : ""}`} key={item.id} onClick={() => { window.location.href = `/?draft_id=${item.id}#drafts`; }}>
+        {status && <p className="draft-rail-status" role="status">{status}</p>}
+        <div className="draft-rail-list">{listingPageItems.map((item) => <button className={`draft-rail-item ${item.id === draftId ? "selected" : ""}`} key={item.id} onClick={() => onSelectDraft?.(item)}>
           {!['published', 'pending', 'validating'].includes(item.publication_status || '') && <><span className="draft-delete-wrap"><span className="draft-delete-icon" aria-hidden="true">×</span><span className="draft-delete-tooltip">删除商品</span><span role="button" tabIndex={0} className="draft-delete-hit" aria-label={`删除 ${item.title || "未命名商品"}`} onClick={(event) => void removeListingDraft(event, item)} /></span>{item.source_product_id && <span className="draft-recollect-wrap"><span className="draft-recollect-icon" aria-hidden="true">采</span><span className="draft-recollect-tooltip">重新采集素材</span><span role="button" tabIndex={0} className="draft-recollect-hit" aria-label={`重新采集 ${item.title || "未命名商品"}`} onClick={(event) => void recollectListingDraft(event, item)} />{recollectBusy === item.id && <span className="draft-recollect-spinner" aria-label="正在重新采集" />}</span>}</>}
           <img className="product-image" src={item.image_urls[0] || ""} alt="" /><span><strong>{item.title || "未命名商品"}</strong><small>#{item.id} · {item.target_site_id}</small><small>{item.publication_status === "published" ? `已发布：${item.published_sites.join("、") || "CBT"}` : item.publication_status === "pending" || item.publication_status === "validating" ? "发布中" : item.publication_status === "failed" || item.publication_status === "blocked" ? "发布失败，可修改后重试" : "未发布"}</small></span></button>)}</div>
         <div className="listing-pagination" aria-label="上架库分页">
