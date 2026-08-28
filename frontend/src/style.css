@@ -1962,7 +1962,7 @@ input[readonly] { background: #eef1f4; color: #52606d; }
    final product was therefore clipped below the rail instead of scrollable. */
 .wf-listing-rail { align-self:start; display:flex; flex-direction:column; height:calc(100vh - 180px); max-height:calc(100vh - 180px); min-height:0; overflow:hidden; position:sticky; top:18px; }
 .wf-listing-rail .draft-rail-list { flex:1 1 auto; max-height:none; min-height:0; overscroll-behavior:contain; padding-bottom:8px; }
-.wf-editor-main { margin-right:154px; display:grid; gap:14px; }
+.wf-editor-main { margin-right:0; display:grid; gap:14px; }
 .wf-section { scroll-margin-top:18px; padding:18px 20px; border-radius:4px; }
 .wf-section-title { display:flex; align-items:flex-start; gap:10px; border-bottom:1px solid #e7ebef; margin-bottom:15px; padding-bottom:12px; }
 .wf-section-title > span { align-items:center; background:#f97316; border-radius:50%; color:#fff; display:inline-flex; flex:0 0 auto; font-size:12px; font-weight:800; height:22px; justify-content:center; margin-top:1px; width:22px; }
@@ -2008,11 +2008,8 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .wf-sku-row span { color:#667085; font-size:11px; }
 .wf-sku-row strong { color:#344054; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .wf-sku-row input { margin:0; }
-.wf-step-nav { display:grid; gap:2px; position:fixed; right:8px; top:185px; width:118px; z-index:2; }
-.wf-step-nav a { align-items:center; border-left:2px solid #d0d5dd; color:#667085; display:flex; font-size:12px; gap:7px; padding:7px 4px; text-decoration:none; }
-.wf-step-nav a:hover { border-color:#f97316; color:#c2410c; }
-.wf-step-nav span { align-items:center; background:#e9edf1; border-radius:50%; color:#667085; display:inline-flex; font-size:10px; font-weight:700; height:16px; justify-content:center; width:16px; }
-.wf-step-nav a:hover span { background:#f97316; color:white; }
+.wf-similar-search { position:fixed; right:8px; top:185px; width:180px; z-index:2; display:grid; gap:8px; padding:10px; border:1px solid #fed7aa; border-radius:7px; background:#fffaf5; box-shadow:0 6px 18px rgba(16,24,40,.1); }
+.wf-similar-search > strong { color:#9a3412; font-size:13px; }.wf-similar-search > small { color:#667085; font-size:11px; line-height:1.4; }.wf-similar-search button { justify-content:center; padding:6px 8px; font-size:12px; }.similar-offer-list { display:grid; gap:6px; max-height:420px; overflow:auto; }.similar-offer-list a { display:grid; grid-template-columns:38px minmax(0,1fr); gap:6px; color:#344054; text-decoration:none; }.similar-offer-list img { width:38px; height:38px; object-fit:cover; background:#f3f4f6; }.similar-offer-list span { display:grid; gap:1px; min-width:0; }.similar-offer-list b,.similar-offer-list small { font-size:10px; }.similar-offer-list b { color:#b45309; }.similar-offer-list strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }.similar-offer-list em { color:#dc2626; font-size:12px; font-style:normal; font-weight:700; }
 .wf-action-bar { align-items:center; background:#fff; border:1px solid #dfe5eb; bottom:0; box-shadow:0 -4px 16px rgba(16,24,40,.08); display:flex; gap:16px; justify-content:space-between; left:0; padding:11px 22px; position:fixed; right:0; z-index:8; }
 .wf-action-bar > span { color:#667085; font-size:12px; max-width:40%; }
 .wf-action-bar > div { align-items:center; display:flex; gap:9px; }
@@ -2023,7 +2020,7 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .listing-search svg { color:#667085; flex:0 0 auto; }
 .listing-search input { border:0; font-size:12px; min-width:0; outline:0; width:100%; }
 .listing-search-result { color:#667085; font-size:11px; margin:4px 0 6px; }
-@media (max-width: 1280px) { .wf-listing-layout { grid-template-columns:220px minmax(0, 1fr); } .wf-editor-main { margin-right:0; } .wf-step-nav { display:none; } }
+@media (max-width: 1280px) { .wf-listing-layout { grid-template-columns:220px minmax(0, 1fr); } .wf-editor-main { margin-right:0; } .wf-similar-search { display:none; } }
 @media (max-width: 760px) { .wf-listing-layout { display:block; } .wf-listing-rail { display:none; } .wf-header, .wf-action-bar { align-items:stretch; flex-direction:column; } .wf-action-bar > span { max-width:none; } .wf-action-bar > div { flex-wrap:wrap; } .wf-form-row, .wf-category-line, .wf-sku-row { grid-template-columns:1fr; } .wf-sites { gap:6px; } .wf-editor-main { display:block; } .wf-section { margin-bottom:12px; } }
 
 /* 仅为已部署页面补充的独立 AI 文案按钮，不改变既有分类或采集流程。 */
