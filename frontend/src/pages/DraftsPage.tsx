@@ -746,6 +746,7 @@ export function DraftsPage({
     draft={draft}
     draftId={draftId}
     onDraftChange={onDraftChange}
+    onSelectDraft={onSelectDraft}
     onReviewInvalidated={() => onReviewChange(null)}
     onBackToEditing={() => undefined}
   />;

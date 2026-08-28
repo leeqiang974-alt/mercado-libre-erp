@@ -815,6 +815,7 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 
 .drafts-sidebar-heading h3 { margin: 0; }
 .drafts-sidebar-heading span { color: #697586; font-size: 12px; }
+.draft-rail-status { margin: 8px 0 6px; padding: 6px 8px; border-radius: 5px; background: #eff6ff; color: #1d4ed8; font-size: 11px; line-height: 1.35; }
 .draft-rail-list { display: grid; gap: 6px; max-height: calc(100vh - 160px); overflow-y: auto; }
 .draft-rail-item {
   position: relative;
