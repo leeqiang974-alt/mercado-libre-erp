@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.models.collection_job import CollectionJob
 from app.models.product_draft import ProductDraft
 from app.models.publish_job import PublishJob, PublishJobStatus
 from app.schemas.draft_approvals import DraftApprovalCreate, DraftApprovalRead
@@ -103,6 +104,13 @@ def delete_draft(product_draft_id: int, db: Session = Depends(get_db)) -> Respon
     )
     if active_publish is not None:
         raise HTTPException(status_code=409, detail="published_or_active_draft_cannot_be_deleted")
+    # Keep collection history and source evidence, but do not leave a stale
+    # draft foreign-key reference that prevents deleting the listing draft.
+    db.execute(
+        update(CollectionJob)
+        .where(CollectionJob.draft_id == product_draft_id)
+        .values(draft_id=None)
+    )
     db.delete(draft)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
