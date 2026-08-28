@@ -30,6 +30,8 @@ import {
   saveDraftContent,
   saveDraftPricing,
   saveCbtListingConfig,
+  searchAlibaba1688SimilarOffers,
+  type Alibaba1688SimilarResult,
   type CbtListingConfig,
   type CbtMarketplace,
   type CbtPublishingProfile,
@@ -221,6 +223,8 @@ export function CbtGlobalPublishingPanel({
   const [pricing, setPricing] = useState<DraftPricing | null>(null);
   const [busy, setBusy] = useState("");
   const [recollectBusy, setRecollectBusy] = useState<number | null>(null);
+  const [similarSearchBusy, setSimilarSearchBusy] = useState(false);
+  const [similarOffers, setSimilarOffers] = useState<Alibaba1688SimilarResult | null>(null);
   const LISTING_PAGE_SIZE = 20;
   const pendingListingRail = useMemo(
     () => listingRail.filter((item) => item.publication_status !== "published"),
@@ -313,6 +317,7 @@ export function CbtGlobalPublishingPanel({
     setSaved(null);
     setPreview(null);
     setExecution(null);
+    setSimilarOffers(null);
     setStatus("");
     setConfigLoaded(false);
     setHasSavedConfig(false);
@@ -346,7 +351,7 @@ export function CbtGlobalPublishingPanel({
     if (!window.confirm(`确定删除“${item.title || "未命名商品"}”吗？`)) return;
     try {
       await deleteDraft(item.id);
-      // Re-read after a successful delete. The card is removed only after the
+      // Re-read after a successful delete.  The card is removed only after the
       // server confirms it is gone, which avoids a misleading local-only UI.
       const remaining = uniqueDrafts(await listDrafts());
       setListingRail(remaining);
@@ -547,6 +552,16 @@ export function CbtGlobalPublishingPanel({
     } finally {
       setRecollectBusy(null);
     }
+  }
+
+  async function searchByCoverImage() {
+    setSimilarSearchBusy(true); setStatus("");
+    try {
+      const result = await searchAlibaba1688SimilarOffers(draftId);
+      setSimilarOffers(result);
+      setStatus(`1688 图搜完成：返回 ${result.offers.length} 个价格参考。`);
+    } catch (error) { setStatus(error instanceof Error ? error.message : "1688 图搜失败"); }
+    finally { setSimilarSearchBusy(false); }
   }
 
   async function selectCategory(nextCategoryId: string, prediction?: Record<string, unknown>) {
@@ -750,9 +765,7 @@ export function CbtGlobalPublishingPanel({
       <button className="secondary-button" onClick={onBackToEditing}><ArrowLeft size={16} /> 返回上架库</button>
     </header>
 
-    <aside className="wf-step-nav" aria-label="上架步骤">
-      {[['store-category','店铺和类目'],['basic','产品基本信息'],['media','产品图片'],['description','描述'],['variants','变体与 SKU'],['sales','销售配置']].map(([id,label], index) => <a key={id} href={`#${id}`}><span>{index + 1}</span>{label}</a>)}
-    </aside>
+    <aside className="wf-similar-search" aria-label="1688 图搜货源"><strong>1688 图搜货源</strong><small>使用当前商品第 1 张图；结果按平台相似排序，前 5 个只作价格参考。</small><button type="button" onClick={searchByCoverImage} disabled={similarSearchBusy || !draft.image_urls[0]}>{similarSearchBusy ? "搜索中…" : "搜图"}</button>{similarOffers && <div className="similar-offer-list">{similarOffers.offers.map((offer) => <a key={offer.offer_id || offer.rank} href={offer.offer_id ? `https://detail.1688.com/offer/${offer.offer_id}.html` : undefined} target="_blank" rel="noreferrer"><img src={offer.image_url} alt="" /><span><b>{offer.match_level} · #{offer.rank}</b><strong>{offer.title}</strong><em>¥ {offer.price ?? "-"}</em><small>{[offer.province, offer.city].filter(Boolean).join(" ")} · 供货 {offer.supply_amount ?? "-"}</small></span></a>)}</div>}</aside>
 
     <div className="wf-listing-layout">
       <aside className="drafts-sidebar surface wf-listing-rail">
