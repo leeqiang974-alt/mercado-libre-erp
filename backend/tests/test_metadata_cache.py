@@ -11,6 +11,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.meli_metadata_cache import MeliMetadataCache
+from app.services.meli.metadata_cache import category_predictions_key, category_tree_key
 from app.models.registry import import_all_models
 from app.services.meli.category_validation import validate_category_attributes
 from app.services.meli.listing_type_validation import validate_store_category_listing_type
@@ -57,6 +58,16 @@ def test_listing_types_are_cached_after_refresh(monkeypatch):
         cache = db.query(MeliMetadataCache).one()
         assert cache.cache_key == "listing_types:MLM"
         assert cache.payload_json["listing_type_ids"] == ["gold_special", "gold_pro"]
+
+
+def test_category_cache_keys_are_global_and_normalized():
+    prediction_key = category_predictions_key(" cbt ", "  Shower   Head ")
+    tree_key = category_tree_key(" cbt ", " cbt123 ")
+
+    assert prediction_key == "category_predictions:CBT:shower head"
+    assert tree_key == "category_tree:CBT:CBT123"
+    assert "store" not in prediction_key
+    assert "store" not in tree_key
 
 
 def test_listing_type_validation_requires_verified_current_site_metadata():

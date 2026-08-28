@@ -605,7 +605,7 @@ export async function getDraftPricing(productDraftId: number) {
 export async function getCbtCategoryPredictions(storeId: number, query: string) {
   const response = await fetch(`${API_BASE}/api/stores/${storeId}/cbt/category-predictions?q=${encodeURIComponent(query)}`);
   if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<{ store_id: number; query: string; predictions: Record<string, unknown>[] }>;
+  return response.json() as Promise<{ store_id: number; query: string; query_en?: string; source?: string; predictions: Record<string, unknown>[] }>;
 }
 
 export async function getCbtCategoryTree(storeId: number, categoryId = "") {

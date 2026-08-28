@@ -21,6 +21,16 @@ def category_details_key(category_id: str) -> str:
     return f"category_details:{category_id.strip().upper()}"
 
 
+def category_predictions_key(site_id: str, query: str) -> str:
+    return f"category_predictions:{site_id.strip().upper()}:{' '.join(query.split()).casefold()}"
+
+
+def category_tree_key(site_id: str, category_id: str = "") -> str:
+    normalized_site = site_id.strip().upper()
+    normalized_category = category_id.strip().upper()
+    return f"category_tree:{normalized_site}:{normalized_category or 'ROOT'}"
+
+
 def get_cached_metadata(db: Session, cache_key: str) -> dict | None:
     row = db.query(MeliMetadataCache).filter(MeliMetadataCache.cache_key == cache_key).one_or_none()
     return row.payload_json if row else None
