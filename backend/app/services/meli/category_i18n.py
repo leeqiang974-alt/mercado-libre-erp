@@ -8,6 +8,16 @@ import re
 
 
 PHRASE_TRANSLATIONS = {
+    "Construction": "建筑与装修",
+    "Bathrooms & Restrooms": "浴室与卫生间",
+    "Bathroom Fittings": "浴室配件",
+    "Handheld Showers": "手持花洒",
+    "Shower Heads": "淋浴喷头",
+    "Beauty and Personal Care": "美容与个人护理",
+    "Hair Salon Listings": "美发沙龙用品",
+    "Hair Salon": "美发沙龙",
+    "Hair Washing Sinks": "洗发盆",
+    "Hygienic Showers": "卫生淋浴",
     # Common MLM Spanish category terms.
     "Alimentos y Bebidas": "食品与饮料",
     "Hogar, Muebles y Jardín": "家居、家具与园艺",
@@ -61,6 +71,24 @@ TOKEN_TRANSLATIONS = {
     "Cooking": "烹饪",
 }
 
+QUERY_TRANSLATIONS = {
+    "淋浴": "shower",
+    "花洒": "shower",
+    "淋浴喷头": "shower head",
+    "洗发盆": "hair washing sink",
+    "洗头盆": "hair washing sink",
+    "卫生间": "bathroom",
+    "浴室": "bathroom",
+    "浴室配件": "bathroom fittings",
+    "建筑": "construction",
+    "装修": "construction",
+    "头发": "hair",
+    "美发": "hair salon",
+    "厨房": "kitchen",
+    "模具": "molds",
+    "烘焙": "bakeware",
+}
+
 
 def translate_category_text(value: object) -> str:
     """Return a conservative Chinese display label for an official name."""
@@ -85,6 +113,23 @@ def translate_category_text(value: object) -> str:
             flags=re.IGNORECASE,
         )
     return translated
+
+
+def translate_category_query(value: object) -> tuple[str, bool]:
+    """Translate supported Chinese category keywords before the official search."""
+    original = " ".join(str(value or "").split()).strip()
+    if not original:
+        return "", False
+    if all(ord(char) < 128 for char in original):
+        return original, True
+    translated = original
+    matched = False
+    for phrase in sorted(QUERY_TRANSLATIONS, key=len, reverse=True):
+        if phrase in translated:
+            translated = translated.replace(phrase, f" {QUERY_TRANSLATIONS[phrase]} ")
+            matched = True
+    translated = " ".join(translated.split()).strip()
+    return (translated, True) if matched else (original, False)
 
 
 def add_category_translations(payload: dict) -> dict:

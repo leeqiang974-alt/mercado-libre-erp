@@ -1,3 +1,4 @@
+import re
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
@@ -59,7 +60,7 @@ class ProductDraftContentUpdate(BaseModel):
         if any(ord(char) > 127 for char in normalized):
             raise ValueError("title must be in English")
         lowered = normalized.lower()
-        if any(term in lowered for term in MARKETING_TERMS):
+        if any(_contains_prohibited_term(lowered, term) for term in MARKETING_TERMS):
             raise ValueError("title contains a prohibited marketing term")
         return normalized
 
@@ -96,6 +97,12 @@ def _validate_media_urls(values: list[str], media_type: str) -> list[str]:
             normalized.append(candidate)
             seen.add(candidate)
     return normalized
+
+
+def _contains_prohibited_term(value: str, term: str) -> bool:
+    """Match whole words/phrases so ordinary words such as `stopper` pass."""
+    pattern = rf"(?<![A-Za-z0-9]){re.escape(term)}(?![A-Za-z0-9])"
+    return re.search(pattern, value, flags=re.IGNORECASE) is not None
 
 
 class PersistedDraftResponse(BaseModel):

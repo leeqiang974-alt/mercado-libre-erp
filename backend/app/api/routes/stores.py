@@ -28,7 +28,7 @@ from app.services.meli.metadata_cache import (
     upsert_cached_metadata,
 )
 from app.services.meli.cbt import normalize_cbt_profile
-from app.services.meli.category_i18n import add_category_translations, translate_category_text
+from app.services.meli.category_i18n import add_category_translations, translate_category_query, translate_category_text
 
 router = APIRouter(prefix="/api/stores", tags=["stores"])
 settings = get_settings()
@@ -224,9 +224,10 @@ async def get_cbt_category_predictions(
     store_id: int, q: str = Query(..., min_length=1, max_length=180), db: Session = Depends(get_db)
 ) -> dict[str, object]:
     """Use the authenticated CBT domain-discovery endpoint documented for Global Selling."""
-    query = " ".join(q.split())
-    if any(ord(char) > 127 for char in query):
-        raise HTTPException(status_code=422, detail="CBT category prediction requires an English title.")
+    original_query = " ".join(q.split())
+    query, query_supported = translate_category_query(original_query)
+    if not query_supported:
+        raise HTTPException(status_code=422, detail="中文关键词暂未收录，请换用更具体的中文词，或输入英文关键词。")
     store = db.get(Store, store_id)
     if store is None or store.site_id.strip().upper() != "CBT":
         raise HTTPException(status_code=422, detail="A connected CBT Global Selling store is required.")
@@ -256,8 +257,9 @@ async def get_cbt_category_predictions(
             **item,
             "category_name_zh": translate_category_text(item.get("category_name") or item.get("domain_name")),
             "domain_name_zh": translate_category_text(item.get("domain_name")),
+            "parent_path_zh": translate_category_text(item.get("parent_path")),
         })
-    return {"store_id": store.id, "query": query, "predictions": predictions}
+    return {"store_id": store.id, "query": original_query, "query_en": query, "predictions": predictions}
 
 
 @router.get("/{store_id}/cbt/category-tree")

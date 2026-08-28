@@ -9,6 +9,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.registry import import_all_models
+from app.services.meli.category_i18n import translate_category_query, translate_category_text
 
 
 def make_client():
@@ -146,3 +147,10 @@ def test_metadata_routes_verify_leaf_category(monkeypatch):
     assert response.json()["path_from_root"][-1]["name"] == "Muffin Pans"
     assert response.json()["name_zh"] == "玛芬烤盘"
     assert response.json()["path_from_root_zh"][-1]["name_zh"] == "玛芬烤盘"
+
+
+def test_category_translation_covers_shower_prediction_labels():
+    assert translate_category_text("Construction > Bathrooms & Restrooms > Shower Heads") == (
+        "建筑与装修 > 浴室与卫生间 > 淋浴喷头"
+    )
+    assert translate_category_query("淋浴喷头") == ("shower head", True)

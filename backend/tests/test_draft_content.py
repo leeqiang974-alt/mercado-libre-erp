@@ -11,6 +11,7 @@ from app.models.product_draft import ProductDraft
 from app.models.product_draft_approval import ProductDraftApproval
 from app.models.registry import import_all_models
 from app.models.review_result import ReviewDecision, ReviewResult
+from app.schemas.drafts import ProductDraftContentUpdate
 
 
 def make_client():
@@ -174,3 +175,19 @@ def test_draft_content_update_validates_title_images_and_missing_draft():
     ).status_code == 422
     assert client.put("/api/drafts/999/content", json=base).status_code == 404
     assert client.get("/api/drafts/999").status_code == 404
+
+
+def test_title_marketing_validation_matches_words_not_substrings():
+    payload = {
+        "expected_content_version": 1,
+        "title": "Hair Catcher Silicone Hair Stopper Shower Drain Covers",
+    }
+    assert ProductDraftContentUpdate.model_validate(payload).title == payload["title"]
+
+    for title in ("Top Shower Drain Cover", "Best Shower Drain Cover"):
+        try:
+            ProductDraftContentUpdate.model_validate({**payload, "title": title})
+        except ValueError as exc:
+            assert "prohibited marketing term" in str(exc)
+        else:
+            raise AssertionError(f"marketing title was accepted: {title}")
