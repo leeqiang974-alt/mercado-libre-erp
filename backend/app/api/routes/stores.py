@@ -31,7 +31,13 @@ from app.services.meli.metadata_cache import (
     upsert_cached_metadata,
 )
 from app.services.meli.cbt import normalize_cbt_profile
-from app.services.meli.category_i18n import add_category_translations, translate_category_query, translate_category_text
+from app.services.meli.category_i18n import (
+    add_category_translations,
+    translate_category_names_with_ai,
+    translate_category_payload_names,
+    translate_category_query,
+    translate_category_text,
+)
 
 router = APIRouter(prefix="/api/stores", tags=["stores"])
 settings = get_settings()
@@ -229,15 +235,17 @@ async def get_cbt_category_predictions(
     """Use the authenticated CBT domain-discovery endpoint documented for Global Selling."""
     original_query = " ".join(q.split())
     query, query_supported = translate_category_query(original_query)
-    if not query_supported:
-        raise HTTPException(status_code=422, detail="中文关键词暂未收录，请换用更具体的中文词，或输入英文关键词。")
+    # Keep Chinese input usable even when it is outside the small local query
+    # dictionary. The marketplace endpoint remains the source of truth; known
+    # Chinese terms are translated before calling it and unknown terms are sent
+    # through unchanged for the API to interpret or return no candidates.
     store = db.get(Store, store_id)
     if store is None or store.site_id.strip().upper() != "CBT":
         raise HTTPException(status_code=422, detail="A connected CBT Global Selling store is required.")
     if store.oauth_status != "connected":
         raise HTTPException(status_code=409, detail="Store is not connected.")
     cached = get_cached_metadata(db, category_predictions_key("CBT", query))
-    if isinstance(cached, dict) and isinstance(cached.get("predictions"), list):
+    if isinstance(cached, dict) and isinstance(cached.get("predictions"), list) and cached.get("translation_version") == 2:
         return {"store_id": store.id, "query": original_query, "query_en": query, "source": "cache", "predictions": cached["predictions"]}
     try:
         access_token = await resolve_fresh_store_access_token(
@@ -265,7 +273,14 @@ async def get_cbt_category_predictions(
             "domain_name_zh": translate_category_text(item.get("domain_name")),
             "parent_path_zh": translate_category_text(item.get("parent_path")),
         })
-    upsert_cached_metadata(db, category_predictions_key("CBT", query), {"site_id": "CBT", "query": query, "predictions": predictions})
+    names = [str(item.get("category_name") or item.get("domain_name") or "") for item in predictions]
+    names += [str(item.get("parent_path") or "") for item in predictions]
+    translations = await translate_category_names_with_ai(names, settings.deepseek_api_key, settings.deepseek_base_url, settings.deepseek_model)
+    for item in predictions:
+        item["category_name_zh"] = translations.get(str(item.get("category_name") or item.get("domain_name") or ""), item.get("category_name_zh", ""))
+        item["domain_name_zh"] = translations.get(str(item.get("domain_name") or ""), item.get("domain_name_zh", ""))
+        item["parent_path_zh"] = " > ".join(translations.get(part.strip(), part.strip()) for part in str(item.get("parent_path") or "").split(">"))
+    upsert_cached_metadata(db, category_predictions_key("CBT", query), {"site_id": "CBT", "query": query, "translation_version": 2, "predictions": predictions})
     return {"store_id": store.id, "query": original_query, "query_en": query, "source": "mercado_libre_api", "predictions": predictions}
 
 
@@ -284,7 +299,7 @@ async def get_cbt_category_tree(
         raise HTTPException(status_code=422, detail="CBT category ID is required.")
     cache_key = category_tree_key("CBT", normalized)
     cached = get_cached_metadata(db, cache_key)
-    if isinstance(cached, dict) and isinstance(cached.get("children"), list):
+    if isinstance(cached, dict) and isinstance(cached.get("children"), list) and cached.get("translation_version") == 3:
         return {**cached, "store_id": store.id, "source": "cache"}
     try:
         access_token = await resolve_fresh_store_access_token(
@@ -298,15 +313,19 @@ async def get_cbt_category_tree(
             detail = await client.get(f"/categories/{normalized}")
             if not isinstance(detail, dict):
                 raise ValueError("invalid_category_response")
-            translated = add_category_translations(detail)
+            translated = await translate_category_payload_names(
+                detail, settings.deepseek_api_key, settings.deepseek_base_url, settings.deepseek_model
+            )
+            translated_children = await translate_category_payload_names(
+                {"children": detail.get("children_categories", [])},
+                settings.deepseek_api_key, settings.deepseek_base_url, settings.deepseek_model,
+            )
             payload = {
                 "category": translated,
-                "children": [
-                    {**child, "name_zh": translate_category_text(child.get("name"))}
-                    for child in detail.get("children_categories", []) if isinstance(child, dict)
-                ],
+                "children": translated_children.get("children", []),
+                "translation_version": 3,
             }
-            upsert_cached_metadata(db, cache_key, {**payload, "site_id": "CBT"})
+            upsert_cached_metadata(db, cache_key, {**payload, "site_id": "CBT", "translation_version": 3})
             return {**payload, "store_id": store.id, "source": "mercado_libre_api"}
         roots = await client.get("/sites/CBT/categories")
     except HTTPException:
@@ -315,14 +334,15 @@ async def get_cbt_category_tree(
         raise HTTPException(status_code=502, detail="CBT category tree is unavailable.") from exc
     if not isinstance(roots, list):
         raise HTTPException(status_code=502, detail="CBT category tree returned an invalid response.")
-    payload = {
+    payload = await translate_category_payload_names({
         "category": None,
         "children": [
-            {**child, "name_zh": translate_category_text(child.get("name"))}
+            child
             for child in roots if isinstance(child, dict)
         ],
-    }
-    upsert_cached_metadata(db, cache_key, {**payload, "site_id": "CBT"})
+        "translation_version": 3,
+    }, settings.deepseek_api_key, settings.deepseek_base_url, settings.deepseek_model)
+    upsert_cached_metadata(db, cache_key, {**payload, "site_id": "CBT", "translation_version": 3})
     return {**payload, "store_id": store.id, "source": "mercado_libre_api"}
 
 

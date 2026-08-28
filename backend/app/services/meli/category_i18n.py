@@ -4,7 +4,10 @@ Official category names and ids remain the source of truth. This module only
 adds a display label; it never changes the payload sent to Mercado Libre.
 """
 
+import json
 import re
+
+import httpx
 
 
 PHRASE_TRANSLATIONS = {
@@ -148,4 +151,63 @@ def add_category_translations(payload: dict) -> dict:
         ]
     else:
         result["path_from_root_zh"] = []
+    return result
+
+
+async def translate_category_payload_names(
+    payload: dict, api_key: str, base_url: str, model: str
+) -> dict:
+    """Add Chinese labels to every category node in a tree/detail payload."""
+    names: list[str] = []
+
+    def collect(value: object) -> None:
+        if isinstance(value, dict):
+            if value.get("name"):
+                names.append(str(value["name"]))
+            for key in ("path_from_root", "children_categories", "children"):
+                collect(value.get(key))
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+
+    collect(payload)
+    translations = await translate_category_names_with_ai(names, api_key, base_url, model)
+
+    def apply(value: object) -> object:
+        if isinstance(value, dict):
+            result = {key: apply(item) for key, item in value.items()}
+            name = str(value.get("name") or "").strip()
+            if name:
+                result["name_zh"] = translations.get(name, translate_category_text(name))
+            path = value.get("path_from_root")
+            if isinstance(path, list):
+                result["path_from_root_zh"] = apply(path)
+            return result
+        if isinstance(value, list):
+            return [apply(item) for item in value]
+        return value
+
+    return apply(payload)
+
+
+async def translate_category_names_with_ai(values: list[str], api_key: str, base_url: str, model: str) -> dict[str, str]:
+    names = list(dict.fromkeys(" ".join(str(value or "").split()).strip() for value in values if str(value or "").strip()))
+    result = {name: translate_category_text(name) for name in names}
+    pending = [name for name in names if result[name] == name and any(ord(char) < 128 for char in name)]
+    if not pending or not api_key:
+        return result
+    prompt = "Translate each Mercado Libre category name into concise Simplified Chinese. Return JSON object only, preserving every key exactly.\n" + json.dumps(pending, ensure_ascii=False)
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(base_url.rstrip("/") + "/chat/completions", headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"}, json={"model": model, "temperature": 0, "messages": [{"role": "user", "content": prompt}]})
+            response.raise_for_status()
+            raw = response.json()["choices"][0]["message"]["content"]
+            cleaned = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", str(raw).strip(), flags=re.IGNORECASE)
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                for key, value in parsed.items():
+                    if key in result and isinstance(value, str) and any(ord(char) > 127 for char in value):
+                        result[key] = " ".join(value.split()).strip()
+    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError):
+        pass
     return result
