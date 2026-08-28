@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     volcengine_api_key: str = ""
     volcengine_base_url: str = "https://ark.cn-beijing.volces.com/api/coding/v3"
     volcengine_model: str = "doubao-seed-2.1-turbo"
+    deepseek_api_key: str = ""
+    deepseek_model: str = "deepseek-v3-flash"
+    content_generation_provider: str = "deepseek"
     alibaba_1688_app_key: str = ""
     alibaba_1688_app_secret: str = ""
     alibaba_1688_redirect_uri: str = "https://ml-erp.woxq.cn/api/integrations/1688/callback"
@@ -64,3 +67,4 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
