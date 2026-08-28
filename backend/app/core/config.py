@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     volcengine_api_key: str = ""
     volcengine_base_url: str = "https://ark.cn-beijing.volces.com/api/coding/v3"
     volcengine_model: str = "doubao-seed-2.1-turbo"
+    alibaba_1688_app_key: str = ""
+    alibaba_1688_app_secret: str = ""
+    alibaba_1688_redirect_uri: str = "https://ml-erp.woxq.cn/api/integrations/1688/callback"
     default_site_id: str = "MLM"
     allow_live_publish: bool = False
     token_encryption_key: str = "local-dev-token-key-change-me"
