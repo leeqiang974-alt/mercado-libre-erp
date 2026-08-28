@@ -79,6 +79,27 @@ export function App() {
     return () => window.removeEventListener("hashchange", openLocationRoute);
   }, []);
 
+  // The browser extension sends the new draft id immediately after Amazon
+  // capture succeeds. Open it at once; polling remains only as a fallback.
+  useEffect(() => {
+    const handleDraftReady = (event: Event) => {
+      const value = Number((event as CustomEvent<{ draftId?: number }>).detail?.draftId);
+      if (!Number.isInteger(value) || value < 1) return;
+      getDraft(value)
+        .then((selectedDraft) => {
+          setDraft(selectedDraft);
+          setDraftId(selectedDraft.id);
+          setReview(null);
+          setStatus(`采集完成，已返回上架商品 #${selectedDraft.id}`);
+          setPage("drafts");
+          setLocationPage("drafts", selectedDraft.id);
+        })
+        .catch(() => setStatus(`采集完成，但暂时无法读取上架商品 #${value}`));
+    };
+    window.addEventListener("meli-amazon-draft-ready", handleDraftReady);
+    return () => window.removeEventListener("meli-amazon-draft-ready", handleDraftReady);
+  }, []);
+
   // Direct Global Selling links must be self-contained. The publishing page
   // cannot rely on the editor having been opened in this browser session.
   useEffect(() => {

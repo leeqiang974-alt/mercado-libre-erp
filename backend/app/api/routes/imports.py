@@ -90,6 +90,47 @@ class AmazonExtensionCapture(BaseModel):
     snapshot: dict = Field(default_factory=dict)
 
 
+@router.post("/amazon-extension/capture", response_model=PersistedDraftResponse)
+def capture_amazon_extension_product(
+    payload: AmazonExtensionCapture, db: Session = Depends(get_db)
+) -> PersistedDraftResponse:
+    """Persist a product captured by the local Amazon extension and return its draft id."""
+    source_url = _normalized_amazon_url_or_422(payload.source_url)
+    target_site_id = _target_site_or_422(payload.target_site_id)
+    raw_snapshot = dict(payload.snapshot)
+    raw_snapshot.pop("video_urls", None)
+    try:
+        snapshot = AmazonSourceSnapshot.model_validate({**raw_snapshot, "source_url": source_url})
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid_extension_snapshot: {exc}") from exc
+    source = create_source_product(
+        db,
+        source_url=source_url,
+        status=SourceProductStatus.COLLECTED,
+        snapshot=snapshot,
+        collection_method="browser_extension",
+    )
+    variant_asin, variant_attributes = selected_source_variant(snapshot, source.asin)
+    draft_input = normalize_amazon_product(
+        {**snapshot.model_dump(), "video_urls": payload.snapshot.get("video_urls", [])},
+        target_site_id,
+    )
+    model = create_product_draft(
+        db,
+        draft_input,
+        source_product_id=source.id,
+        source_variant_asin=variant_asin,
+        source_variant_attributes=variant_attributes,
+        commit=False,
+    )
+    model.video_urls_json = [
+        str(value).strip() for value in payload.snapshot.get("video_urls", []) if str(value).strip()
+    ][:3]
+    db.commit()
+    db.refresh(model)
+    return PersistedDraftResponse(id=model.id, draft=draft_input)
+
+
 class AmazonDiscoveryImport(BaseModel):
     keyword: str = Field(min_length=2, max_length=160)
     domain: str = Field(default="amazon.com")
@@ -576,12 +617,14 @@ def capture_source_product_from_extension(
     source.technical_details_json = snapshot.technical_details
     source.measurements_json = snapshot.measurements.model_dump(exclude_none=True)
     drafts = db.query(ProductDraft).filter(ProductDraft.source_product_id == source.id).all()
+    draft_ids: list[int] = []
     for draft in drafts:
         variant = next((row for row in source.variants_json if str(row.get("asin", "")).upper() == (draft.source_variant_asin or "").upper()), None)
         images = variant.get("image_urls", []) if variant and variant.get("image_urls") else source.image_urls_json
         update_draft_content(db, draft.id, expected_content_version=draft.content_version, image_urls_json=images, video_urls_json=video_urls)
+        draft_ids.append(draft.id)
     db.commit()
-    return {"ok": True, "source_product_id": source.id, "draft_count": len(drafts), "image_count": len(source.image_urls_json), "video_count": len(video_urls)}
+    return {"ok": True, "source_product_id": source.id, "draft_count": len(drafts), "draft_ids": draft_ids, "image_count": len(source.image_urls_json), "video_count": len(video_urls)}
 
 
 @router.post(
