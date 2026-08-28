@@ -1976,6 +1976,11 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .wf-sites strong { color:#344054; font-size:12px; line-height:24px; margin-right:2px; }
 .wf-sites label { align-items:center; display:inline-flex; font-size:12px; gap:4px; margin:0; white-space:nowrap; }
 .wf-sites .is-disabled { color:#98a2b3; }
+.wf-site-selection { background:#fff; border:1px solid #d9e2ec; border-radius:4px; margin:12px 0 16px; padding:12px; }
+.wf-site-selection-head { align-items:center; display:flex; gap:12px; justify-content:space-between; margin-bottom:8px; }
+.wf-site-selection-head strong { color:#172b4d; font-size:13px; }
+.wf-site-selection-head span, .wf-site-selection-note { color:#667085; font-size:12px; }
+.wf-site-selection-note { display:block; margin-top:8px; }
 .wf-category-line { align-items:end; display:grid; gap:10px; grid-template-columns:minmax(260px,1fr) auto auto; margin-top:14px; }
 .wf-category-line label { margin:0; }
 .wf-title-input { align-items:center; display:flex; position:relative; }

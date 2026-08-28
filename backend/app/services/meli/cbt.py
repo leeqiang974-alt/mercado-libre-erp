@@ -58,7 +58,7 @@ def normalize_cbt_profile(
     return {
         "seller_id": seller_id,
         "site_id": "CBT",
-        "model": "user_products" if "user_products_seller" in tags else "traditional_global",
+        "model": "user_products" if any(str(tag).strip().lower() in {"user_products_seller", "user_product_seller"} for tag in tags) else "traditional_global",
         "tags": [str(tag) for tag in tags] if isinstance(tags, list) else [],
         "marketplaces": normalized,
     }
