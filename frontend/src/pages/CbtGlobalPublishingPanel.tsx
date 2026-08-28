@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Globe2,
@@ -18,6 +18,7 @@ import {
   getCbtListingConfig,
   getCbtMarketplaceListingTypes,
   getCbtPublishingProfile,
+  getDraft,
   getDraftPricing,
   executeCbtPublishFromDraft,
   getSystemReadiness,
@@ -289,12 +290,17 @@ export function CbtGlobalPublishingPanel({
   );
 
   useEffect(() => {
-    listDrafts().then((items) => {
+    let cancelled = false;
+    const refreshListingRail = () => listDrafts().then((items) => {
+      if (cancelled) return;
       const uniqueItems = uniqueDrafts(items);
       setListingRail(uniqueItems);
       const currentIndex = uniqueItems.filter((item) => item.publication_status !== "published").findIndex((item) => item.id === draftId);
       setListingPage(currentIndex >= 0 ? Math.floor(currentIndex / LISTING_PAGE_SIZE) + 1 : 1);
     }).catch(() => undefined);
+    void refreshListingRail();
+    const timer = window.setInterval(() => void refreshListingRail(), 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, [draftId]);
 
   // Selecting another card is an in-page edit-context change, not a document
@@ -479,19 +485,16 @@ export function CbtGlobalPublishingPanel({
       const query = categorySearchQuery.trim() || globalTitle;
       if (!query) throw new Error("请输入分类关键词或先填写英文标题。");
       if (!storeId) throw new Error("请先选择已授权 CBT 店铺。");
-      if (/[^\x00-\x7F]/.test(query)) throw new Error("官方 CBT 分类预测仅接受英文标题；中文可通过下方分类目录浏览。");
       const result = await getCbtCategoryPredictions(Number(storeId), query);
       const enriched = await Promise.all(result.predictions.slice(0, 6).map(async (prediction) => {
         const id = String(prediction.category_id ?? "");
         if (!id) return prediction;
         try {
           const details = await getCategoryDetails(id);
-          return { ...prediction, parent_path: (details.path_from_root_zh ?? details.path_from_root).map((item) => item.name_zh || item.name).filter(Boolean).join(" > "), is_leaf: details.leaf };
+          return { ...prediction, parent_path_zh: (details.path_from_root_zh ?? details.path_from_root).map((item) => item.name_zh || item.name).filter(Boolean).join(" > "), is_leaf: details.leaf };
         } catch { return prediction; }
       }));
       setPredictions(enriched);
-      const leaf = enriched.find((item) => item.is_leaf === true);
-      if (leaf) await selectCategory(String(leaf.category_id ?? ""), leaf);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "CBT 类目预测失败");
     } finally { setBusy(""); }
@@ -541,12 +544,17 @@ export function CbtGlobalPublishingPanel({
         }));
       });
       if (!result.ok) throw new Error(result.error || "重新采集素材失败");
-      const refreshed = await listDrafts();
-      setListingRail(uniqueDrafts(refreshed));
-      const current = refreshed.find((row) => row.id === draftId);
-      if (current) onDraftChange(current);
-      const updated = refreshed.find((row) => row.id === item.id);
-      setStatus(`已重新采集：${updated?.image_urls.length ?? 0} 张图片，${updated?.video_urls?.length ?? 0} 个视频链接。`);
+      // Read the full draft after the extension callback. The compact list can
+      // briefly lag behind the source-product transaction, which previously
+      // left the editor showing the pre-collection media until a full reload.
+      let updated = await getDraft(item.id);
+      for (let attempt = 0; attempt < 4 && updated.content_version <= item.content_version; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+        updated = await getDraft(item.id);
+      }
+      setListingRail((current) => uniqueDrafts(current.map((row) => row.id === updated.id ? updated : row)));
+      if (updated.id === draftId) onDraftChange(updated);
+      setStatus(`已重新采集：${updated.image_urls.length} 张图片，${updated.video_urls?.length ?? 0} 个视频链接。`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "重新采集素材失败");
     } finally {
@@ -789,10 +797,10 @@ export function CbtGlobalPublishingPanel({
         <div className="wf-form-row"><label>上架店铺 *<select value={storeId} onChange={(event) => { setStoreId(event.target.value); setOffers([]); setHasSavedConfig(false); offersInitializedRef.current = false; setPreview(null); }}><option value="">选择已启用的 CBT 店铺</option>{cbtStores.map((store) => <option key={store.id} value={store.id}>{store.display_name} · 卖家 {store.seller_id}</option>)}</select><small>商品、授权令牌、发布记录和限流将按此店铺独立执行。</small></label>
           <div className="wf-sites"><strong>同时发布到站点</strong><label><input type="checkbox" checked={allRemoteSelected} disabled={profile?.model !== "traditional_global" || remoteMarkets.length === 0} onChange={toggleAllRemoteMarkets} /> 全选</label>{remoteMarkets.map((market) => <label key={market.site_id}><input type="checkbox" checked={offers.some((offer) => offer.site_id === market.site_id)} onChange={() => toggleMarket(market.site_id)} /> {MARKET_NAMES[market.site_id]}</label>)}<label className="is-disabled"><input type="checkbox" disabled /> 墨西哥（FULL）</label></div></div>
         {profile && <p className="section-note">卖家 {profile.seller_id} · {profile.model === "traditional_global" ? "传统 Global Selling" : "User Products"}。Remote 站点默认全部勾选；墨西哥 FULL 由独立流程处理。</p>}
-          <div className="wf-category-line"><label>商品英文标题<small>系统默认用此标题智能匹配；需要时可修改关键词。</small><input value={categorySearchQuery} placeholder="例如 silicone muffin pan" onChange={(event) => setCategorySearchQuery(event.target.value)} /></label><button onClick={predictCategory} disabled={busy === "category" || busy === "attributes"}><Search size={16} /> 一键智能匹配</button></div><label>已选最终 CBT 分类 *<input readOnly value={categoryId} placeholder="点击“一键智能匹配”后自动选择最底层分类" /></label>
+          <div className="wf-category-line"><label>分类关键词搜索<small>支持中文或英文；点击结果中的最底层分类后自动确认。</small><input value={categorySearchQuery} placeholder="例如：淋浴喷头 / shower head" onChange={(event) => setCategorySearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void predictCategory(); }} /></label><button onClick={predictCategory} disabled={busy === "category" || busy === "attributes"}><Search size={16} /> 搜索分类</button></div><label>已选最终 CBT 分类 *<input readOnly value={categoryId} placeholder="从下方结果选择最底层分类后自动确认" /></label>
         {categoryPath && <p className="category-path-label">{categoryPath}{categoryId ? ` · ${categoryLeafVerified ? "最终 CBT 最底层分类已确认" : "待确认最终 CBT 分类"}` : " · 请在上方选择对应的 CBT 最底层分类"}</p>}
-        {predictions.length > 0 && <div className="prediction-list">{predictions.map((item) => { const id = String(item.category_id ?? ""); const name = String(item.category_name_zh ?? item.category_name ?? item.domain_name ?? id); const isSelected = id === categoryId; return <button className={isSelected ? "selected" : ""} key={id} onClick={() => void selectCategory(id, item)}><strong>{name}{item.is_leaf === true ? " · 最底层" : ""}</strong><small>{String(item.parent_path ?? "正在读取母级分类路径")}</small><small>{id} · {isSelected ? "已自动确认并加载属性" : "点击后自动选择并确认"}</small></button>; })}</div>}
-        <div className="section-note">智能推荐不合适？<button className="tiny-button" type="button" onClick={() => setShowCategoryTree((value) => !value)}>{showCategoryTree ? "收起手动分类" : "手动浏览分类"}</button></div>
+        {predictions.length > 0 && <div className="prediction-list">{predictions.map((item) => { const id = String(item.category_id ?? ""); const name = String(item.category_name_zh ?? item.category_name ?? item.domain_name ?? id); const isSelected = id === categoryId; return <button className={isSelected ? "selected" : ""} key={id} onClick={() => void selectCategory(id, item)}><strong>{name}{item.is_leaf === true ? " · 最底层" : ""}</strong><small>{String(item.parent_path_zh ?? item.parent_path ?? "正在读取母级分类路径")}</small><small>{id} · {isSelected ? "已自动确认并加载属性" : "点击后自动选择并确认"}</small></button>; })}</div>}
+        <div className="section-note">搜索结果不合适？<button className="tiny-button" type="button" onClick={() => { setShowCategoryTree((value) => !value); if (!showCategoryTree && !categoryTree.length) void browseCategoryTree(); }}>{showCategoryTree ? "收起分类目录" : "浏览完整分类目录"}</button></div>
         {showCategoryTree && <div className="prediction-list"><div className="section-note"><strong>官方 CBT 分类目录</strong> · {categoryTreePath || "正在读取"} <button className="tiny-button" type="button" onClick={() => browseCategoryTree()} disabled={busy === "category-tree"}>返回根分类</button></div>{categoryTree.map((item) => { const id = String(item.id ?? ""); const name = String(item.name_zh ?? item.name ?? id); return <button key={id} type="button" onClick={() => browseCategoryTree(id)}><strong>{name}</strong><small>{id} · 点击展开；没有子分类时即选为最终候选</small></button>; })}</div>}
       </section>
 
@@ -816,5 +824,4 @@ export function CbtGlobalPublishingPanel({
     <footer className="wf-action-bar"><span>{status || (saved ? "配置已保存" : "请先完成必填内容")}</span><div><button className="secondary-button" onClick={onBackToEditing}>取消</button><button disabled={busy === "save"} onClick={saveConfig}><Save size={16} /> 保存</button><button className="secondary-button" disabled={busy === "preview"} onClick={previewPayload}><ListChecks size={16} /> 预检</button><button disabled={!preview?.allowed || !readiness?.mercado_libre.live_publish_enabled || busy === "execute"} onClick={executePublish}><Globe2 size={16} /> 立即发布</button></div></footer>
   </section>;
 }
-
 
