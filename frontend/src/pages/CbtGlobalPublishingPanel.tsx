@@ -18,6 +18,7 @@ import {
   getCbtListingConfig,
   getCbtMarketplaceListingTypes,
   getCbtPublishingProfile,
+  getDraft,
   getDraftPricing,
   executeCbtPublishFromDraft,
   getSystemReadiness,
@@ -541,12 +542,17 @@ export function CbtGlobalPublishingPanel({
         }));
       });
       if (!result.ok) throw new Error(result.error || "重新采集素材失败");
-      const refreshed = await listDrafts();
-      setListingRail(uniqueDrafts(refreshed));
-      const current = refreshed.find((row) => row.id === draftId);
-      if (current) onDraftChange(current);
-      const updated = refreshed.find((row) => row.id === item.id);
-      setStatus(`已重新采集：${updated?.image_urls.length ?? 0} 张图片，${updated?.video_urls?.length ?? 0} 个视频链接。`);
+      // Read the full draft after the extension callback. The compact list can
+      // briefly lag behind the source-product transaction, which previously
+      // left the editor showing the pre-collection media until a full reload.
+      let updated = await getDraft(item.id);
+      for (let attempt = 0; attempt < 4 && updated.content_version <= item.content_version; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+        updated = await getDraft(item.id);
+      }
+      setListingRail((current) => uniqueDrafts(current.map((row) => row.id === updated.id ? updated : row)));
+      if (updated.id === draftId) onDraftChange(updated);
+      setStatus(`已重新采集：${updated.image_urls.length} 张图片，${updated.video_urls?.length ?? 0} 个视频链接。`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "重新采集素材失败");
     } finally {
