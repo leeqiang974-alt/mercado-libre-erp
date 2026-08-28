@@ -22,6 +22,7 @@ import {
   executeCbtPublishFromDraft,
   getSystemReadiness,
   deleteDraft,
+  getSourceProduct,
   listDrafts,
   listStores,
   mirrorDraftImagesToOss,
@@ -211,6 +212,7 @@ export function CbtGlobalPublishingPanel({
   const [readiness, setReadiness] = useState<SystemReadiness | null>(null);
   const [pricing, setPricing] = useState<DraftPricing | null>(null);
   const [busy, setBusy] = useState("");
+  const [recollectBusy, setRecollectBusy] = useState<number | null>(null);
   const LISTING_PAGE_SIZE = 20;
   const pendingListingRail = useMemo(
     () => listingRail.filter((item) => item.publication_status !== "published"),
@@ -466,6 +468,44 @@ export function CbtGlobalPublishingPanel({
     finally { setBusy(""); }
   }
 
+  async function recollectListingDraft(event: { stopPropagation: () => void }, item: ProductDraftRead) {
+    event.stopPropagation();
+    if (!item.source_product_id || recollectBusy !== null) return;
+    setRecollectBusy(item.id);
+    setStatus("正在请求本机 Amazon 插件后台采集素材...");
+    try {
+      const source = await getSourceProduct(item.source_product_id);
+      const result = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        const timer = window.setTimeout(() => {
+          window.removeEventListener("meli-amazon-recollect-result", handler);
+          resolve({ ok: false, error: "本机 Amazon 插件未返回结果，请确认插件已启用。" });
+        }, 30000);
+        function handler(event: Event) {
+          const detail = (event as CustomEvent<{ sourceProductId?: number; ok?: boolean; error?: string }>).detail;
+          if (detail?.sourceProductId !== item.source_product_id) return;
+          window.clearTimeout(timer);
+          window.removeEventListener("meli-amazon-recollect-result", handler);
+          resolve({ ok: detail.ok === true, error: detail.error });
+        }
+        window.addEventListener("meli-amazon-recollect-result", handler);
+        window.dispatchEvent(new CustomEvent("meli-amazon-recollect", {
+          detail: { sourceProductId: item.source_product_id, sourceUrl: source.source_url },
+        }));
+      });
+      if (!result.ok) throw new Error(result.error || "重新采集素材失败");
+      const refreshed = await listDrafts();
+      setListingRail(refreshed);
+      const current = refreshed.find((row) => row.id === draftId);
+      if (current) onDraftChange(current);
+      const updated = refreshed.find((row) => row.id === item.id);
+      setStatus(`已重新采集：${updated?.image_urls.length ?? 0} 张图片，${updated?.video_urls?.length ?? 0} 个视频链接。`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "重新采集素材失败");
+    } finally {
+      setRecollectBusy(null);
+    }
+  }
+
   async function selectCategory(nextCategoryId: string, prediction?: Record<string, unknown>) {
     if (!nextCategoryId) return;
     setCategoryId(nextCategoryId);
@@ -678,7 +718,7 @@ export function CbtGlobalPublishingPanel({
         <label className="listing-search"><Search size={14} /><input value={listingSearch} placeholder="定位商品编号或标题" onChange={(event) => setListingSearch(event.target.value)} /></label>
         {listingSearch.trim() && <p className="listing-search-result">{pendingListingRail.some((item) => String(item.id) === listingSearch.trim()) || pendingListingRail.some((item) => String(item.title ?? "").toLowerCase().includes(listingSearch.trim().toLowerCase())) ? "已定位，保留前后商品" : "未找到，当前显示原列表"}</p>}
         <div className="draft-rail-list">{listingPageItems.map((item) => <button className={`draft-rail-item ${item.id === draftId ? "selected" : ""}`} key={item.id} onClick={() => { window.location.href = `/?draft_id=${item.id}#drafts`; }}>
-          {!['published', 'pending', 'validating'].includes(item.publication_status || '') && <span className="draft-delete-wrap"><span className="draft-delete-icon" aria-hidden="true">×</span><span className="draft-delete-tooltip">删除商品</span><span role="button" tabIndex={0} className="draft-delete-hit" aria-label={`删除 ${item.title || "未命名商品"}`} onClick={(event) => void removeListingDraft(event, item)} /></span>}
+          {!['published', 'pending', 'validating'].includes(item.publication_status || '') && <><span className="draft-delete-wrap"><span className="draft-delete-icon" aria-hidden="true">×</span><span className="draft-delete-tooltip">删除商品</span><span role="button" tabIndex={0} className="draft-delete-hit" aria-label={`删除 ${item.title || "未命名商品"}`} onClick={(event) => void removeListingDraft(event, item)} /></span>{item.source_product_id && <span className="draft-recollect-wrap"><span className="draft-recollect-icon" aria-hidden="true">采</span><span className="draft-recollect-tooltip">重新采集素材</span><span role="button" tabIndex={0} className="draft-recollect-hit" aria-label={`重新采集 ${item.title || "未命名商品"}`} onClick={(event) => void recollectListingDraft(event, item)} />{recollectBusy === item.id && <span className="draft-recollect-spinner" aria-label="正在重新采集" />}</span>}</>}
           <img className="product-image" src={item.image_urls[0] || ""} alt="" /><span><strong>{item.title || "未命名商品"}</strong><small>#{item.id} · {item.target_site_id}</small><small>{item.publication_status === "published" ? `已发布：${item.published_sites.join("、") || "CBT"}` : item.publication_status === "pending" || item.publication_status === "validating" ? "发布中" : item.publication_status === "failed" || item.publication_status === "blocked" ? "发布失败，可修改后重试" : "未发布"}</small></span></button>)}</div>
         <div className="listing-pagination" aria-label="上架库分页">
           <button type="button" className="tiny-button" disabled={listingPage <= 1} onClick={() => setListingPage((page) => page - 1)}>上一页</button>
