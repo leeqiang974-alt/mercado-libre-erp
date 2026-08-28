@@ -290,12 +290,17 @@ export function CbtGlobalPublishingPanel({
   );
 
   useEffect(() => {
-    listDrafts().then((items) => {
+    let cancelled = false;
+    const refreshListingRail = () => listDrafts().then((items) => {
+      if (cancelled) return;
       const uniqueItems = uniqueDrafts(items);
       setListingRail(uniqueItems);
       const currentIndex = uniqueItems.filter((item) => item.publication_status !== "published").findIndex((item) => item.id === draftId);
       setListingPage(currentIndex >= 0 ? Math.floor(currentIndex / LISTING_PAGE_SIZE) + 1 : 1);
     }).catch(() => undefined);
+    void refreshListingRail();
+    const timer = window.setInterval(() => void refreshListingRail(), 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, [draftId]);
 
   // Selecting another card is an in-page edit-context change, not a document

@@ -241,6 +241,19 @@ export function DraftsPage({
       );
   }, []);
 
+  // Collection can finish in the background or in the local Amazon extension.
+  // Keep the library current without forcing a full document reload.
+  useEffect(() => {
+    let cancelled = false;
+    const refreshDraftLibrary = () => {
+      listDrafts()
+        .then((drafts) => { if (!cancelled) setSavedDrafts(drafts); })
+        .catch(() => undefined);
+    };
+    const timer = window.setInterval(refreshDraftLibrary, 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
+
   useEffect(() => {
     if (!reviewJobs.some((job) => job.status === "pending" || job.status === "running")) return;
     const timer = window.setTimeout(() => {
