@@ -602,8 +602,8 @@ export async function getDraftPricing(productDraftId: number) {
   return response.json() as Promise<DraftPricing | null>;
 }
 
-export async function getCbtCategoryPredictions(storeId: number, query: string) {
-  const response = await fetch(`${API_BASE}/api/stores/${storeId}/cbt/category-predictions?q=${encodeURIComponent(query)}`);
+export async function getCbtCategoryPredictions(storeId: number, query: string, mode: "smart" | "manual" = "smart") {
+  const response = await fetch(`${API_BASE}/api/stores/${storeId}/cbt/category-predictions?q=${encodeURIComponent(query)}&mode=${mode}`);
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<{ store_id: number; query: string; query_en?: string; source?: string; predictions: Record<string, unknown>[] }>;
 }

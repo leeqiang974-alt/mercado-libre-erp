@@ -27,6 +27,7 @@ services:
   backend:
     image: mvp-skeleton-backend:latest
     init: true
+    entrypoint: []
     environment:
       DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
       MELI_CLIENT_ID: ${MELI_CLIENT_ID:-}
