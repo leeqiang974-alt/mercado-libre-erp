@@ -42,7 +42,7 @@ async def sync_category_catalog(
     api_key: str,
     base_url: str,
     model: str,
-    max_nodes: int = 10000,
+    max_nodes: int = 100000,
 ) -> dict[str, object]:
     site = site_id.strip().upper()
     roots = await _get_with_retry(client, f"/sites/{site}/categories")
