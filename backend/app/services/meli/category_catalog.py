@@ -8,14 +8,72 @@ from sqlalchemy.orm import Session
 
 from app.services.meli.client import MercadoLibreClient
 from app.services.meli.category_i18n import (
+    has_chinese,
     translate_category_names_with_ai_batched,
     translate_category_text,
 )
-from app.services.meli.metadata_cache import upsert_cached_metadata
+from app.services.meli.metadata_cache import get_cached_metadata, upsert_cached_metadata
 
 
 def category_catalog_key(site_id: str) -> str:
     return f"category_catalog:{site_id.strip().upper()}"
+
+
+async def complete_category_catalog_translations(
+    db: Session, site_id: str, api_key: str, base_url: str, model: str
+) -> dict[str, object]:
+    """Fill only missing Chinese labels in an already-complete global catalog."""
+    site = site_id.strip().upper()
+    payload = get_cached_metadata(db, category_catalog_key(site))
+    if not isinstance(payload, dict) or payload.get("complete") is not True:
+        raise ValueError("category_catalog_not_complete")
+    nodes = [node for node in payload.get("nodes", []) if isinstance(node, dict)]
+    originals: list[str] = []
+    for node in nodes:
+        name = str(node.get("name") or "").strip()
+        translated = str(node.get("name_zh") or "").strip()
+        if name and not has_chinese(translated):
+            originals.append(name)
+        for index, path_name in enumerate(node.get("path_names", [])):
+            existing = (node.get("path_names_zh") or [])
+            current = str(existing[index] if index < len(existing) else "").strip()
+            if str(path_name).strip() and not has_chinese(current):
+                originals.append(str(path_name).strip())
+    translations = await translate_category_names_with_ai_batched(
+        originals, api_key, base_url, model, batch_size=20
+    )
+    unresolved: set[str] = set()
+    for node in nodes:
+        name = str(node.get("name") or "").strip()
+        existing_name_zh = str(node.get("name_zh") or "").strip()
+        node["name_zh"] = (
+            existing_name_zh if has_chinese(existing_name_zh)
+            else translations.get(name, translate_category_text(name))
+        )
+        path_names = [str(value) for value in node.get("path_names", [])]
+        existing_path_zh = [str(value) for value in node.get("path_names_zh", [])]
+        node["path_names_zh"] = [
+            existing_path_zh[index] if index < len(existing_path_zh) and has_chinese(existing_path_zh[index])
+            else translations.get(path_name, translate_category_text(path_name))
+            for index, path_name in enumerate(path_names)
+        ]
+        for original, translated in [(name, node["name_zh"]), *zip(path_names, node["path_names_zh"])]:
+            if original and not has_chinese(translated):
+                unresolved.add(original)
+    payload["nodes"] = nodes
+    payload["translation_version"] = 5
+    payload["translated_by"] = "deepseek+local"
+    payload["translation_complete"] = not unresolved
+    payload["translation_unresolved_count"] = len(unresolved)
+    payload["updated_at"] = datetime.now(UTC).isoformat()
+    upsert_cached_metadata(db, category_catalog_key(site), payload)
+    return {
+        "site": site,
+        "nodes": len(nodes),
+        "translation_complete": not unresolved,
+        "translation_unresolved_count": len(unresolved),
+        "translation_candidates": len(set(originals)),
+    }
 
 
 def _norm(value: object) -> str:

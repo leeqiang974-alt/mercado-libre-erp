@@ -11,6 +11,10 @@ import asyncio
 import httpx
 
 
+def has_chinese(value: object) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in str(value or ""))
+
+
 PHRASE_TRANSLATIONS = {
     "Construction": "建筑与装修",
     "Bathrooms & Restrooms": "浴室与卫生间",
@@ -215,7 +219,7 @@ async def translate_category_names_with_ai(values: list[str], api_key: str, base
             parsed = json.loads(cleaned)
             if isinstance(parsed, dict):
                 for key, value in parsed.items():
-                    if key in result and isinstance(value, str) and any(ord(char) > 127 for char in value):
+                    if key in result and isinstance(value, str) and has_chinese(value):
                         result[key] = " ".join(value.split()).strip()
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError):
         pass
@@ -238,11 +242,25 @@ async def translate_category_names_with_ai_batched(
         names[offset : offset + max(1, batch_size)]
         for offset in range(0, len(names), max(1, batch_size))
     ]
-    semaphore = asyncio.Semaphore(6)
+    semaphore = asyncio.Semaphore(3)
 
     async def translate_batch(batch: list[str]) -> dict[str, str]:
         async with semaphore:
-            return await translate_category_names_with_ai(batch, api_key, base_url, model)
+            translated = await translate_category_names_with_ai(batch, api_key, base_url, model)
+            unresolved = [name for name in batch if not has_chinese(translated.get(name))]
+            # JSON responses can omit keys under provider load. Retry only the
+            # omitted names so the saved catalog never silently labels English
+            # text as translated.
+            for attempt in range(2):
+                if not unresolved:
+                    break
+                await asyncio.sleep(attempt + 1)
+                retried = await translate_category_names_with_ai(
+                    unresolved, api_key, base_url, model
+                )
+                translated.update(retried)
+                unresolved = [name for name in unresolved if not has_chinese(translated.get(name))]
+            return translated
 
     translated_batches = await asyncio.gather(
         *(translate_batch(batch) for batch in batches)
