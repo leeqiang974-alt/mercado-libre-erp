@@ -31,6 +31,12 @@ from app.services.meli.metadata_cache import (
     upsert_cached_metadata,
 )
 from app.services.meli.cbt import normalize_cbt_profile
+from app.services.meli.category_catalog import (
+    browse_category_catalog,
+    category_catalog_key,
+    search_category_catalog,
+    sync_category_catalog,
+)
 from app.services.meli.category_i18n import (
     add_category_translations,
     translate_category_names_with_ai,
@@ -230,7 +236,10 @@ async def get_cbt_publishing_profile(
 
 @router.get("/{store_id}/cbt/category-predictions")
 async def get_cbt_category_predictions(
-    store_id: int, q: str = Query(..., min_length=1, max_length=180), db: Session = Depends(get_db)
+    store_id: int,
+    q: str = Query(..., min_length=1, max_length=180),
+    mode: str = Query(default="smart"),
+    db: Session = Depends(get_db),
 ) -> dict[str, object]:
     """Use the authenticated CBT domain-discovery endpoint documented for Global Selling."""
     original_query = " ".join(q.split())
@@ -244,6 +253,21 @@ async def get_cbt_category_predictions(
         raise HTTPException(status_code=422, detail="A connected CBT Global Selling store is required.")
     if store.oauth_status != "connected":
         raise HTTPException(status_code=409, detail="Store is not connected.")
+    catalog = get_cached_metadata(db, category_catalog_key("CBT"))
+    if mode == "manual":
+        predictions = search_category_catalog(catalog or {}, original_query)
+        if not predictions:
+            raise HTTPException(
+                status_code=409,
+                detail="分类全量缓存尚未完成，或缓存中没有匹配结果。",
+            )
+        return {
+            "store_id": store.id,
+            "query": original_query,
+            "query_en": query,
+            "source": "category_catalog_cache",
+            "predictions": predictions,
+        }
     cached = get_cached_metadata(db, category_predictions_key("CBT", query))
     if isinstance(cached, dict) and isinstance(cached.get("predictions"), list) and cached.get("translation_version") == 2:
         return {"store_id": store.id, "query": original_query, "query_en": query, "source": "cache", "predictions": cached["predictions"]}
@@ -284,6 +308,42 @@ async def get_cbt_category_predictions(
     return {"store_id": store.id, "query": original_query, "query_en": query, "source": "mercado_libre_api", "predictions": predictions}
 
 
+@router.post("/{store_id}/cbt/category-cache/sync")
+async def sync_cbt_category_cache(
+    store_id: int, db: Session = Depends(get_db)
+) -> dict[str, object]:
+    """Prewarm the global CBT bilingual category catalog from one authorized store."""
+    store = db.get(Store, store_id)
+    if store is None or store.site_id.strip().upper() != "CBT":
+        raise HTTPException(status_code=422, detail="A connected CBT Global Selling store is required.")
+    if store.oauth_status != "connected":
+        raise HTTPException(status_code=409, detail="Store is not connected.")
+    try:
+        access_token = await resolve_fresh_store_access_token(
+            db=db, store=store, encryption_key=settings.token_encryption_key,
+            oauth_client=create_oauth_client(db),
+        )
+        if not access_token:
+            raise HTTPException(status_code=409, detail="Store access token is unavailable.")
+        payload = await sync_category_catalog(
+            db, create_meli_client(access_token), "CBT",
+            settings.deepseek_api_key, settings.deepseek_base_url, settings.deepseek_model,
+        )
+        return {
+            "store_id": store.id,
+            "site": "CBT",
+            "source": "mercadolibre_api",
+            "node_count": len(payload["nodes"]),
+            "complete": payload["complete"],
+            "translation_version": payload["translation_version"],
+            "translated_by": payload["translated_by"],
+        }
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="CBT category cache sync failed.") from exc
+
+
 @router.get("/{store_id}/cbt/category-tree")
 async def get_cbt_category_tree(
     store_id: int, category_id: str = Query(default=""), db: Session = Depends(get_db)
@@ -299,6 +359,9 @@ async def get_cbt_category_tree(
         raise HTTPException(status_code=422, detail="CBT category ID is required.")
     cache_key = category_tree_key("CBT", normalized)
     cached = get_cached_metadata(db, cache_key)
+    catalog = get_cached_metadata(db, category_catalog_key("CBT"))
+    if isinstance(catalog, dict) and catalog.get("complete") is True:
+        return {**browse_category_catalog(catalog, normalized), "store_id": store.id}
     if isinstance(cached, dict) and isinstance(cached.get("children"), list) and cached.get("translation_version") == 3:
         return {**cached, "store_id": store.id, "source": "cache"}
     try:

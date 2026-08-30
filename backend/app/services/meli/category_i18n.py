@@ -166,3 +166,24 @@ async def translate_category_names_with_ai(values: list[str], api_key: str, base
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError):
         pass
     return result
+
+
+async def translate_category_names_with_ai_batched(
+    values: list[str], api_key: str, base_url: str, model: str, batch_size: int = 50
+) -> dict[str, str]:
+    """Translate a large catalog in bounded requests and merge the results."""
+    names = list(dict.fromkeys(
+        " ".join(str(value or "").split()).strip()
+        for value in values
+        if str(value or "").strip()
+    ))
+    merged = {name: translate_category_text(name) for name in names}
+    if not api_key:
+        return merged
+    for offset in range(0, len(names), max(1, batch_size)):
+        batch = names[offset : offset + max(1, batch_size)]
+        translated = await translate_category_names_with_ai(
+            batch, api_key, base_url, model
+        )
+        merged.update(translated)
+    return merged

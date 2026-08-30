@@ -462,7 +462,7 @@ export function CbtGlobalPublishingPanel({
           if (filtered.length !== current.length) setStatus("乌拉圭（MLU）当前不支持国际直发，已从本次发布站点排除；请保存配置后再发布。");
           return filtered;
         });
-        if (configLoaded && !hasSavedConfig && data.model === "traditional_global" && !offersInitializedRef.current) {
+        if (configLoaded && !hasSavedConfig && !offersInitializedRef.current) {
           setOffers(remoteMarketsForProfile(data).map((market) => createRemoteOffer(market, globalTitle)));
           offersInitializedRef.current = true;
         }
@@ -485,7 +485,11 @@ export function CbtGlobalPublishingPanel({
       const query = queryOverride?.trim() || categorySearchQuery.trim() || globalTitle;
       if (!query) throw new Error("请输入分类关键词或先填写英文标题。");
       if (!storeId) throw new Error("请先选择已授权 CBT 店铺。");
-      const result = await getCbtCategoryPredictions(Number(storeId), query);
+      const result = await getCbtCategoryPredictions(
+        Number(storeId),
+        query,
+        queryOverride ? "smart" : "manual",
+      );
       const enriched = await Promise.all(result.predictions.slice(0, 6).map(async (prediction) => {
         const id = String(prediction.category_id ?? "");
         if (!id) return prediction;
