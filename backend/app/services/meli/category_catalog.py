@@ -98,7 +98,7 @@ async def sync_category_catalog(
     for node in nodes:
         names.extend([str(node["name"]), *[str(item) for item in node["path_names"]]])
     translations = await translate_category_names_with_ai_batched(
-        names, api_key, base_url, model, batch_size=50
+        names, api_key, base_url, model, batch_size=100
     )
     for node in nodes:
         node["name_zh"] = translations.get(str(node["name"]), translate_category_text(node["name"]))

@@ -6,6 +6,7 @@ adds a display label; it never changes the payload sent to Mercado Libre.
 
 import json
 import re
+import asyncio
 
 import httpx
 
@@ -233,10 +234,19 @@ async def translate_category_names_with_ai_batched(
     merged = {name: translate_category_text(name) for name in names}
     if not api_key:
         return merged
-    for offset in range(0, len(names), max(1, batch_size)):
-        batch = names[offset : offset + max(1, batch_size)]
-        translated = await translate_category_names_with_ai(
-            batch, api_key, base_url, model
-        )
+    batches = [
+        names[offset : offset + max(1, batch_size)]
+        for offset in range(0, len(names), max(1, batch_size))
+    ]
+    semaphore = asyncio.Semaphore(6)
+
+    async def translate_batch(batch: list[str]) -> dict[str, str]:
+        async with semaphore:
+            return await translate_category_names_with_ai(batch, api_key, base_url, model)
+
+    translated_batches = await asyncio.gather(
+        *(translate_batch(batch) for batch in batches)
+    )
+    for translated in translated_batches:
         merged.update(translated)
     return merged
