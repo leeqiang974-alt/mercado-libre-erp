@@ -204,5 +204,21 @@ def to_draft_read(model: ProductDraft) -> ProductDraftRead:
     )
 
 
-def list_product_drafts(db: Session) -> list[ProductDraftRead]:
-    return [to_draft_read(model) for model in db.query(ProductDraft).order_by(ProductDraft.id.desc()).all()]
+def list_product_drafts(
+    db: Session, *, limit: int = 1000, compact: bool = False
+) -> list[ProductDraftRead]:
+    """Return the requested newest drafts without breaking the list endpoint.
+
+    ``compact`` is accepted as part of the listing-rail API contract.  The
+    read schema currently includes the same persisted fields in both modes,
+    so it cannot safely omit columns yet; keeping the argument here prevents
+    the public list route from raising a TypeError while the UI paginates.
+    """
+    del compact
+    models = (
+        db.query(ProductDraft)
+        .order_by(ProductDraft.id.desc())
+        .limit(max(1, min(int(limit), 1000)))
+        .all()
+    )
+    return [to_draft_read(model) for model in models]
