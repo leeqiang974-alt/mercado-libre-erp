@@ -607,6 +607,7 @@ def claim_next_amazon_extension_job(
         db.query(CollectionJob)
         .filter(
             CollectionJob.status == CollectionJobStatus.PENDING,
+            CollectionJob.collector_kind == "browser_extension",
             or_(CollectionJob.next_attempt_at.is_(None), CollectionJob.next_attempt_at <= now),
         )
         .order_by(CollectionJob.id.asc())
@@ -643,6 +644,7 @@ def claim_next_amazon_extension_job(
             "url": job.source_url,
             "sourceUrl": job.source_url,
             "targetSiteId": job.target_site_id,
+            "collectorKind": job.collector_kind,
             "campaignId": job.campaign_id,
             "campaignKeyword": job.campaign_keyword,
         }

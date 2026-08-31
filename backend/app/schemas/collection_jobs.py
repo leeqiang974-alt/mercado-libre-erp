@@ -10,6 +10,7 @@ class CollectionJobRead(BaseModel):
     id: int
     source_url: str
     target_site_id: str
+    collector_kind: str = "server"
     status: str
     message: str
     campaign_id: int | None = None

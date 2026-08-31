@@ -53,6 +53,7 @@ class CollectionJob(Base):
     source_url: Mapped[str] = mapped_column(Text)
     source_identity: Mapped[str | None] = mapped_column(String(256), nullable=True)
     target_site_id: Mapped[str] = mapped_column(String(8), default="MLM")
+    collector_kind: Mapped[str] = mapped_column(String(32), default="server", index=True)
     status: Mapped[CollectionJobStatus] = mapped_column(
         CollectionJobStatusType(),
         default=CollectionJobStatus.PENDING,

@@ -26,7 +26,7 @@ def create_collection_job(db: Session, source_url: str, target_site_id: str, *, 
 
 
 def create_collection_jobs(
-    db: Session, entries: list[tuple[str, str]], *, campaign_id: int | None = None, campaign_keyword: str | None = None
+    db: Session, entries: list[tuple[str, str]], *, campaign_id: int | None = None, campaign_keyword: str | None = None, collector_kind: str = "server"
 ) -> list[CollectionJob]:
     jobs = [
         CollectionJob(
@@ -35,6 +35,7 @@ def create_collection_jobs(
             target_site_id=target_site_id,
             campaign_id=campaign_id,
             campaign_keyword=campaign_keyword,
+            collector_kind=collector_kind,
         )
         for source_url, target_site_id in entries
     ]
@@ -54,6 +55,7 @@ def create_collection_jobs(
                 "target_site_id": job.target_site_id,
                 "campaign_id": job.campaign_id,
                 "campaign_keyword": job.campaign_keyword,
+                "collector_kind": job.collector_kind,
             },
             commit=False,
         )
@@ -414,6 +416,7 @@ def to_collection_job_read(
         id=job.id,
         source_url=job.source_url,
         target_site_id=job.target_site_id,
+        collector_kind=job.collector_kind,
         status=job.status.value,
         message=job.message,
         campaign_id=job.campaign_id,

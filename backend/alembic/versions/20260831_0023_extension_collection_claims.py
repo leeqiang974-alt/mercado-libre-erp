@@ -17,12 +17,16 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.add_column("collection_jobs", sa.Column("collector_kind", sa.String(length=32), nullable=False, server_default="server"))
+    op.create_index("ix_collection_jobs_collector_kind", "collection_jobs", ["collector_kind"])
     op.add_column("collection_jobs", sa.Column("claimed_by", sa.String(length=120), nullable=True))
     op.add_column("collection_jobs", sa.Column("claimed_at", sa.DateTime(), nullable=True))
     op.create_index("ix_collection_jobs_claimed_by", "collection_jobs", ["claimed_by"])
 
 
 def downgrade() -> None:
+    op.drop_index("ix_collection_jobs_collector_kind", table_name="collection_jobs")
+    op.drop_column("collection_jobs", "collector_kind")
     op.drop_index("ix_collection_jobs_claimed_by", table_name="collection_jobs")
     op.drop_column("collection_jobs", "claimed_at")
     op.drop_column("collection_jobs", "claimed_by")

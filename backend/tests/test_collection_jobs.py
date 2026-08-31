@@ -918,12 +918,13 @@ def test_collection_job_timeout_is_persisted_as_safe_failure(monkeypatch):
 
 def test_amazon_extension_claim_and_result_are_idempotent_and_audited():
     client, testing_session = make_client()
-    created = client.post(
-        "/api/imports/amazon-url/jobs",
-        json={"source_url": "https://www.amazon.com/dp/B000TEST01", "target_site_id": "CBT"},
-    )
-    assert created.status_code == 200
-    job_id = created.json()["id"]
+    with testing_session() as db:
+        job = collection_jobs_service.create_collection_jobs(
+            db,
+            [("https://www.amazon.com/dp/B000TEST01", "CBT")],
+            collector_kind="browser_extension",
+        )[0]
+        job_id = job.id
 
     claim = client.get("/api/imports/amazon-extension/next", params={"worker_id": "test-worker"})
     assert claim.status_code == 200
