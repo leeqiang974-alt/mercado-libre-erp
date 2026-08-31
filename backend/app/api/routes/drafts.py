@@ -1,9 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.product_draft import ProductDraft
+from app.models.collection_job import CollectionJob
+from app.models.cbt_listing_config import CbtListingConfig
+from app.models.draft_listing_config import DraftListingConfig
+from app.models.draft_pricing_config import DraftPricingConfig
+from app.models.product_draft_approval import ProductDraftApproval
+from app.models.review_job import ReviewJob
+from app.models.review_result import ReviewResult
 from app.models.publish_job import PublishJob, PublishJobStatus
 from app.schemas.draft_approvals import DraftApprovalCreate, DraftApprovalRead
 from app.schemas.draft_listing_config import DraftListingConfigRead, DraftListingConfigUpsert
@@ -103,6 +110,26 @@ def delete_draft(product_draft_id: int, db: Session = Depends(get_db)) -> Respon
     )
     if active_publish is not None:
         raise HTTPException(status_code=409, detail="published_or_active_draft_cannot_be_deleted")
+
+    # Collection jobs are source-history records.  Keep the history but detach
+    # the optional draft reference so deleting an unpublished draft cannot
+    # crash with a database foreign-key violation.
+    db.execute(
+        update(CollectionJob)
+        .where(CollectionJob.draft_id == product_draft_id)
+        .values(draft_id=None)
+    )
+    # These records are draft-owned working configuration/review state.  A
+    # draft that has not been published may remove them together with itself.
+    for model in (
+        ProductDraftApproval,
+        CbtListingConfig,
+        DraftListingConfig,
+        DraftPricingConfig,
+        ReviewJob,
+        ReviewResult,
+    ):
+        db.execute(delete(model).where(model.product_draft_id == product_draft_id))
     db.delete(draft)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
