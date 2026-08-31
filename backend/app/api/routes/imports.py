@@ -82,6 +82,7 @@ class AmazonUrlBatchImport(BaseModel):
     source_urls: list[AmazonProductUrl] = Field(min_length=1, max_length=100)
     target_site_id: str = "MLM"
     allow_existing: bool = False
+    collector_kind: str = Field(default="server", pattern="^(server|browser_extension)$")
 
 
 class AmazonExtensionCapture(BaseModel):
@@ -521,6 +522,7 @@ def _create_amazon_url_collection_jobs_batch(
     jobs = create_collection_jobs(
         db,
         [(normalized_url, target_site_id) for _, normalized_url in entries],
+        collector_kind=payload.collector_kind,
     ) if entries else []
     for (item_index, normalized_url), job in zip(entries, jobs, strict=True):
         items[item_index] = CollectionBatchItemRead(
