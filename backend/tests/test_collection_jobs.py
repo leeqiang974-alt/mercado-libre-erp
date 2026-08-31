@@ -13,6 +13,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.collection_job import CollectionJob, CollectionJobStatus
+from app.models.audit_event import AuditEvent
 from app.models.amazon_domain_throttle import AmazonDomainThrottle
 from app.models.product_draft import ProductDraft
 from app.models.registry import import_all_models
@@ -913,3 +914,60 @@ def test_collection_job_timeout_is_persisted_as_safe_failure(monkeypatch):
         assert throttle.last_outcome == "failed"
         assert throttle.in_flight_until is None
         assert throttle.reservation_id is None
+
+
+def test_amazon_extension_claim_and_result_are_idempotent_and_audited():
+    client, testing_session = make_client()
+    created = client.post(
+        "/api/imports/amazon-url/jobs",
+        json={"source_url": "https://www.amazon.com/dp/B000TEST01", "target_site_id": "CBT"},
+    )
+    assert created.status_code == 200
+    job_id = created.json()["id"]
+
+    claim = client.get("/api/imports/amazon-extension/next", params={"worker_id": "test-worker"})
+    assert claim.status_code == 200
+    assert claim.json()["job"]["id"] == job_id
+    assert claim.json()["job"]["kind"] == "meli_amazon_product"
+    empty = client.get("/api/imports/amazon-extension/next", params={"worker_id": "second-worker"})
+    assert empty.json()["job"] is None
+
+    result = client.post(
+        f"/api/imports/amazon-extension/jobs/{job_id}/result",
+        json={
+            "worker_id": "test-worker",
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
+            "status": "collected",
+            "snapshot": {
+                "source_url": "https://www.amazon.com/dp/B000TEST01",
+                "title": "Extension Test Product",
+                "price": {"amount": 12.5, "currency": "USD"},
+                "description": "A useful test product.",
+                "images": ["https://images.example.com/main.jpg"],
+                "video_urls": ["https://video.example.com/product.mp4"],
+                "variants": [],
+                "technical_details": {"Material": "Steel"},
+                "measurements": {},
+            },
+        },
+    )
+    assert result.status_code == 200
+    assert result.json()["status"] == "completed"
+    assert result.json()["quality"]["image_count"] == 1
+    assert result.json()["quality"]["video_count"] == 1
+    repeated = client.post(
+        f"/api/imports/amazon-extension/jobs/{job_id}/result",
+        json={
+            "worker_id": "test-worker",
+            "source_url": "https://amazon.com/dp/B000TEST01",
+            "status": "collected",
+            "snapshot": {},
+        },
+    )
+    assert repeated.status_code == 200
+    assert repeated.json()["idempotent"] is True
+    with testing_session() as db:
+        actions = [event.action for event in db.query(AuditEvent).all()]
+        assert "collection_job.created" in actions
+        assert "collection_job.extension_claimed" in actions
+        assert "collection_job.extension_finished" in actions

@@ -64,6 +64,9 @@
 - Keep product images and videos as separate draft media. Images may be ordered and a first image is the cover; do not include video URLs in any Mercado Libre publish payload until the target flow has explicit official video support and validation.
 - Amazon browser-extension collection has two separate contracts: a first capture creates a source product and draft through `/api/imports/amazon-extension/capture`; a re-collection updates only the drafts bound to `/source-products/{id}/extension-capture`. Both routes must reject a capture without a title or a valid listing image and return the observed image, video, variant, and technical-detail counts so the UI never labels an incomplete capture as successful. After changing an unpacked extension, reload it in Chrome before live verification.
 - Volcengine text generation runs only server-side through the encrypted integration credential. Prompts, API keys, authorization headers, and raw model responses must not be persisted or returned to the browser; record only non-sensitive generation metadata needed for audit.
+- The local browser extension is the overnight Amazon CBT collector. It may claim only `pending` collection jobs through `/api/imports/amazon-extension/next`; failed or human-verification jobs require an explicit retry and must never be hot-looped.
+- Browser-extension collection claims are persisted with worker id/time and every create, claim, completion, failure, stale recovery, retry, first capture, and recollection must be visible in `操作日志`. Never report overnight collection as running until a real extension claim and result have been observed.
+- Deletion is authoritative: intentionally deleted drafts must not be restored from backups. New collection must create a new draft only when its exact Amazon URL has not already been collected.
 
 ## Verification
 

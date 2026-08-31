@@ -1,11 +1,11 @@
 from typing import Annotated
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import re
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import func, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -87,6 +87,14 @@ class AmazonUrlBatchImport(BaseModel):
 class AmazonExtensionCapture(BaseModel):
     source_url: AmazonProductUrl
     target_site_id: str = "CBT"
+    snapshot: dict = Field(default_factory=dict)
+
+
+class AmazonExtensionJobResult(BaseModel):
+    worker_id: str = Field(min_length=1, max_length=120)
+    source_url: AmazonProductUrl
+    status: str = Field(default="collected", pattern="^(collected|needs_manual_action|failed)$")
+    message: str = Field(default="", max_length=2000)
     snapshot: dict = Field(default_factory=dict)
 
 
@@ -554,6 +562,226 @@ def get_amazon_url_collection_job_statuses(
     return list_collection_jobs_by_ids(db, unique_ids)
 
 
+@router.get("/amazon-extension/next")
+def claim_next_amazon_extension_job(
+    worker_id: str = Query(..., min_length=1, max_length=120),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Atomically give the local browser extension one CBT Amazon job.
+
+    This endpoint deliberately claims only pending jobs. Failed/manual jobs
+    require an explicit retry, so an overnight browser cannot create a hot
+    retry loop against Amazon.
+    """
+    now = datetime.now(UTC)
+    stale_before = now - timedelta(seconds=settings.job_stale_after_seconds)
+    stale_jobs = (
+        db.query(CollectionJob)
+        .filter(
+            CollectionJob.status == CollectionJobStatus.RUNNING,
+            CollectionJob.claimed_by.is_not(None),
+            CollectionJob.claimed_at.is_not(None),
+            CollectionJob.claimed_at < stale_before,
+        )
+        .all()
+    )
+    for stale in stale_jobs:
+        stale.status = CollectionJobStatus.PENDING
+        stale.message = "浏览器插件连接中断，已自动放回队列。"
+        stale.started_at = None
+        stale.completed_at = None
+        stale.claimed_by = None
+        stale.claimed_at = None
+        create_audit_event(
+            db,
+            actor_type="system",
+            actor_id="amazon-extension",
+            action="collection_job.extension_claim_expired",
+            entity_type="collection_job",
+            entity_id=str(stale.id),
+            before={"status": CollectionJobStatus.RUNNING.value},
+            after={"status": CollectionJobStatus.PENDING.value, "message": stale.message},
+            commit=False,
+        )
+    query = (
+        db.query(CollectionJob)
+        .filter(
+            CollectionJob.status == CollectionJobStatus.PENDING,
+            or_(CollectionJob.next_attempt_at.is_(None), CollectionJob.next_attempt_at <= now),
+        )
+        .order_by(CollectionJob.id.asc())
+    )
+    if db.get_bind().dialect.name == "postgresql":
+        query = query.with_for_update(skip_locked=True)
+    job = query.first()
+    if job is None:
+        db.commit()
+        return {"job": None}
+    job.status = CollectionJobStatus.RUNNING
+    job.started_at = now
+    job.completed_at = None
+    job.next_attempt_at = None
+    job.claimed_by = worker_id.strip()
+    job.claimed_at = now
+    job.message = "本机浏览器插件采集中。"
+    create_audit_event(
+        db,
+        actor_type="extension",
+        actor_id=worker_id.strip(),
+        action="collection_job.extension_claimed",
+        entity_type="collection_job",
+        entity_id=str(job.id),
+        before={"status": CollectionJobStatus.PENDING.value},
+        after={"status": CollectionJobStatus.RUNNING.value, "source_url": job.source_url},
+        commit=False,
+    )
+    db.commit()
+    return {
+        "job": {
+            "id": job.id,
+            "kind": "meli_amazon_product",
+            "url": job.source_url,
+            "sourceUrl": job.source_url,
+            "targetSiteId": job.target_site_id,
+            "campaignId": job.campaign_id,
+            "campaignKeyword": job.campaign_keyword,
+        }
+    }
+
+
+@router.post("/amazon-extension/jobs/{job_id}/result")
+def receive_amazon_extension_job_result(
+    job_id: int,
+    payload: AmazonExtensionJobResult,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    job = db.scalar(select(CollectionJob).where(CollectionJob.id == job_id).with_for_update())
+    if job is None:
+        raise HTTPException(status_code=404, detail="collection_job_not_found")
+    if job.status == CollectionJobStatus.COMPLETED:
+        return {"ok": True, "job_id": job.id, "status": job.status.value, "draft_id": job.draft_id, "idempotent": True}
+    if job.claimed_by and job.claimed_by != payload.worker_id.strip():
+        raise HTTPException(status_code=409, detail="collection_job_claimed_by_another_worker")
+    source_url = _normalized_amazon_url_or_422(payload.source_url)
+    if source_url != _normalized_amazon_url_or_422(job.source_url):
+        raise HTTPException(status_code=409, detail="collection_job_source_mismatch")
+    before_status = job.status.value
+    if payload.status != "collected":
+        job.status = (
+            CollectionJobStatus.NEEDS_MANUAL_ACTION
+            if payload.status == "needs_manual_action"
+            else CollectionJobStatus.FAILED
+        )
+        job.message = payload.message or (
+            "Amazon 需要人工验证。" if payload.status == "needs_manual_action" else "浏览器插件采集失败。"
+        )
+        job.completed_at = datetime.now(UTC)
+        job.claimed_by = None
+        job.claimed_at = None
+        create_audit_event(
+            db,
+            actor_type="extension",
+            actor_id=payload.worker_id.strip(),
+            action="collection_job.extension_finished",
+            entity_type="collection_job",
+            entity_id=str(job.id),
+            before={"status": before_status},
+            after={"status": job.status.value, "message": job.message},
+            commit=False,
+        )
+        db.commit()
+        return {"ok": True, "job_id": job.id, "status": job.status.value, "draft_id": None}
+    raw_snapshot = dict(payload.snapshot)
+    video_urls = [str(value).strip() for value in raw_snapshot.pop("video_urls", []) if str(value).strip()]
+    try:
+        snapshot = AmazonSourceSnapshot.model_validate({**raw_snapshot, "source_url": source_url})
+    except ValueError as exc:
+        _finish_extension_job_as_failed(db, job, payload.worker_id, f"invalid_extension_snapshot: {exc}")
+        raise HTTPException(status_code=422, detail="invalid_extension_snapshot") from exc
+    selected_images = select_listing_images(snapshot.images)
+    quality = _extension_capture_quality(snapshot, image_count=len(selected_images), video_count=len(video_urls))
+    if not snapshot.title.strip() or not selected_images:
+        message = "浏览器插件采集信息不完整：" + "、".join(quality["issues"])
+        _finish_extension_job_as_failed(db, job, payload.worker_id, message)
+        raise HTTPException(status_code=422, detail={"code": "extension_capture_incomplete", **quality})
+    source = create_source_product(
+        db,
+        source_url=source_url,
+        status=SourceProductStatus.COLLECTED,
+        snapshot=snapshot,
+        collection_method="browser_extension",
+    )
+    variant_asin, variant_attributes = selected_source_variant(snapshot, source.asin)
+    draft_payload = normalize_amazon_product(snapshot.model_dump(), job.target_site_id)
+    draft_payload.video_urls = video_urls
+    draft = create_product_draft(
+        db,
+        draft_payload,
+        source_product_id=source.id,
+        source_variant_asin=variant_asin,
+        source_variant_attributes=variant_attributes,
+        commit=False,
+    )
+    job.source_product_id = source.id
+    job.draft_id = draft.id
+    job.status = CollectionJobStatus.COMPLETED
+    job.message = "本机浏览器插件采集完成。"
+    job.completed_at = datetime.now(UTC)
+    job.claimed_by = None
+    job.claimed_at = None
+    create_audit_event(
+        db,
+        actor_type="extension",
+        actor_id=payload.worker_id.strip(),
+        action="collection_job.extension_finished",
+        entity_type="collection_job",
+        entity_id=str(job.id),
+        before={"status": before_status},
+        after={
+            "status": job.status.value,
+            "draft_id": draft.id,
+            "source_product_id": source.id,
+            "quality": quality,
+        },
+        commit=False,
+    )
+    db.commit()
+    return {"ok": True, "job_id": job.id, "status": job.status.value, "draft_id": draft.id, "quality": quality}
+
+
+@router.post("/amazon-extension/jobs/{job_id}/retry")
+def retry_amazon_extension_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    job = db.scalar(select(CollectionJob).where(CollectionJob.id == job_id).with_for_update())
+    if job is None:
+        raise HTTPException(status_code=404, detail="collection_job_not_found")
+    if job.status not in {CollectionJobStatus.FAILED, CollectionJobStatus.NEEDS_MANUAL_ACTION}:
+        raise HTTPException(status_code=409, detail="collection_job_not_retryable")
+    before = job.status.value
+    job.status = CollectionJobStatus.PENDING
+    job.message = "已手动重新加入本机插件采集队列。"
+    job.started_at = None
+    job.completed_at = None
+    job.next_attempt_at = None
+    job.claimed_by = None
+    job.claimed_at = None
+    create_audit_event(
+        db,
+        actor_type="operator",
+        actor_id="local-ui",
+        action="collection_job.retry_requested",
+        entity_type="collection_job",
+        entity_id=str(job.id),
+        before={"status": before},
+        after={"status": job.status.value},
+        commit=False,
+    )
+    db.commit()
+    return {"ok": True, "job_id": job.id, "status": job.status.value}
+
+
 @router.get("/source-products/{source_product_id}", response_model=SourceProductRead)
 def get_source_product(
     source_product_id: int,
@@ -619,6 +847,16 @@ def create_source_product_from_extension(
         source_variant_attributes=variant_attributes,
         commit=False,
     )
+    create_audit_event(
+        db,
+        actor_type="extension",
+        actor_id="browser-extension",
+        action="source_product.extension_captured",
+        entity_type="source_product",
+        entity_id=str(source.id),
+        after={"draft_id": draft.id, "target_site_id": target_site_id, "quality": quality},
+        commit=False,
+    )
     db.commit()
     db.refresh(draft)
     return {
@@ -673,6 +911,23 @@ def capture_source_product_from_extension(
         variant = next((row for row in source.variants_json if str(row.get("asin", "")).upper() == (draft.source_variant_asin or "").upper()), None)
         images = variant.get("image_urls", []) if variant and variant.get("image_urls") else source.image_urls_json
         update_draft_content(db, draft.id, expected_content_version=draft.content_version, image_urls_json=images, video_urls_json=video_urls)
+    create_audit_event(
+        db,
+        actor_type="extension",
+        actor_id="browser-extension",
+        action="source_product.extension_recollected",
+        entity_type="source_product",
+        entity_id=str(source.id),
+        after={
+            "draft_count": len(drafts),
+            "quality": _extension_capture_quality(
+                snapshot,
+                image_count=len(source.image_urls_json),
+                video_count=len(video_urls),
+            ),
+        },
+        commit=False,
+    )
     db.commit()
     return {
         "ok": True,
@@ -907,6 +1162,29 @@ def _try_normalize_amazon_url(source_url: str) -> str | None:
         return normalize_amazon_product_url(source_url)
     except ValueError:
         return None
+
+
+def _finish_extension_job_as_failed(
+    db: Session, job: CollectionJob, worker_id: str, message: str
+) -> None:
+    before = job.status.value
+    job.status = CollectionJobStatus.FAILED
+    job.message = message[:2000]
+    job.completed_at = datetime.now(UTC)
+    job.claimed_by = None
+    job.claimed_at = None
+    create_audit_event(
+        db,
+        actor_type="extension",
+        actor_id=worker_id.strip(),
+        action="collection_job.extension_finished",
+        entity_type="collection_job",
+        entity_id=str(job.id),
+        before={"status": before},
+        after={"status": job.status.value, "message": job.message},
+        commit=False,
+    )
+    db.commit()
 
 
 def _existing_collection_jobs(

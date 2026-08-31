@@ -16,6 +16,7 @@ from app.services.source_products import (
     selected_source_variant,
     to_source_product_summary,
 )
+from app.services.audit_events import create_audit_event
 
 Collector = Callable[[str, str], Awaitable[CollectionResult]]
 
@@ -38,6 +39,24 @@ def create_collection_jobs(
         for source_url, target_site_id in entries
     ]
     db.add_all(jobs)
+    db.flush()
+    for job in jobs:
+        create_audit_event(
+            db,
+            actor_type="system",
+            actor_id="collection-api",
+            action="collection_job.created",
+            entity_type="collection_job",
+            entity_id=str(job.id),
+            after={
+                "status": CollectionJobStatus.PENDING.value,
+                "source_url": job.source_url,
+                "target_site_id": job.target_site_id,
+                "campaign_id": job.campaign_id,
+                "campaign_keyword": job.campaign_keyword,
+            },
+            commit=False,
+        )
     db.commit()
     for job in jobs:
         db.refresh(job)
@@ -112,9 +131,23 @@ def recover_stale_collection_jobs(db: Session, stale_after_seconds: int) -> int:
         .all()
     )
     for job in jobs:
+        before = {"status": job.status.value, "started_at": job.started_at.isoformat() if job.started_at else None}
         job.status = CollectionJobStatus.FAILED
         job.message = "Collection worker interrupted; retry is safe."
         job.completed_at = datetime.now(UTC)
+        job.claimed_by = None
+        job.claimed_at = None
+        create_audit_event(
+            db,
+            actor_type="system",
+            actor_id="collection-recovery",
+            action="collection_job.stale_recovered",
+            entity_type="collection_job",
+            entity_id=str(job.id),
+            before=before,
+            after={"status": job.status.value, "message": job.message},
+            commit=False,
+        )
     if jobs:
         db.commit()
     return len(jobs)
@@ -178,6 +211,19 @@ async def run_collection_job(
     job.started_at = current_time
     job.completed_at = None
     job.next_attempt_at = None
+    job.claimed_by = None
+    job.claimed_at = None
+    create_audit_event(
+        db,
+        actor_type="system",
+        actor_id="collection-worker",
+        action="collection_job.started",
+        entity_type="collection_job",
+        entity_id=str(job.id),
+        before={"status": CollectionJobStatus.PENDING.value},
+        after={"status": CollectionJobStatus.RUNNING.value, "source_url": job.source_url},
+        commit=False,
+    )
     db.commit()
 
     try:
@@ -200,6 +246,19 @@ async def run_collection_job(
         job.message = message
         job.completed_at = datetime.now(UTC)
         job.status = CollectionJobStatus.FAILED
+        job.claimed_by = None
+        job.claimed_at = None
+        create_audit_event(
+            db,
+            actor_type="system",
+            actor_id="collection-worker",
+            action="collection_job.finished",
+            entity_type="collection_job",
+            entity_id=str(job.id),
+            before={"status": CollectionJobStatus.RUNNING.value},
+            after={"status": job.status.value, "message": message},
+            commit=False,
+        )
         _finish_domain_reservation(
             db,
             job.source_url,
@@ -226,6 +285,19 @@ async def run_collection_job(
         job.message = message
         job.completed_at = datetime.now(UTC)
         job.status = CollectionJobStatus.FAILED
+        job.claimed_by = None
+        job.claimed_at = None
+        create_audit_event(
+            db,
+            actor_type="system",
+            actor_id="collection-worker",
+            action="collection_job.finished",
+            entity_type="collection_job",
+            entity_id=str(job.id),
+            before={"status": CollectionJobStatus.RUNNING.value},
+            after={"status": job.status.value, "message": message},
+            commit=False,
+        )
         _finish_domain_reservation(
             db,
             job.source_url,
@@ -273,6 +345,24 @@ async def run_collection_job(
         job.message = result.message
         job.completed_at = datetime.now(UTC)
         job.status = _job_status_from_result(result)
+        job.claimed_by = None
+        job.claimed_at = None
+        create_audit_event(
+            db,
+            actor_type="system",
+            actor_id="collection-worker",
+            action="collection_job.finished",
+            entity_type="collection_job",
+            entity_id=str(job.id),
+            before={"status": CollectionJobStatus.RUNNING.value},
+            after={
+                "status": job.status.value,
+                "draft_id": job.draft_id,
+                "source_product_id": job.source_product_id,
+                "collection_method": result.collection_method,
+            },
+            commit=False,
+        )
         _finish_domain_reservation(
             db,
             job.source_url,
@@ -299,6 +389,18 @@ async def run_collection_job(
         job.message = f"Collection persistence failed: {exc}"
         job.completed_at = datetime.now(UTC)
         job.status = CollectionJobStatus.FAILED
+        job.claimed_by = None
+        job.claimed_at = None
+        create_audit_event(
+            db,
+            actor_type="system",
+            actor_id="collection-worker",
+            action="collection_job.persistence_failed",
+            entity_type="collection_job",
+            entity_id=str(job.id),
+            after={"status": job.status.value, "message": job.message},
+            commit=False,
+        )
         db.commit()
     db.refresh(job)
     return job
