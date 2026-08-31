@@ -537,17 +537,17 @@ export function CbtGlobalPublishingPanel({
     setStatus("正在请求本机 Amazon 插件后台采集素材...");
     try {
       const source = await getSourceProduct(item.source_product_id);
-      const result = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      const result = await new Promise<{ ok: boolean; error?: string; quality?: { complete?: boolean; issues?: string[]; image_count?: number; video_count?: number; variant_count?: number; technical_detail_count?: number } | null }>((resolve) => {
         const timer = window.setTimeout(() => {
           window.removeEventListener("meli-amazon-recollect-result", handler);
           resolve({ ok: false, error: "本机 Amazon 插件未返回结果，请确认插件已启用。" });
         }, 30000);
         function handler(event: Event) {
-          const detail = (event as CustomEvent<{ sourceProductId?: number; ok?: boolean; error?: string }>).detail;
+          const detail = (event as CustomEvent<{ sourceProductId?: number; ok?: boolean; error?: string; quality?: { complete?: boolean; issues?: string[]; image_count?: number; video_count?: number; variant_count?: number; technical_detail_count?: number } | null }>).detail;
           if (detail?.sourceProductId !== item.source_product_id) return;
           window.clearTimeout(timer);
           window.removeEventListener("meli-amazon-recollect-result", handler);
-          resolve({ ok: detail.ok === true, error: detail.error });
+          resolve({ ok: detail.ok === true, error: detail.error, quality: detail.quality });
         }
         window.addEventListener("meli-amazon-recollect-result", handler);
         window.dispatchEvent(new CustomEvent("meli-amazon-recollect", {
@@ -565,7 +565,10 @@ export function CbtGlobalPublishingPanel({
       }
       setListingRail((current) => uniqueDrafts(current.map((row) => row.id === updated.id ? updated : row)));
       if (updated.id === draftId) onDraftChange(updated);
-      setStatus(`已重新采集：${updated.image_urls.length} 张图片，${updated.video_urls?.length ?? 0} 个视频链接。`);
+      const qualityWarning = result.quality?.complete === false && result.quality.issues?.length
+        ? ` 仍需补全：${result.quality.issues.join("；")}。`
+        : "";
+      setStatus(`已重新采集：${updated.image_urls.length} 张图片，${updated.video_urls?.length ?? 0} 个视频链接，${result.quality?.variant_count ?? 0} 个变体，${result.quality?.technical_detail_count ?? 0} 条参数。${qualityWarning}`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "重新采集素材失败");
     } finally {

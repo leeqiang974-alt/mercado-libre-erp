@@ -90,6 +90,30 @@ class AmazonExtensionCapture(BaseModel):
     snapshot: dict = Field(default_factory=dict)
 
 
+def _extension_capture_quality(
+    snapshot: AmazonSourceSnapshot,
+    *,
+    image_count: int,
+    video_count: int,
+) -> dict[str, object]:
+    """Return an honest capture summary without treating optional media as an error."""
+    issues: list[str] = []
+    if not snapshot.title.strip():
+        issues.append("标题未读取到")
+    if image_count == 0:
+        issues.append("未读取到可用主图")
+    if not snapshot.description.strip() and not snapshot.bullets:
+        issues.append("描述和五点卖点均未读取到")
+    return {
+        "complete": not issues,
+        "issues": issues,
+        "image_count": image_count,
+        "video_count": video_count,
+        "variant_count": len(snapshot.variants),
+        "technical_detail_count": len(snapshot.technical_details),
+    }
+
+
 class AmazonDiscoveryImport(BaseModel):
     keyword: str = Field(min_length=2, max_length=160)
     domain: str = Field(default="amazon.com")
@@ -541,6 +565,71 @@ def get_source_product(
     return to_source_product_read(source)
 
 
+@router.post("/amazon-extension/capture")
+def create_source_product_from_extension(
+    payload: AmazonExtensionCapture,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Persist a first-time browser-extension capture as a source and draft.
+
+    This is intentionally separate from the re-collection endpoint below: a
+    first capture creates one draft, while re-collection only updates drafts
+    already bound to the source product.
+    """
+    source_url = _normalized_amazon_url_or_422(payload.source_url)
+    target_site_id = _target_site_or_422(payload.target_site_id)
+    raw_snapshot = dict(payload.snapshot)
+    video_urls = [
+        str(value).strip()
+        for value in raw_snapshot.pop("video_urls", [])
+        if str(value).strip()
+    ]
+    try:
+        snapshot = AmazonSourceSnapshot.model_validate({**raw_snapshot, "source_url": source_url})
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid_extension_snapshot: {exc}") from exc
+
+    selected_images = select_listing_images(snapshot.images)
+    quality = _extension_capture_quality(
+        snapshot,
+        image_count=len(selected_images),
+        video_count=len(video_urls),
+    )
+    if not snapshot.title.strip() or not selected_images:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "extension_capture_incomplete", **quality},
+        )
+
+    source = create_source_product(
+        db,
+        source_url=source_url,
+        status=SourceProductStatus.COLLECTED,
+        snapshot=snapshot,
+        collection_method="browser_extension",
+    )
+    variant_asin, variant_attributes = selected_source_variant(snapshot, source.asin)
+    draft_payload = normalize_amazon_product(snapshot.model_dump(), target_site_id)
+    draft_payload.video_urls = video_urls
+    draft = create_product_draft(
+        db,
+        draft_payload,
+        source_product_id=source.id,
+        source_variant_asin=variant_asin,
+        source_variant_attributes=variant_attributes,
+        commit=False,
+    )
+    db.commit()
+    db.refresh(draft)
+    return {
+        "ok": True,
+        "id": draft.id,
+        "draft_id": draft.id,
+        "source_product_id": source.id,
+        "quality": quality,
+    }
+
+
 @router.post("/source-products/{source_product_id}/extension-capture")
 def capture_source_product_from_extension(
     source_product_id: int,
@@ -554,7 +643,11 @@ def capture_source_product_from_extension(
     if normalize_amazon_product_url(source.source_url) != source_url:
         raise HTTPException(status_code=409, detail="source_product_url_mismatch")
     raw_snapshot = dict(payload.snapshot)
-    video_urls = [str(value).strip() for value in raw_snapshot.pop("video_urls", []) if str(value).strip()]
+    video_urls = [
+        str(value).strip()
+        for value in raw_snapshot.pop("video_urls", [])
+        if str(value).strip()
+    ]
     try:
         snapshot = AmazonSourceSnapshot.model_validate({**raw_snapshot, "source_url": source_url})
     except ValueError as exc:
@@ -581,7 +674,16 @@ def capture_source_product_from_extension(
         images = variant.get("image_urls", []) if variant and variant.get("image_urls") else source.image_urls_json
         update_draft_content(db, draft.id, expected_content_version=draft.content_version, image_urls_json=images, video_urls_json=video_urls)
     db.commit()
-    return {"ok": True, "source_product_id": source.id, "draft_count": len(drafts), "image_count": len(source.image_urls_json), "video_count": len(video_urls)}
+    return {
+        "ok": True,
+        "source_product_id": source.id,
+        "draft_count": len(drafts),
+        "quality": _extension_capture_quality(
+            snapshot,
+            image_count=len(source.image_urls_json),
+            video_count=len(video_urls),
+        ),
+    }
 
 
 @router.post(

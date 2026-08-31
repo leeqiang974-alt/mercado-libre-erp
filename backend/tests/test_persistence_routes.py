@@ -496,3 +496,41 @@ def test_import_amazon_url_persists_manual_action_without_draft(monkeypatch):
         source = session.query(SourceProduct).one()
         assert source.raw_status == SourceProductStatus.NEEDS_MANUAL_ACTION
         assert session.query(ProductDraft).count() == 0
+
+
+def test_browser_extension_first_capture_creates_a_draft_and_quality_summary():
+    client, testing_session = make_client()
+
+    response = client.post(
+        "/api/imports/amazon-extension/capture",
+        json={
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
+            "target_site_id": "CBT",
+            "snapshot": {
+                "source_url": "https://www.amazon.com/dp/B000TEST01",
+                "title": "Example silicone floor squeegee",
+                "price": {"amount": 22.99, "currency": "USD"},
+                "bullets": ["Flexible silicone blade"],
+                "images": ["https://images-na.ssl-images-amazon.com/images/I/example._AC_SL1500_.jpg"],
+                "video_urls": ["https://example.test/product-video.mp4"],
+                "technical_details": {"Blade Material": "Silicone"},
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == 1
+    assert body["quality"] == {
+        "complete": True,
+        "issues": [],
+        "image_count": 1,
+        "video_count": 1,
+        "variant_count": 0,
+        "technical_detail_count": 1,
+    }
+    with Session(testing_session.kw["bind"]) as session:
+        draft = session.query(ProductDraft).one()
+        source = session.query(SourceProduct).one()
+        assert draft.video_urls_json == ["https://example.test/product-video.mp4"]
+        assert source.collection_method == "browser_extension"
