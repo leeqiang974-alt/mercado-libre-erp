@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.services.meli.client import MercadoLibreClient
 from app.services.meli.category_i18n import (
     has_chinese,
+    translate_category_names_with_ai,
     translate_category_text,
 )
 from app.services.meli.metadata_cache import get_cached_metadata, upsert_cached_metadata
