@@ -37,6 +37,7 @@ from app.services.drafts import (
     to_draft_read,
     update_draft_content,
 )
+from app.services.audit_events import create_audit_event
 from app.services.draft_pricing import (
     get_draft_pricing,
     require_current_draft_pricing,
@@ -111,6 +112,16 @@ def delete_draft(product_draft_id: int, db: Session = Depends(get_db)) -> Respon
     if active_publish is not None:
         raise HTTPException(status_code=409, detail="published_or_active_draft_cannot_be_deleted")
 
+    before = {
+        "draft_id": draft.id,
+        "source_product_id": draft.source_product_id,
+        "target_site_id": draft.target_site_id,
+        "title": draft.title,
+        "status": draft.status.value if hasattr(draft.status, "value") else str(draft.status),
+        "image_count": len(draft.image_urls_json or []),
+        "video_count": len(draft.video_urls_json or []),
+    }
+
     # Collection jobs are source-history records.  Keep the history but detach
     # the optional draft reference so deleting an unpublished draft cannot
     # crash with a database foreign-key violation.
@@ -130,6 +141,17 @@ def delete_draft(product_draft_id: int, db: Session = Depends(get_db)) -> Respon
         ReviewResult,
     ):
         db.execute(delete(model).where(model.product_draft_id == product_draft_id))
+    create_audit_event(
+        db=db,
+        actor_type="human",
+        actor_id="operator",
+        action="draft.deleted",
+        entity_type="product_draft",
+        entity_id=str(product_draft_id),
+        before=before,
+        after={"deleted": True},
+        commit=False,
+    )
     db.delete(draft)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

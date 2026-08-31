@@ -623,6 +623,11 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .snapshot-actions .check-row { margin: 10px 0; }
 .import-error { overflow-wrap: anywhere; }
 .compact-empty { padding: 24px; }
+.audit-event-list { display: grid; gap: 10px; margin-top: 16px; }
+.audit-event { display: grid; gap: 5px; padding: 14px 16px; border: 1px solid #dde3ea; border-radius: 8px; background: #fff; }
+.audit-event span, .audit-event time { color: #697586; font-size: 13px; }
+.audit-event details { margin-top: 4px; }
+.audit-event pre { margin: 8px 0 0; max-height: 260px; overflow: auto; white-space: pre-wrap; }
 
 .collection-job-list {
   display: grid;

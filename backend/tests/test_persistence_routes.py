@@ -534,3 +534,16 @@ def test_browser_extension_first_capture_creates_a_draft_and_quality_summary():
         source = session.query(SourceProduct).one()
         assert draft.video_urls_json == ["https://example.test/product-video.mp4"]
         assert source.collection_method == "browser_extension"
+
+
+def test_delete_draft_writes_operation_log():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        draft = create_product_draft(db, ProductDraftCreate(title="Delete me"))
+        draft_id = draft.id
+
+    response = client.delete(f"/api/drafts/{draft_id}")
+    assert response.status_code == 204
+    with Session(testing_session.kw["bind"]) as session:
+        event = session.query(AuditEvent).filter_by(action="draft.deleted", entity_id=str(draft_id)).one()
+        assert event.after_json == {"deleted": True}

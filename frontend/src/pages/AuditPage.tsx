@@ -6,12 +6,12 @@ export function AuditPage() {
   const [status, setStatus] = useState("");
 
   async function refreshEvents() {
-    setStatus("Loading audit events");
+    setStatus("正在读取操作日志");
     try {
       setEvents(await listAuditEvents());
       setStatus("");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Failed to load audit events");
+      setStatus(error instanceof Error ? error.message : "读取操作日志失败");
     }
   }
 
@@ -21,13 +21,20 @@ export function AuditPage() {
 
   return (
     <section className="panel">
-      <h2>Audit Events</h2>
+      <h2>操作日志</h2>
       <div className="button-row">
-        <button onClick={refreshEvents}>Refresh Audit Events</button>
+        <button onClick={refreshEvents}>刷新日志</button>
       </div>
       {status && <p>{status}</p>}
-      {events.length === 0 && <p>No audit events yet.</p>}
-      {events.length > 0 && <pre>{JSON.stringify(events, null, 2)}</pre>}
+      {events.length === 0 && <p>暂无操作记录。</p>}
+      {events.length > 0 && <div className="audit-event-list">{events.map((event) => (
+        <article className="audit-event" key={event.id}>
+          <strong>{event.action === "draft.deleted" ? "删除草稿" : event.action}</strong>
+          <span>对象：{event.entity_type} #{event.entity_id} · 操作人：{event.actor_id}</span>
+          <time>{new Date(event.created_at).toLocaleString("zh-CN")}</time>
+          <details><summary>查看变更</summary><pre>{JSON.stringify({ before: event.before, after: event.after }, null, 2)}</pre></details>
+        </article>
+      ))}</div>}
     </section>
   );
 }
