@@ -54,6 +54,17 @@ PHRASE_TRANSLATIONS = {
     "Cooking": "烹饪",
     "Home": "家居",
     "Bakeware": "烘焙用具",
+    # Stable CBT labels that the provider has repeatedly omitted or timed out
+    # on.  Keep them as exact display-only mappings; the official English
+    # category id/name remains the value submitted to Mercado Libre.
+    "Call Blockers": "来电拦截器",
+    "PS2 - PlayStation 2": "PS2 - PlayStation 2 游戏机",
+    "Remote Speaker Microphones": "远程扬声器麦克风",
+    "Valves": "阀门",
+    "Wattmeters and Roimeters": "功率表和转速表",
+    "Xbox 360": "Xbox 360 游戏机",
+    "Xbox One": "Xbox One 游戏机",
+    "Xbox Series X/S": "Xbox Series X/S 游戏机",
 }
 
 TOKEN_TRANSLATIONS = {
