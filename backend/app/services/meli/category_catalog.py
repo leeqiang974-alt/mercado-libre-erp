@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.services.meli.client import MercadoLibreClient
 from app.services.meli.category_i18n import (
     has_chinese,
+    needs_category_translation_quality_review,
     translate_category_names_with_ai,
     translate_category_text,
 )
@@ -93,6 +94,82 @@ async def complete_category_catalog_translations(
         "translation_complete": not unresolved,
         "translation_unresolved_count": len(unresolved),
         "translation_candidates": len(pending),
+    }
+
+
+async def improve_category_catalog_translation_quality(
+    db: Session, site_id: str, api_key: str, base_url: str, model: str
+) -> dict[str, object]:
+    """Replace only Chinese labels with residual generic English words.
+
+    This is a second, bounded quality pass over the completed global cache.
+    It deliberately uses the official English source names as AI input, keeps
+    brand/model text where appropriate, and checkpoints every five names.
+    """
+    site = site_id.strip().upper()
+    payload = get_cached_metadata(db, category_catalog_key(site))
+    if not isinstance(payload, dict) or payload.get("complete") is not True:
+        raise ValueError("category_catalog_not_complete")
+    nodes = [node for node in payload.get("nodes", []) if isinstance(node, dict)]
+    targets: set[str] = set()
+    for node in nodes:
+        name = str(node.get("name") or "").strip()
+        if name and needs_category_translation_quality_review(node.get("name_zh")):
+            targets.add(name)
+        labels = node.get("path_names_zh") or []
+        for index, path_name in enumerate(node.get("path_names", [])):
+            current = labels[index] if index < len(labels) else ""
+            if str(path_name).strip() and needs_category_translation_quality_review(current):
+                targets.add(str(path_name).strip())
+    pending = sorted(targets)
+    translations: dict[str, str] = {}
+
+    def apply_and_checkpoint() -> set[str]:
+        unresolved: set[str] = set()
+        for node in nodes:
+            name = str(node.get("name") or "").strip()
+            if name in targets and has_chinese(translations.get(name)):
+                node["name_zh"] = translations[name]
+            path_names = [str(value) for value in node.get("path_names", [])]
+            labels = [str(value) for value in node.get("path_names_zh", [])]
+            node["path_names_zh"] = [
+                translations.get(path_name, labels[index] if index < len(labels) else translate_category_text(path_name))
+                if path_name in targets and has_chinese(translations.get(path_name))
+                else (labels[index] if index < len(labels) else translate_category_text(path_name))
+                for index, path_name in enumerate(path_names)
+            ]
+            if name in targets and needs_category_translation_quality_review(node.get("name_zh")):
+                unresolved.add(name)
+            for index, path_name in enumerate(path_names):
+                if path_name in targets and needs_category_translation_quality_review(node["path_names_zh"][index]):
+                    unresolved.add(path_name)
+        payload["nodes"] = nodes
+        payload["translation_quality_version"] = 1
+        payload["translation_quality_complete"] = not unresolved
+        payload["translation_quality_unresolved_count"] = len(unresolved)
+        payload["updated_at"] = datetime.now(UTC).isoformat()
+        upsert_cached_metadata(db, category_catalog_key(site), payload)
+        return unresolved
+
+    for offset in range(0, len(pending), 5):
+        batch = pending[offset : offset + 5]
+        translated = await translate_category_names_with_ai(
+            batch, api_key, base_url, model, force=True
+        )
+        for name in batch:
+            candidate = translated.get(name, "")
+            if has_chinese(candidate):
+                translations[name] = candidate
+        apply_and_checkpoint()
+        if offset + 5 < len(pending):
+            await asyncio.sleep(0.75)
+    unresolved = apply_and_checkpoint()
+    return {
+        "site": site,
+        "nodes": len(nodes),
+        "quality_candidates": len(pending),
+        "translation_quality_complete": not unresolved,
+        "translation_quality_unresolved_count": len(unresolved),
     }
 
 

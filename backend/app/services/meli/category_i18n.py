@@ -108,6 +108,23 @@ QUERY_TRANSLATIONS = {
     "烘焙": "bakeware",
 }
 
+# These are ordinary English category words, not product brands or model
+# identifiers.  Their presence beside Chinese means an earlier fallback or AI
+# response is only partially translated and belongs in the quality pass.
+_UNTRANSLATED_CATEGORY_WORDS = re.compile(
+    r"\b(?:and|or|for|with|the|home|furniture|garden|cooking|kitchen|"
+    r"molds?|pans?|tables?|appliances?|outfits?|sets?|discada|engine|oil|"
+    r"floor|maker|craft|dining|nautical|gaskets?|pastry|pots?|sinks?|"
+    r"accessories|parts?|controllers?|consoles?)\b",
+    re.IGNORECASE,
+)
+
+
+def needs_category_translation_quality_review(value: object) -> bool:
+    """Detect a Chinese label that still exposes an untranslated generic word."""
+    text = str(value or "")
+    return has_chinese(text) and bool(_UNTRANSLATED_CATEGORY_WORDS.search(text))
+
 
 def translate_category_text(value: object) -> str:
     """Return a conservative Chinese display label for an official name."""
@@ -206,13 +223,15 @@ async def translate_category_payload_names(
     return apply(payload)
 
 
-async def translate_category_names_with_ai(values: list[str], api_key: str, base_url: str, model: str) -> dict[str, str]:
+async def translate_category_names_with_ai(
+    values: list[str], api_key: str, base_url: str, model: str, *, force: bool = False
+) -> dict[str, str]:
     names = list(dict.fromkeys(" ".join(str(value or "").split()).strip() for value in values if str(value or "").strip()))
     result = {name: translate_category_text(name) for name in names}
     # Names that are not already Chinese still need translation. Spanish names
     # commonly contain accented characters, so an ASCII-only check skips valid
     # DeepSeek inputs such as "Categorías" and "Baños".
-    pending = [
+    pending = names if force else [
         name
         for name in names
         if result[name] == name
