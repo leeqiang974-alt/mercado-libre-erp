@@ -1996,8 +1996,10 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .wf-media-card.cover { border:2px solid #fb923c; padding:6px; }
 .wf-media-label { color:#667085; font-size:11px; font-weight:700; margin-bottom:6px; }
 .wf-media-card.cover .wf-media-label { color:#ea580c; }
-.wf-media-preview-trigger { background:transparent; border:0; cursor:zoom-in; display:block; padding:0; width:100%; }
+.wf-media-preview-trigger { background:transparent; border:0; cursor:zoom-in; display:block; overflow:hidden; padding:0; position:relative; width:100%; }
 .wf-media-preview-trigger img { background:#f7f8fa; display:block; height:132px; object-fit:contain; width:100%; }
+.wf-media-dimensions { background:rgba(17,24,39,.78); bottom:5px; border-radius:3px; color:#fff; font-size:11px; font-variant-numeric:tabular-nums; line-height:1; padding:4px 5px; position:absolute; right:5px; }
+.wf-media-dimensions.error { background:rgba(180,35,24,.92); }
 .wf-media-preview-trigger:focus-visible { outline:2px solid #f97316; outline-offset:2px; }
 .wf-image-lightbox { align-items:center; background:rgba(15,23,42,.76); bottom:0; display:flex; justify-content:center; left:0; padding:28px; position:fixed; right:0; top:0; z-index:30; }
 .wf-image-lightbox-panel { background:#fff; border-radius:8px; box-shadow:0 24px 80px rgba(0,0,0,.42); max-height:92vh; max-width:min(1100px,94vw); overflow:hidden; width:100%; }
