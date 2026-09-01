@@ -64,8 +64,10 @@ services:
       - ./backend/alembic.ini:/app/alembic.ini:ro
       - ./data/amazon-browser:/data/amazon-browser
     command: >-
-      sh -c 'exec xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24 -nolisten tcp"
-      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2'
+      sh -c 'if command -v xvfb-run >/dev/null 2>&1; then
+      exec xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24 -nolisten tcp"
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2;
+      else exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2; fi'
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8000/health"]
