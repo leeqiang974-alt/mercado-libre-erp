@@ -10,6 +10,7 @@ import httpx
 import oss2
 
 from app.core.config import Settings
+from app.services.image_validation import ImageValidationError, ensure_listing_image_size
 
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -41,8 +42,9 @@ def _public_url(settings: Settings, object_key: str) -> str:
 
 async def mirror_image_to_oss(source_url: str, settings: Settings) -> str:
     """Mirror one public JPEG/PNG and verify it before returning its HTTPS URL."""
-    if source_url.startswith(f"https://{settings.aliyun_oss_bucket}.{settings.aliyun_oss_endpoint}/"):
-        return source_url
+    already_mirrored = source_url.startswith(
+        f"https://{settings.aliyun_oss_bucket}.{settings.aliyun_oss_endpoint}/"
+    )
     try:
         async with httpx.AsyncClient(timeout=40, follow_redirects=True) as client:
             response = await client.get(source_url)
@@ -55,6 +57,12 @@ async def mirror_image_to_oss(source_url: str, settings: Settings) -> str:
     data = response.content
     if not data or len(data) > MAX_IMAGE_BYTES:
         raise OssMirrorError(f"图片为空或超过 10MB：{source_url}")
+    try:
+        ensure_listing_image_size(data, content_type)
+    except ImageValidationError as exc:
+        raise OssMirrorError(f"{exc}：{source_url}") from exc
+    if already_mirrored:
+        return source_url
     extension = ".png" if content_type == "image/png" else ".jpg"
     digest = hashlib.sha256(data).hexdigest()
     day = datetime.now(UTC).strftime("%Y%m%d")
@@ -88,12 +96,14 @@ async def mirror_images_to_oss(urls: list[str], settings: Settings) -> list[str]
     )
     by_source: dict[str, str] = {}
     for source_url, uploaded in zip(source_urls, uploaded_urls, strict=True):
-        if isinstance(uploaded, OssMirrorError) and "图片格式不支持" in str(uploaded):
+        if isinstance(uploaded, OssMirrorError) and (
+            "图片格式不支持" in str(uploaded) or "图片尺寸" in str(uploaded)
+        ):
             continue
         if isinstance(uploaded, Exception):
             raise uploaded
         by_source[source_url] = uploaded
     mirrored = [by_source[raw_url.strip()] for raw_url in urls if raw_url.strip() in by_source]
     if not mirrored:
-        raise OssMirrorError("没有可镜像的图片")
+        raise OssMirrorError("没有符合美客多至少 500×500px 要求的图片")
     return mirrored

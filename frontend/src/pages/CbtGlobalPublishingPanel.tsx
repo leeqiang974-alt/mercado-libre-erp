@@ -901,7 +901,8 @@ export function CbtGlobalPublishingPanel({
     }
     setBusy("save"); setStatus(""); setPreview(null); setExecution(null);
     try {
-      await saveProductContent();
+      const savedContent = await saveProductContent();
+      const removedSmallImages = Math.max(0, draft.image_urls.length - savedContent.image_urls.length);
       const config = await saveCbtListingConfig(draftId, {
         store_id: Number(storeId), category_id: categoryId, family_name: familyName,
         global_title: normalizeCbtTitle(globalTitle), description: sanitizeCbtDescription(description), price_usd: Number(priceUsd),
@@ -911,7 +912,9 @@ export function CbtGlobalPublishingPanel({
         sites_to_sell: offers,
       });
       setSaved(config); onDraftChange(config.draft); setListingRail((current) => current.map((item) => item.id === config.draft.id ? config.draft : item)); onReviewInvalidated();
-      setStatus("跨境刊登配置已保存，可直接进行官方请求预检。");
+      setStatus(removedSmallImages
+        ? `跨境刊登配置已保存；已自动剔除 ${removedSmallImages} 张小于 500×500px 的图片，可直接进行官方请求预检。`
+        : "跨境刊登配置已保存，可直接进行官方请求预检。");
     } catch (error) { setStatus(error instanceof Error ? error.message : "保存跨境刊登配置失败"); }
     finally { setBusy(""); }
   }

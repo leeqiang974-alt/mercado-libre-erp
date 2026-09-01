@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.services.image_validation import ImageValidationError, ensure_listing_image_size
 from app.services.meli.client import MercadoLibreClient
 
 
@@ -48,6 +49,10 @@ async def materialize_global_picture_sources(
                 raise PictureUploadError(f"图片格式不支持（{content_type or '未知格式'}）")
             if not response.content or len(response.content) > MAX_PICTURE_BYTES:
                 raise PictureUploadError("图片为空或超过 10MB")
+            try:
+                ensure_listing_image_size(response.content, content_type)
+            except ImageValidationError as exc:
+                raise PictureUploadError(f"{exc}：{source}") from exc
             filename = PurePosixPath(urlparse(source).path).name or "listing-image.jpg"
             uploaded = await client.upload_picture(
                 content=response.content, filename=filename, content_type=content_type
@@ -59,8 +64,9 @@ async def materialize_global_picture_sources(
         except PictureUploadError:
             raise
         except httpx.HTTPStatusError as exc:
+            detail = _upload_error_detail(exc.response)
             raise PictureUploadError(
-                f"图片无法下载或上传（HTTP {exc.response.status_code}）：{source}"
+                f"图片无法下载或上传（HTTP {exc.response.status_code}{detail}）：{source}"
             ) from exc
         except httpx.HTTPError as exc:
             raise PictureUploadError(f"图片传输失败：{source}") from exc
@@ -78,3 +84,17 @@ async def materialize_global_picture_sources(
         if isinstance(offer, dict):
             offer["pictures"] = replace(offer.get("pictures", []))
     return payload
+
+
+def _upload_error_detail(response: httpx.Response) -> str:
+    """Keep a concise Mercado Libre error reason without persisting raw bodies."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    code = str(payload.get("error") or payload.get("code") or "").strip()
+    message = str(payload.get("message") or payload.get("cause") or "").strip()
+    summary = ": ".join(part for part in (code, message) if part)[:240]
+    return f"：{summary}" if summary else ""
