@@ -248,6 +248,10 @@ export function CbtGlobalPublishingPanel({
   const [imageZoom, setImageZoom] = useState(1);
   const [aiFeedback, setAiFeedback] = useState<{ field: "title" | "description"; message: string; error: boolean } | null>(null);
   const offersInitializedRef = useRef(false);
+  // API responses contain newly allocated arrays even when the media did not
+  // change. Compare their contents so a same-draft refresh cannot be mistaken
+  // for a new editor context.
+  const draftVideoUrlsKey = (draft.video_urls ?? []).join("\u001f");
   const cbtStores = stores.filter((store) => store.site_id === "CBT" && store.oauth_status === "connected" && store.is_enabled);
   const remoteMarkets = useMemo(
     () => (profile ? remoteMarketsForProfile(profile) : []),
@@ -340,6 +344,22 @@ export function CbtGlobalPublishingPanel({
     setHasSavedConfig(false);
     offersInitializedRef.current = false;
   }, [draftId]);
+
+  // Keep source content changes (AI generation, recollection, or a server-side
+  // save) visible without resetting category confirmation, selected markets,
+  // or the category-dependent attribute form. The category confirmation API
+  // changes the parent draft's version and object identity, but not any of the
+  // values below, so this effect deliberately does not run for that response.
+  useEffect(() => {
+    setCategorySearchQuery(normalizeCbtTitle(draft.title));
+    setGlobalTitle(normalizeCbtTitle(draft.title));
+    setDescription(sanitizeCbtDescription(draft.description));
+    setVideoUrls(draft.video_urls ?? []);
+    if (draft.currency === "USD" && draft.price) setPriceUsd(String(draft.price));
+    setSaved(null);
+    setPreview(null);
+    setExecution(null);
+  }, [draftId, draft.title, draft.description, draftVideoUrlsKey, draft.currency, draft.price]);
 
   useEffect(() => {
     setListingPage((page) => Math.min(Math.max(page, 1), listingPageCount));
