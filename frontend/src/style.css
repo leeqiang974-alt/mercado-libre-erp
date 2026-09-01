@@ -2008,8 +2008,11 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .wf-image-lightbox-actions button { background:#fff; border:1px solid #d5dce3; border-radius:4px; color:#344054; cursor:pointer; font-size:12px; padding:6px 9px; }
 .wf-image-lightbox-actions button:hover { border-color:#f97316; color:#c2410c; }
 .wf-image-lightbox-actions button.danger { color:#b42318; }
-.wf-image-lightbox-canvas { align-items:center; background:#f7f8fa; display:flex; height:min(76vh,780px); justify-content:center; overflow:auto; padding:24px; }
+.wf-image-lightbox-canvas { align-items:center; background:#f7f8fa; display:flex; height:min(76vh,780px); justify-content:center; overflow:auto; padding:24px; position:relative; }
 .wf-image-lightbox-canvas img { max-height:100%; max-width:100%; object-fit:contain; transform-origin:center; transition:transform .16s ease; }
+.wf-image-lightbox-nav { align-items:center; background:rgba(15,23,42,.72); border:0; border-radius:50%; color:#fff; cursor:pointer; display:inline-flex; height:48px; justify-content:center; padding:0; position:absolute; top:50%; transform:translateY(-50%); transition:background .15s ease, opacity .15s ease; width:48px; z-index:1; }
+.wf-image-lightbox-nav.previous { left:20px; }.wf-image-lightbox-nav.next { right:20px; }
+.wf-image-lightbox-nav:hover:not(:disabled) { background:rgba(194,65,12,.94); }.wf-image-lightbox-nav:focus-visible { outline:3px solid #fb923c; outline-offset:3px; }.wf-image-lightbox-nav:disabled { cursor:not-allowed; opacity:.28; }
 
 .wf-media-card > div:last-child { display:flex; gap:5px; margin-top:7px; }
 .tiny-button { background:#fff; border:1px solid #d5dce3; border-radius:3px; color:#475467; cursor:pointer; font-size:11px; padding:4px 6px; }

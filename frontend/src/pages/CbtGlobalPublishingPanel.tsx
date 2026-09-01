@@ -1,6 +1,8 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
   Globe2,
   Image,
   ListChecks,
@@ -320,6 +322,9 @@ export function CbtGlobalPublishingPanel({
   const missing = requiredIds.filter((id) => id !== "BRAND" && !attributes[id]?.trim());
   const allRemoteSelected = remoteMarkets.length > 0
     && remoteMarkets.every((market) => offers.some((offer) => offer.site_id === market.site_id));
+  const previewImageIndex = previewImage ? draft.image_urls.indexOf(previewImage) : -1;
+  const hasPreviousPreviewImage = previewImageIndex > 0;
+  const hasNextPreviewImage = previewImageIndex >= 0 && previewImageIndex < draft.image_urls.length - 1;
   const unitCostUsd = pricing
     ? (pricing.purchase_cost + pricing.domestic_shipping_cost) * pricing.exchange_rate
     : null;
@@ -831,6 +836,16 @@ export function CbtGlobalPublishingPanel({
     setImageZoom(1);
   }
 
+  function moveImagePreview(direction: -1 | 1) {
+    const currentIndex = previewImage ? draft.image_urls.indexOf(previewImage) : -1;
+    const nextImage = draft.image_urls[currentIndex + direction];
+    if (!nextImage) return;
+    setPreviewImage(nextImage);
+    // Each source image opens at its natural fit, rather than preserving a
+    // zoom level that may make the next image look unexpectedly cropped.
+    setImageZoom(1);
+  }
+
   async function setCoverImage(url: string) {
     if (videoUrls.length > MAX_PRODUCT_VIDEOS) {
       setStatus(`请先在视频区删除 ${videoUrls.length - MAX_PRODUCT_VIDEOS} 个视频，再保存图片修改。`);
@@ -1009,8 +1024,12 @@ export function CbtGlobalPublishingPanel({
     </div>
     {previewImage && <div className="wf-image-lightbox" role="dialog" aria-modal="true" aria-label="图片大图预览" onClick={closeImagePreview}>
       <div className="wf-image-lightbox-panel" onClick={(event) => event.stopPropagation()}>
-        <div className="wf-image-lightbox-actions"><button type="button" onClick={() => setImageZoom((value) => Math.max(0.5, Number((value - 0.25).toFixed(2))))}>− 缩小</button><span>{Math.round(imageZoom * 100)}%</span><button type="button" onClick={() => setImageZoom((value) => Math.min(3, Number((value + 0.25).toFixed(2))))}>＋ 放大</button><button type="button" className="danger" onClick={closeImagePreview}>关闭 ×</button></div>
-        <div className="wf-image-lightbox-canvas"><img src={previewImage} alt="商品图片大图预览" style={{ transform: `scale(${imageZoom})` }} /></div>
+        <div className="wf-image-lightbox-actions"><span>图片 {previewImageIndex + 1}/{draft.image_urls.length}</span><button type="button" onClick={() => setImageZoom((value) => Math.max(0.5, Number((value - 0.25).toFixed(2))))}>− 缩小</button><span>{Math.round(imageZoom * 100)}%</span><button type="button" onClick={() => setImageZoom((value) => Math.min(3, Number((value + 0.25).toFixed(2))))}>＋ 放大</button><button type="button" className="danger" onClick={closeImagePreview}>关闭 ×</button></div>
+        <div className="wf-image-lightbox-canvas">
+          {draft.image_urls.length > 1 && <button type="button" className="wf-image-lightbox-nav previous" aria-label="查看上一张图片" title="上一张图片" disabled={!hasPreviousPreviewImage} onClick={() => moveImagePreview(-1)}><ChevronLeft size={30} /></button>}
+          <img src={previewImage} alt={`商品图片大图预览 ${previewImageIndex + 1}`} style={{ transform: `scale(${imageZoom})` }} />
+          {draft.image_urls.length > 1 && <button type="button" className="wf-image-lightbox-nav next" aria-label="查看下一张图片" title="下一张图片" disabled={!hasNextPreviewImage} onClick={() => moveImagePreview(1)}><ChevronRight size={30} /></button>}
+        </div>
       </div>
     </div>}
     <footer className="wf-action-bar"><span>{status || (saved ? "配置已保存" : "请先完成必填内容")}</span><div><button className="secondary-button" onClick={onBackToEditing}>取消</button><button disabled={busy === "save"} onClick={saveConfig}><Save size={16} /> 保存</button><button className="secondary-button" disabled={busy === "preview"} onClick={previewPayload}><ListChecks size={16} /> 预检</button><button disabled={!preview?.allowed || !readiness?.mercado_libre.live_publish_enabled || busy === "execute"} onClick={executePublish}><Globe2 size={16} /> 立即发布</button></div></footer>
