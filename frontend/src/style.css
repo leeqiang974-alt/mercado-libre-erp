@@ -1973,7 +1973,7 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .wf-section-title > span { align-items:center; background:#f97316; border-radius:50%; color:#fff; display:inline-flex; flex:0 0 auto; font-size:12px; font-weight:800; height:22px; justify-content:center; margin-top:1px; width:22px; }
 .wf-section-title h3 { margin:0 0 3px; color:#1f2937; font-size:15px; }
 .wf-section-title p { color:#677382; font-size:12px; line-height:1.5; margin:0; }
-.wf-section-title > strong, .wf-section-title > .icon-button { margin-left:auto; }
+.wf-section-title > strong, .wf-section-title > .icon-button, .wf-section-title > .wf-ai-button { margin-left:auto; }
 .wf-form-row { display:grid; grid-template-columns:minmax(260px,.85fr) minmax(460px,1.5fr); gap:18px; align-items:end; }
 .wf-sites { background:#f8fafc; border:1px solid #e5e9ee; border-radius:4px; display:flex; flex-wrap:wrap; gap:8px 12px; min-height:42px; padding:9px 12px; }
 .wf-sites strong { color:#344054; font-size:12px; line-height:24px; margin-right:2px; }
@@ -1984,6 +1984,8 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .wf-title-input { align-items:center; display:flex; position:relative; }
 .wf-title-input input { padding-right:56px; }
 .wf-title-input small { color:#667085; font-size:12px; position:absolute; right:10px; }
+.wf-field-label-row { align-items:center; display:flex; gap:8px; margin-bottom:5px; }
+.wf-ai-button { align-items:center; display:inline-flex; gap:4px; white-space:nowrap; }
 .wf-media-grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); }
 .wf-media-card { background:#fff; border:1px solid #e1e7ed; border-radius:4px; min-width:0; overflow:hidden; padding:7px; }
 .wf-media-card.cover { border:2px solid #fb923c; padding:6px; }
@@ -2027,9 +2029,3 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .listing-search-result { color:#667085; font-size:11px; margin:4px 0 6px; }
 @media (max-width: 1280px) { .wf-listing-layout { grid-template-columns:220px minmax(0, 1fr); } .wf-editor-main { margin-right:0; } .wf-similar-search { display:none; } }
 @media (max-width: 760px) { .wf-listing-layout { display:block; } .wf-listing-rail { display:none; } .wf-header, .wf-action-bar { align-items:stretch; flex-direction:column; } .wf-action-bar > span { max-width:none; } .wf-action-bar > div { flex-wrap:wrap; } .wf-form-row, .wf-category-line, .wf-sku-row { grid-template-columns:1fr; } .wf-sites { gap:6px; } .wf-editor-main { display:block; } .wf-section { margin-bottom:12px; } }
-
-/* 仅为已部署页面补充的独立 AI 文案按钮，不改变既有分类或采集流程。 */
-.ai-field-button { margin-left: 8px; min-width: 42px; }
-.ai-description-action { display: flex; justify-content: flex-end; margin: -2px 0 6px; }
-.ai-field-note { display: block; margin-top: 5px; font-size: 12px; }
-
