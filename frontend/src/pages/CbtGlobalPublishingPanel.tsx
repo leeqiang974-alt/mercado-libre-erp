@@ -243,6 +243,7 @@ export function CbtGlobalPublishingPanel({
   const [hasSavedConfig, setHasSavedConfig] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [imageZoom, setImageZoom] = useState(1);
+  const [aiFeedback, setAiFeedback] = useState<{ field: "title" | "description"; message: string; error: boolean } | null>(null);
   const offersInitializedRef = useRef(false);
 
   const cbtStores = stores.filter((store) => store.site_id === "CBT" && store.oauth_status === "connected" && store.is_enabled);
@@ -327,6 +328,7 @@ export function CbtGlobalPublishingPanel({
     setExecution(null);
     setSimilarOffers(null);
     setStatus("");
+    setAiFeedback(null);
     setConfigLoaded(false);
     setHasSavedConfig(false);
     offersInitializedRef.current = false;
@@ -686,8 +688,10 @@ export function CbtGlobalPublishingPanel({
   // AI requests are intentionally manual. Collection must not spend tokens for
   // drafts that the operator may decide to discard.
   async function generateAiField(field: "title" | "description") {
+    if (busy.startsWith("ai-")) return;
+    setAiFeedback(null);
     if (!categoryId || !categoryLeafVerified) {
-      setStatus("请先选择并确认最底层 CBT 分类，再使用 AI 生成。");
+      setAiFeedback({ field, error: true, message: "请先在第 1 步选择并确认最底层 CBT 分类，再使用 AI 生成。" });
       return;
     }
     const operation = field === "title" ? "ai-title" : "ai-description";
@@ -703,9 +707,9 @@ export function CbtGlobalPublishingPanel({
       setPreview(null);
       setExecution(null);
       onReviewInvalidated();
-      setStatus(field === "title" ? "AI 英文标题已生成。" : "AI 英文商品描述已生成。请检查后保存。");
+      setAiFeedback({ field, error: false, message: field === "title" ? "AI 英文标题已生成，请检查后保存。" : "AI 英文商品描述已生成，请检查后保存。" });
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "AI 生成失败，请稍后重试。");
+      setAiFeedback({ field, error: true, message: error instanceof Error ? error.message : "AI 生成失败，请稍后重试。" });
     } finally {
       setBusy("");
     }
@@ -848,11 +852,11 @@ export function CbtGlobalPublishingPanel({
         {showCategoryTree && <div className="prediction-list"><div className="section-note"><strong>官方 CBT 分类目录</strong> · {categoryTreePath || "正在读取"} <button className="tiny-button" type="button" onClick={() => browseCategoryTree()} disabled={busy === "category-tree"}>返回根分类</button></div>{categoryTree.map((item) => { const id = String(item.id ?? ""); const name = String(item.name_zh ?? item.name ?? id); return <button key={id} type="button" onClick={() => browseCategoryTree(id)}><strong>{name}</strong><small>{id} · 点击展开；没有子分类时即选为最终候选</small></button>; })}</div>}
       </section>
 
-      <section id="basic" className="surface wf-section"><div className="wf-section-title"><span>2</span><div><h3>产品基本信息</h3><p>标题强制英文不超过 60 字符；品牌固定为无品牌。</p></div></div><div className="form-grid two-col"><label>Parent SKU / 产品族名称 *<input value={familyName} placeholder="例如 SKU02761" onChange={(event) => { const value = event.target.value; setFamilyName(value); setAttributes((current) => ({ ...current, MODEL: value })); setSaved(null); setPreview(null); }} /></label><label>可售库存 *<input type="number" min="1" step="1" value={quantity} onChange={(event) => { setQuantity(event.target.value); setSaved(null); setPreview(null); }} /></label></div><label><span className="wf-field-label-row">英文标题 *<button type="button" className="tiny-button wf-ai-button" disabled={busy === "ai-title"} onClick={() => void generateAiField("title")}><Sparkles size={13} />{busy === "ai-title" ? "生成中…" : "AI"}</button></span><div className="wf-title-input"><input value={globalTitle} onChange={(event) => { setGlobalTitle(normalizeCbtTitle(event.target.value)); setSaved(null); setPreview(null); }} /><small>{globalTitle.length}/60</small></div>{globalTitle.length > 60 && <small className="inline-warning">标题超过 60 字符：不会自动截断，请使用 AI 重新生成或手动精简。</small>}</label><label>品牌（固定）<input disabled value="Unbranded（无品牌）" /></label></section>
+      <section id="basic" className="surface wf-section"><div className="wf-section-title"><span>2</span><div><h3>产品基本信息</h3><p>标题强制英文不超过 60 字符；品牌固定为无品牌。</p></div></div><div className="form-grid two-col"><label>Parent SKU / 产品族名称 *<input value={familyName} placeholder="例如 SKU02761" onChange={(event) => { const value = event.target.value; setFamilyName(value); setAttributes((current) => ({ ...current, MODEL: value })); setSaved(null); setPreview(null); }} /></label><label>可售库存 *<input type="number" min="1" step="1" value={quantity} onChange={(event) => { setQuantity(event.target.value); setSaved(null); setPreview(null); }} /></label></div><label><span className="wf-field-label-row">英文标题 *<button type="button" className="tiny-button wf-ai-button" disabled={busy.startsWith("ai-")} onClick={() => void generateAiField("title")}><Sparkles size={13} />{busy === "ai-title" ? "生成中…" : "AI"}</button></span><div className="wf-title-input"><input value={globalTitle} onChange={(event) => { setGlobalTitle(normalizeCbtTitle(event.target.value)); setSaved(null); setPreview(null); }} /><small>{globalTitle.length}/60</small></div>{aiFeedback?.field === "title" && <small className={`wf-ai-feedback ${aiFeedback.error ? "error" : "success"}`} role="status">{aiFeedback.message}</small>}{globalTitle.length > 60 && <small className="inline-warning">标题超过 60 字符：不会自动截断，请使用 AI 重新生成或手动精简。</small>}</label><label>品牌（固定）<input disabled value="Unbranded（无品牌）" /></label></section>
 
       <section id="media" className="surface wf-section"><div className="wf-section-title"><span>3</span><div><h3>产品图片</h3><p>使用采集到的原图；第 1 张是主图。小规格缩略图不会入库，美客多最多发布 12 张。</p></div><strong>{draft.image_urls.length}/{MAX_PRODUCT_IMAGES} 张</strong></div>{draft.image_urls.length > MAX_PRODUCT_IMAGES && <p className="inline-warning">当前有 {draft.image_urls.length} 张图片，请删除 {draft.image_urls.length - MAX_PRODUCT_IMAGES} 张后再保存或发布。</p>}<div className="wf-media-grid">{draft.image_urls.map((url,index) => <article className={`wf-media-card ${index === 0 ? "cover" : ""}`} key={url}><div className="wf-media-label">{index === 0 ? "主图" : `图片 ${index + 1}`}</div><button className="wf-media-preview-trigger" type="button" title="点击查看大图" onClick={() => openImagePreview(url)}><img src={url} alt={`商品图片 ${index + 1}`} /></button><div><button className="tiny-button" disabled={index === 0 || busy === "media"} onClick={() => setCoverImage(url)}>设为主图</button><button className="tiny-button danger" disabled={busy === "media"} onClick={() => removeImage(url)}>删除</button></div></article>)}</div>{draft.image_urls.length === 0 && <p className="inline-warning">当前没有可发布图片，请先回到上架库补充素材。</p>}<div className="wf-video-line"><strong>产品视频</strong><span>{draft.video_urls?.length ?? 0}/3 个；视频独立保存，未进入商品图片。</span></div></section>
 
-      <section id="description" className="surface wf-section"><div className="wf-section-title"><span>4</span><div><h3>描述</h3><p>英文、基于采集信息；不出现品牌。末尾保留 7 天店铺保修说明。</p></div><button type="button" className="tiny-button wf-ai-button" disabled={busy === "ai-description"} onClick={() => void generateAiField("description")}><Sparkles size={13} />{busy === "ai-description" ? "生成中…" : "AI 生成描述"}</button></div><label>英文商品描述 *<textarea rows={10} value={description} onChange={(event) => { setDescription(sanitizeCbtDescription(event.target.value)); setSaved(null); setPreview(null); }} /></label></section>
+      <section id="description" className="surface wf-section"><div className="wf-section-title"><span>4</span><div><h3>描述</h3><p>英文、基于采集信息；不出现品牌。末尾保留 7 天店铺保修说明。</p></div><button type="button" className="tiny-button wf-ai-button" disabled={busy.startsWith("ai-")} onClick={() => void generateAiField("description")}><Sparkles size={13} />{busy === "ai-description" ? "生成中…" : "AI 生成描述"}</button></div><label>英文商品描述 *<textarea rows={10} value={description} onChange={(event) => { setDescription(sanitizeCbtDescription(event.target.value)); setSaved(null); setPreview(null); }} /></label>{aiFeedback?.field === "description" && <p className={`wf-ai-feedback ${aiFeedback.error ? "error" : "success"}`} role="status">{aiFeedback.message}</p>}</section>
 
       <section id="variants" className="surface wf-section"><div className="wf-section-title"><span>5</span><div><h3>变体与 SKU</h3><p>当前为采集到的 SKU 信息；选择分类后才可确认官方变体属性。</p></div></div><div className="wf-sku-row"><div><span>来源 ASIN</span><strong>{draft.source_variant_asin || "未提供"}</strong></div><div><span>已采集规格</span><strong>{Object.entries(draft.source_variant_attributes ?? {}).map(([key,value]) => `${key}: ${value}`).join(" · ") || "单品，无变体"}</strong></div><div><span>卖家 SKU *</span><input value={attributes.SELLER_SKU ?? ""} placeholder="内部 SKU" onChange={(event) => setAttribute("SELLER_SKU", event.target.value)} /></div></div><div className="form-grid two-col cbt-attributes"><label>型号（自动同步 Parent SKU）<input disabled value={familyName} /></label>{requiredIds.filter((id) => id !== "SELLER_SKU" && id !== "BRAND" && id !== "MODEL").map((id) => { const definition = attributeDefinitions.find((item) => String(item.id).toUpperCase() === id); return <label key={id}>{attributeNameZh(definition, id)} *<input value={attributes[id] ?? ""} placeholder={id === "ITEM_CONDITION" ? "new" : "例如 10 cm / 250 g"} onChange={(event) => setAttribute(id, event.target.value)} /></label>; })}</div><label>店铺质保条款<select value={warranty} onChange={(event) => { setWarranty(event.target.value); setSaved(null); setPreview(null); }}><option value="7 days">7 天</option><option value="No warranty">无质保</option><option value="30 days">30 天</option></select></label>{missing.length > 0 && <p className="inline-warning">还缺少官方必填字段：{missing.join("、")}。</p>}</section>
 

@@ -1986,6 +1986,8 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .wf-title-input small { color:#667085; font-size:12px; position:absolute; right:10px; }
 .wf-field-label-row { align-items:center; display:flex; gap:8px; margin-bottom:5px; }
 .wf-ai-button { align-items:center; display:inline-flex; gap:4px; white-space:nowrap; }
+.wf-ai-feedback { display:block; font-size:12px; line-height:1.45; margin:7px 0 0; }
+.wf-ai-feedback.error { color:#b42318; }.wf-ai-feedback.success { color:#027a48; }
 .wf-media-grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); }
 .wf-media-card { background:#fff; border:1px solid #e1e7ed; border-radius:4px; min-width:0; overflow:hidden; padding:7px; }
 .wf-media-card.cover { border:2px solid #fb923c; padding:6px; }
