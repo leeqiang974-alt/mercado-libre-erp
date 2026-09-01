@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     volcengine_model: str = "doubao-seed-2.1-turbo"
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com/v1"
-    deepseek_model: str = "deepseek-v3-flash"
+    deepseek_model: str = "deepseek-v4-flash"
     content_generation_provider: str = "deepseek"
     alibaba_1688_app_key: str = ""
     alibaba_1688_app_secret: str = ""
