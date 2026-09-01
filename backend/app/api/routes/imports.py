@@ -18,6 +18,7 @@ from app.services.amazon.collector import (
     normalize_amazon_product_url,
     validate_amazon_snapshot,
 )
+from app.services.amazon.parser import _extract_measurements
 from app.services.amazon.normalizer import normalize_amazon_product
 from app.services.amazon.import_file import MAX_IMPORT_FILE_BYTES, parse_amazon_url_file
 from app.services.amazon.discovery import discover_amazon_products
@@ -428,7 +429,8 @@ def create_keyword_campaign(payload: KeywordCampaignCreate, db: Session = Depend
         target_site_id=payload.target_site_id.upper(), keywords_json=keywords, pages_per_keyword=payload.pages_per_keyword,
         status=KeywordCampaignStatus.PENDING.value, message="等待后台按关键词发现商品。")
     db.add(row)
-    db.commit(); db.refresh(row)
+    db.commit()
+    db.refresh(row)
     return _campaign_read(row, db)
 
 
@@ -697,6 +699,10 @@ def receive_amazon_extension_job_result(
         return {"ok": True, "job_id": job.id, "status": job.status.value, "draft_id": None}
     raw_snapshot = dict(payload.snapshot)
     video_urls = [str(value).strip() for value in raw_snapshot.pop("video_urls", []) if str(value).strip()]
+    if not raw_snapshot.get("measurements") and raw_snapshot.get("technical_details"):
+        raw_snapshot["measurements"] = _extract_measurements(
+            raw_snapshot["technical_details"], source_url
+        )
     try:
         snapshot = AmazonSourceSnapshot.model_validate({**raw_snapshot, "source_url": source_url})
     except ValueError as exc:
@@ -816,6 +822,10 @@ def create_source_product_from_extension(
         for value in raw_snapshot.pop("video_urls", [])
         if str(value).strip()
     ]
+    if not raw_snapshot.get("measurements") and raw_snapshot.get("technical_details"):
+        raw_snapshot["measurements"] = _extract_measurements(
+            raw_snapshot["technical_details"], source_url
+        )
     try:
         snapshot = AmazonSourceSnapshot.model_validate({**raw_snapshot, "source_url": source_url})
     except ValueError as exc:
@@ -890,6 +900,10 @@ def capture_source_product_from_extension(
         for value in raw_snapshot.pop("video_urls", [])
         if str(value).strip()
     ]
+    if not raw_snapshot.get("measurements") and raw_snapshot.get("technical_details"):
+        raw_snapshot["measurements"] = _extract_measurements(
+            raw_snapshot["technical_details"], source_url
+        )
     try:
         snapshot = AmazonSourceSnapshot.model_validate({**raw_snapshot, "source_url": source_url})
     except ValueError as exc:

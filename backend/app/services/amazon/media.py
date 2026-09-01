@@ -8,8 +8,16 @@ AMAZON_RENDER_SIZE_PATTERN = re.compile(
     r"\._AC(?:_[A-Z]+\d*)*_(?=\.[A-Za-z0-9]+(?:$|[?#]))",
     re.IGNORECASE,
 )
+AMAZON_GENERIC_RENDER_SIZE_PATTERN = re.compile(
+    r"\._[^/?.]+_(?=\.(?:jpe?g|png|webp)(?:$|[?#]))",
+    re.IGNORECASE,
+)
 AMAZON_RENDER_DIMENSION_PATTERN = re.compile(
-    r"\._AC_(?:SL|SX|SY|US)(\d+)_",
+    r"\._AC_(?:SL|SX|SY|US|SS|SR)(\d+)_",
+    re.IGNORECASE,
+)
+AMAZON_GENERIC_RENDER_DIMENSION_PATTERN = re.compile(
+    r"\._(?:SL|SX|SY|US|SS|SR)(\d+)_",
     re.IGNORECASE,
 )
 MIN_LISTING_IMAGE_EDGE = 500
@@ -18,11 +26,17 @@ MIN_LISTING_IMAGE_EDGE = 500
 def _image_identity(url: str) -> str:
     parts = urlsplit(url.strip())
     normalized_path = AMAZON_RENDER_SIZE_PATTERN.sub("", parts.path)
+    # The non-AC form (``._SX342_``) is used by responsive Amazon carousels.
+    # It must collapse to the same source identity as the large image.
+    if "amazon." in parts.netloc.lower():
+        normalized_path = AMAZON_GENERIC_RENDER_SIZE_PATTERN.sub("", normalized_path)
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), normalized_path, "", ""))
 
 
 def _image_resolution(url: str) -> int:
     match = AMAZON_RENDER_DIMENSION_PATTERN.search(url)
+    if match is None and "amazon." in urlsplit(url).netloc.lower():
+        match = AMAZON_GENERIC_RENDER_DIMENSION_PATTERN.search(url)
     return int(match.group(1)) if match else 10_000
 
 

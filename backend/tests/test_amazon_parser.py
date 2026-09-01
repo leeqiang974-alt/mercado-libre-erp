@@ -302,6 +302,20 @@ def test_select_listing_images_limits_and_prefers_high_resolution():
     assert prepare_listing_title("CAKETIME Best Silicone Pan", "CAKETIME") == "Silicone Pan"
 
 
+def test_select_listing_images_deduplicates_unprefixed_amazon_responsive_gallery_urls():
+    images = [
+        "https://m.media-amazon.com/images/I/71Plkrjg7vL._SL1500_.jpg",
+        "https://m.media-amazon.com/images/I/71Plkrjg7vL._SX342_.jpg",
+        "https://m.media-amazon.com/images/I/71Plkrjg7vL._SX385_.jpg",
+        "https://m.media-amazon.com/images/I/71Plkrjg7vL._SX466_.jpg",
+        "https://m.media-amazon.com/images/I/41DFwtawoGL._SX38_SY50_CR,0,0,38,50_.jpg",
+    ]
+
+    assert select_listing_images(images) == [
+        "https://m.media-amazon.com/images/I/71Plkrjg7vL._SL1500_.jpg",
+    ]
+
+
 def test_parse_amazon_price_handles_grouping_and_site_currency():
     cases = [
         ("$1,299.99", "https://amazon.com/dp/A", 1299.99, "USD"),

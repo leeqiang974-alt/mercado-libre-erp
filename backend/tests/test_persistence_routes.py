@@ -513,7 +513,11 @@ def test_browser_extension_first_capture_creates_a_draft_and_quality_summary():
                 "bullets": ["Flexible silicone blade"],
                 "images": ["https://images-na.ssl-images-amazon.com/images/I/example._AC_SL1500_.jpg"],
                 "video_urls": ["https://example.test/product-video.mp4"],
-                "technical_details": {"Blade Material": "Silicone"},
+                "technical_details": {
+                    "Blade Material": "Silicone",
+                    "Item Weight": "1.2 pounds",
+                    "Package Dimensions": "12 x 8 x 2 inches",
+                },
             },
         },
     )
@@ -527,13 +531,15 @@ def test_browser_extension_first_capture_creates_a_draft_and_quality_summary():
         "image_count": 1,
         "video_count": 1,
         "variant_count": 0,
-        "technical_detail_count": 1,
+        "technical_detail_count": 3,
     }
     with Session(testing_session.kw["bind"]) as session:
         draft = session.query(ProductDraft).one()
         source = session.query(SourceProduct).one()
         assert draft.video_urls_json == ["https://example.test/product-video.mp4"]
         assert source.collection_method == "browser_extension"
+        assert source.measurements_json["item_weight"]["value"] == 1.2
+        assert source.measurements_json["package_dimensions"]["length"] == 12.0
 
 
 def test_delete_draft_writes_operation_log():
