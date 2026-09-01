@@ -16,6 +16,7 @@ CREDENTIAL_KEYS = (
     "claude_api_key",
     "nvidia_api_key",
     "volcengine_api_key",
+    "deepseek_api_key",
 )
 
 
@@ -26,6 +27,7 @@ class ResolvedIntegrationCredentials:
     claude_api_key: str
     nvidia_api_key: str
     volcengine_api_key: str = ""
+    deepseek_api_key: str = ""
 
 
 def resolve_integration_credentials(

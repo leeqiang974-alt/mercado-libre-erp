@@ -12,6 +12,7 @@ from app.models.integration_credential import IntegrationCredential
 from app.models.registry import import_all_models
 from app.schemas.reviews import ReviewResponse
 from app.services.meli.token_vault import decrypt_token_value
+from app.services.integration_credentials import resolve_integration_credentials
 from app.workers import publish_worker
 
 
@@ -120,6 +121,19 @@ def test_empty_saved_value_overrides_environment_fallback(monkeypatch):
             "claude_api_key_configured"
         ] is False
     finally:
+        teardown_client()
+
+
+def test_resolved_credentials_include_deepseek_environment_fallback(monkeypatch):
+    monkeypatch.setattr(integrations.settings, "deepseek_api_key", "environment-deepseek-key")
+    client, testing_session = make_client()
+    try:
+        with testing_session() as db:
+            credentials = resolve_integration_credentials(db, integrations.settings)
+        assert credentials.deepseek_api_key == "environment-deepseek-key"
+        assert credentials.volcengine_api_key == ""
+    finally:
+        client.close()
         teardown_client()
 
 

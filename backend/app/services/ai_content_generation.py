@@ -43,7 +43,10 @@ async def generate_and_save_draft_content(
         raise HTTPException(status_code=409, detail="category_attributes_not_verified")
 
     credentials = resolve_integration_credentials(db, settings)
-    provider = credentials.content_generation_provider
+    # The selected provider is runtime configuration, while the credential
+    # resolver owns only encrypted/fallback secret values.  Do not read a
+    # provider selector from ResolvedIntegrationCredentials.
+    provider = settings.content_generation_provider
     if provider not in {"deepseek", "volcengine"}:
         provider = "deepseek"
     api_key = credentials.deepseek_api_key if provider == "deepseek" else credentials.volcengine_api_key
