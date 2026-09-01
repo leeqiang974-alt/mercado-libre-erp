@@ -248,7 +248,6 @@ export function CbtGlobalPublishingPanel({
   const [imageZoom, setImageZoom] = useState(1);
   const [aiFeedback, setAiFeedback] = useState<{ field: "title" | "description"; message: string; error: boolean } | null>(null);
   const offersInitializedRef = useRef(false);
-
   const cbtStores = stores.filter((store) => store.site_id === "CBT" && store.oauth_status === "connected" && store.is_enabled);
   const remoteMarkets = useMemo(
     () => (profile ? remoteMarketsForProfile(profile) : []),
@@ -311,7 +310,10 @@ export function CbtGlobalPublishingPanel({
 
   // Selecting another card is an in-page edit-context change, not a document
   // navigation. Reset the visible form immediately so the previous product's
-  // data cannot flash while the new configuration is loading.
+  // data cannot flash while the new configuration is loading. This must be
+  // keyed by draftId only: every API response creates fresh array values, so
+  // using draft fields as dependencies used to clear a confirmed category
+  // when the same draft was refreshed or saved.
   useEffect(() => {
     setCategorySearchQuery(normalizeCbtTitle(draft.title));
     setGlobalTitle(normalizeCbtTitle(draft.title));
@@ -337,7 +339,7 @@ export function CbtGlobalPublishingPanel({
     setConfigLoaded(false);
     setHasSavedConfig(false);
     offersInitializedRef.current = false;
-  }, [draftId, draft.title, draft.description, draft.video_urls, draft.currency, draft.price]);
+  }, [draftId]);
 
   useEffect(() => {
     setListingPage((page) => Math.min(Math.max(page, 1), listingPageCount));
@@ -390,7 +392,9 @@ export function CbtGlobalPublishingPanel({
       getDraftPricing(draftId).catch(() => null),
       // The parent can still hold a compact/stale draft while the editor is
       // opening. Read the authoritative draft before restoring category state.
-      getDraft(draftId),
+      // A transient read timeout must not discard the separately readable
+      // listing configuration (or its confirmed category).
+      getDraft(draftId).catch(() => draft),
     ])
       .then(([storeRows, config, system, savedPricing, persistedDraft]) => {
         if (cancelled) return;
@@ -442,8 +446,10 @@ export function CbtGlobalPublishingPanel({
         getCategoryDetails(config.category_id)
           .then((details) => {
             if (!cancelled) {
-              setCategoryLeafVerified(details.verified && details.leaf);
+              const isConfirmedLeaf = Boolean(details.verified && details.leaf);
+              setCategoryLeafVerified(isConfirmedLeaf);
               setCategoryPath((details.path_from_root_zh ?? details.path_from_root).map((item) => item.name_zh || item.name).filter(Boolean).join(" > "));
+              if (isConfirmedLeaf) setCategoryActionStatus("已恢复并确认最终 CBT 分类");
             }
           })
           .catch(() => !cancelled && setCategoryLeafVerified(false));
@@ -639,9 +645,17 @@ export function CbtGlobalPublishingPanel({
       setCategoryLeafVerified(true);
       setCategoryPath((details.path_from_root_zh ?? details.path_from_root).map((item) => item.name_zh || item.name).filter(Boolean).join(" > "));
       setCategoryActionStatus("已确认最终 CBT 分类");
-      const attributesResult = await getCategoryAttributes(nextCategoryId);
-      setAttributeDefinitions(attributesResult.attributes);
-      setStatus("已自动选择并确认最底层分类，官方属性已加载。");
+      try {
+        const attributesResult = await getCategoryAttributes(nextCategoryId);
+        setAttributeDefinitions(attributesResult.attributes);
+        setStatus("已自动选择并确认最底层分类，官方属性已加载。");
+      } catch (attributeError) {
+        // The category PUT has already committed. Do not roll back the
+        // confirmed leaf merely because the follow-up metadata read timed out.
+        setStatus(attributeError instanceof Error
+          ? `已确认最底层分类，但官方属性暂时无法读取：${attributeError.message}`
+          : "已确认最底层分类，但官方属性暂时无法读取。请稍后刷新属性。");
+      }
     } catch (error) {
       setCategoryLeafVerified(false);
       setCategoryActionStatus(error instanceof Error ? `分类确认失败：${error.message}` : "分类确认失败");
