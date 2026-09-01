@@ -67,6 +67,7 @@
 - The local browser extension is the overnight Amazon CBT collector. It may claim only `pending` collection jobs through `/api/imports/amazon-extension/next`; failed or human-verification jobs require an explicit retry and must never be hot-looped.
 - Browser-extension collection claims are persisted with worker id/time and every create, claim, completion, failure, stale recovery, retry, first capture, and recollection must be visible in `操作日志`. Never report overnight collection as running until a real extension claim and result have been observed.
 - Deletion is authoritative: intentionally deleted drafts must not be restored from backups. New collection must create a new draft only when its exact Amazon URL has not already been collected.
+- Every operator-triggered state change and every failed attempt that could change state or consume an external-provider request must create a durable `audit_events` row. Record actor, target, timestamp, normalized outcome, and non-sensitive before/after metadata; never persist API keys, tokens, authorization headers, raw provider prompts/responses, or full credential request bodies. The `操作日志` page is the operator's trace source, not server logs alone.
 
 ## Verification
 

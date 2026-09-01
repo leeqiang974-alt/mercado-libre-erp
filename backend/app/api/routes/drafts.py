@@ -209,9 +209,52 @@ async def generate_content(
     payload: DraftContentGenerationRequest,
     db: Session = Depends(get_db),
 ) -> DraftContentGenerationResponse:
-    draft, content, model = await generate_and_save_draft_content(
-        db, get_settings(), product_draft_id, payload.category_id, set(payload.fields)
-    )
+    runtime_settings = get_settings()
+    try:
+        draft, content, model = await generate_and_save_draft_content(
+            db, runtime_settings, product_draft_id, payload.category_id, set(payload.fields)
+        )
+    except HTTPException as exc:
+        # Every attempted paid/manual generation needs an operator-visible
+        # trace, including rejections before a provider request is sent.  Keep
+        # only a normalized code; credentials and provider responses never go
+        # into the audit table.
+        detail = exc.detail
+        if isinstance(detail, dict):
+            code = str(detail.get("code") or "request_rejected")[:120]
+        elif isinstance(detail, str):
+            code = detail[:120]
+        else:
+            code = "request_rejected"
+        create_audit_event(
+            db=db,
+            actor_type="system",
+            actor_id=runtime_settings.content_generation_provider,
+            action="draft.ai_content_failed",
+            entity_type="product_draft",
+            entity_id=str(product_draft_id),
+            after={
+                "status_code": exc.status_code,
+                "code": code,
+                "requested_fields": sorted(set(payload.fields)),
+            },
+        )
+        raise
+    except Exception:
+        create_audit_event(
+            db=db,
+            actor_type="system",
+            actor_id=runtime_settings.content_generation_provider,
+            action="draft.ai_content_failed",
+            entity_type="product_draft",
+            entity_id=str(product_draft_id),
+            after={
+                "status_code": 500,
+                "code": "internal_error",
+                "requested_fields": sorted(set(payload.fields)),
+            },
+        )
+        raise
     return DraftContentGenerationResponse(
         draft=to_draft_read(draft),
         title=content.title,
