@@ -85,15 +85,26 @@ function readableSitePublishError(error: unknown) {
 
 function sitePublishResults(details: Record<string, unknown>): SitePublishResult[] {
   const rows = Array.isArray(details.site_items) ? details.site_items : [];
+  const fallbackSites = new Set(
+    (Array.isArray(details.listing_type_fallbacks) ? details.listing_type_fallbacks : [])
+      .filter((row): row is Record<string, unknown> => Boolean(row && typeof row === "object"))
+      .filter((row) => row.from === "gold_pro" && row.to === "gold_special")
+      .map((row) => String(row.site_id ?? "").toUpperCase()),
+  );
   return rows.filter((row): row is Record<string, unknown> => Boolean(row && typeof row === "object")).map((row) => {
     const siteId = String(row.site_id ?? "").toUpperCase();
     const itemId = String(row.item_id ?? "");
     const error = row.error;
+    const downgraded = fallbackSites.has(siteId);
     return {
       siteId,
       itemId,
       state: error ? "failed" : itemId ? "success" : "pending",
-      message: error ? readableSitePublishError(error) : itemId ? `已创建商品：${itemId}` : "美客多正在处理",
+      message: error
+        ? readableSitePublishError(error)
+        : itemId
+          ? `${downgraded ? "Premium 不支持，已自动降为 Classic；" : ""}已创建商品：${itemId}`
+          : "美客多正在处理",
     };
   });
 }

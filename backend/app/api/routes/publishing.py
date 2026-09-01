@@ -229,6 +229,96 @@ def _global_response_details(response: dict | list) -> dict:
     return details
 
 
+def _classic_fallback_offers(response: dict | list, payload: dict) -> list[dict]:
+    """Select only Premium site failures that Mercado Libre explicitly rejects.
+
+    A Global Selling parent item may already exist while one marketplace rejects
+    ``gold_pro``.  That site can safely be updated independently on the known
+    parent using ``gold_special``; rate-limit and all other failures are never
+    retried here.
+    """
+    if not isinstance(response, dict) or not isinstance(response.get("site_items"), list):
+        return []
+    offers = {
+        str(offer.get("site_id", "")).upper(): offer
+        for offer in payload.get("sites_to_sell", [])
+        if isinstance(offer, dict)
+    }
+    fallbacks: list[dict] = []
+    for row in response["site_items"]:
+        if not isinstance(row, dict) or not isinstance(row.get("error"), dict):
+            continue
+        site_id = str(row.get("site_id", "")).upper()
+        offer = offers.get(site_id)
+        if not offer or str(offer.get("listing_type_id", "")).lower() != "gold_pro":
+            continue
+        error = row["error"]
+        causes = error.get("cause")
+        codes = {str(error.get("error") or error.get("code") or "").lower()}
+        if isinstance(causes, list):
+            codes.update(
+                str(cause.get("code") or "").lower()
+                for cause in causes
+                if isinstance(cause, dict)
+            )
+        if "invalid.listing_type_id" not in codes:
+            continue
+        fallbacks.append({**offer, "listing_type_id": "gold_special"})
+    return fallbacks
+
+
+def _merge_global_site_items(original: dict | list, replacement: dict | list) -> dict | list:
+    """Replace only the retried marketplace rows in a Global Selling response."""
+    if not isinstance(original, dict) or not isinstance(replacement, dict):
+        return original
+    initial_rows = original.get("site_items")
+    retry_rows = replacement.get("site_items")
+    if not isinstance(initial_rows, list) or not isinstance(retry_rows, list):
+        return original
+    retry_by_site = {
+        str(row.get("site_id", "")).upper(): row
+        for row in retry_rows
+        if isinstance(row, dict) and str(row.get("site_id", "")).strip()
+    }
+    merged_rows = [
+        retry_by_site.get(str(row.get("site_id", "")).upper(), row)
+        if isinstance(row, dict)
+        else row
+        for row in initial_rows
+    ]
+    known_sites = {
+        str(row.get("site_id", "")).upper()
+        for row in initial_rows
+        if isinstance(row, dict)
+    }
+    merged_rows.extend(row for site, row in retry_by_site.items() if site not in known_sites)
+    return {**original, "site_items": merged_rows}
+
+
+def _record_classic_fallback(
+    config: object,
+    fallback_offers: list[dict],
+) -> bool:
+    """Persist an accepted Premium-to-Classic fallback for later editor loads."""
+    fallback_sites = {str(offer.get("site_id", "")).upper() for offer in fallback_offers}
+    if not fallback_sites or not hasattr(config, "sites_to_sell_json"):
+        return False
+    current = getattr(config, "sites_to_sell_json") or []
+    updated = [
+        {**offer, "listing_type_id": "gold_special"}
+        if isinstance(offer, dict)
+        and str(offer.get("site_id", "")).upper() in fallback_sites
+        and str(offer.get("listing_type_id", "")).lower() == "gold_pro"
+        else offer
+        for offer in current
+    ]
+    if updated == current:
+        return False
+    config.sites_to_sell_json = updated
+    config.updated_at = datetime.now(UTC)
+    return True
+
+
 def _global_response_site_errors(response: dict | list) -> list[str]:
     """Return deterministic per-site validation failures from a 200 response.
 
@@ -488,6 +578,43 @@ async def execute_cbt_publish_from_draft(
                 response = await client.post("/global/items", payload)
                 response_data = response if isinstance(response, (dict, list)) else {}
                 item_id, permalink_or_keys = _global_response_item_identity(response_data)
+                classic_fallbacks = _classic_fallback_offers(response_data, payload) if item_id else []
+                if classic_fallbacks:
+                    try:
+                        retry_response = await client.post(
+                            f"/global/items/{item_id}", {"sites_to_sell": classic_fallbacks}
+                        )
+                    except httpx.HTTPStatusError as exc:
+                        retry_response = {
+                            "site_items": [
+                                {
+                                    "site_id": offer["site_id"],
+                                    "logistic_type": "remote",
+                                    "error": {
+                                        "error": "classic_fallback_failed",
+                                        "message": _meli_global_publish_error(exc),
+                                    },
+                                }
+                                for offer in classic_fallbacks
+                            ]
+                        }
+                    response_data = _merge_global_site_items(response_data, retry_response)
+                    if _record_classic_fallback(config, classic_fallbacks):
+                        create_audit_event(
+                            db=db,
+                            actor_type="system",
+                            actor_id="cbt_listing_type_fallback",
+                            action="cbt_global_publish.premium_downgraded_to_classic",
+                            entity_type="product_draft",
+                            entity_id=str(draft.id),
+                            after={
+                                "parent_item_id": item_id,
+                                "sites": [offer["site_id"] for offer in classic_fallbacks],
+                                "from_listing_type_id": "gold_pro",
+                                "to_listing_type_id": "gold_special",
+                            },
+                            commit=False,
+                        )
                 permalink = (
                     permalink_or_keys
                     if item_id
@@ -495,12 +622,18 @@ async def execute_cbt_publish_from_draft(
                     if isinstance(response_data, dict)
                     else ""
                 )
+                response_details = _global_response_details(response_data)
+                if classic_fallbacks:
+                    response_details["listing_type_fallbacks"] = [
+                        {"site_id": offer["site_id"], "from": "gold_pro", "to": "gold_special"}
+                        for offer in classic_fallbacks
+                    ]
                 result = (
                     PublishExecutionResult(
                         status="published",
                         item_id=item_id,
                         permalink=permalink,
-                        response_details=_global_response_details(response_data),
+                        response_details=response_details,
                     )
                     if item_id
                     else PublishExecutionResult(
