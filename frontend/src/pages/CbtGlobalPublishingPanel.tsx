@@ -400,12 +400,34 @@ export function CbtGlobalPublishingPanel({
         setConfigLoaded(true);
         offersInitializedRef.current = Boolean(config);
         if (!config) {
-          // A local MLM category is useful source evidence but cannot be used as
-          // the final CBT Global Selling category. Keep it visible separately.
-          if (draft.target_category_id) {
-            getCategoryDetails(draft.target_category_id)
-              .then((details) => !cancelled && setCategoryPath(`来源已匹配：${(details.path_from_root_zh ?? details.path_from_root).map((item) => item.name_zh || item.name).filter(Boolean).join(" > ")} · ${draft.target_category_id}`))
-              .catch(() => undefined);
+          // Category confirmation is persisted on the draft before the full CBT
+          // listing form is saved. Restore that confirmed leaf on reload instead
+          // of treating it as merely a source-category hint.
+          const confirmedCategoryId = draft.target_category_id;
+          if (confirmedCategoryId?.startsWith("CBT")) {
+            setCategoryId(confirmedCategoryId);
+            getCategoryDetails(confirmedCategoryId)
+              .then(async (details) => {
+                if (cancelled) return;
+                const isConfirmedLeaf = Boolean(details.verified && details.leaf);
+                setCategoryLeafVerified(isConfirmedLeaf);
+                setCategoryPath((details.path_from_root_zh ?? details.path_from_root)
+                  .map((item) => item.name_zh || item.name)
+                  .filter(Boolean)
+                  .join(" > "));
+                if (!isConfirmedLeaf) {
+                  setStatus("已保存的分类不是可刊登的最底层分类，请重新选择叶子分类。");
+                  return;
+                }
+                try {
+                  const attributesResult = await getCategoryAttributes(confirmedCategoryId);
+                  if (!cancelled) setAttributeDefinitions(attributesResult.attributes);
+                } catch {
+                  // The confirmed category stays visible even if its optional
+                  // attribute metadata is temporarily unavailable.
+                }
+              })
+              .catch(() => !cancelled && setStatus("已保存的最终 CBT 分类暂时无法读取，请稍后刷新。"));
           }
           return;
         }
