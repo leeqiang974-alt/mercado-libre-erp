@@ -24,7 +24,7 @@ from app.services.amazon.import_file import MAX_IMPORT_FILE_BYTES, parse_amazon_
 from app.services.amazon.discovery import discover_amazon_products
 from app.services.amazon.throttle import record_domain_outcome, reserve_domain_request
 from app.services.drafts import create_product_draft, to_draft_read, update_draft_content
-from app.services.amazon.media import select_listing_images
+from app.services.amazon.media import select_listing_images, select_product_video_urls
 from app.services.audit_events import create_audit_event
 from app.services.source_products import (
     EXACT_PAGE_EVIDENCE_STATUSES,
@@ -698,7 +698,7 @@ def receive_amazon_extension_job_result(
         db.commit()
         return {"ok": True, "job_id": job.id, "status": job.status.value, "draft_id": None}
     raw_snapshot = dict(payload.snapshot)
-    video_urls = [str(value).strip() for value in raw_snapshot.pop("video_urls", []) if str(value).strip()]
+    video_urls = select_product_video_urls(raw_snapshot.pop("video_urls", []))
     if not raw_snapshot.get("measurements") and raw_snapshot.get("technical_details"):
         raw_snapshot["measurements"] = _extract_measurements(
             raw_snapshot["technical_details"], source_url
@@ -817,11 +817,7 @@ def create_source_product_from_extension(
     source_url = _normalized_amazon_url_or_422(payload.source_url)
     target_site_id = _target_site_or_422(payload.target_site_id)
     raw_snapshot = dict(payload.snapshot)
-    video_urls = [
-        str(value).strip()
-        for value in raw_snapshot.pop("video_urls", [])
-        if str(value).strip()
-    ]
+    video_urls = select_product_video_urls(raw_snapshot.pop("video_urls", []))
     if not raw_snapshot.get("measurements") and raw_snapshot.get("technical_details"):
         raw_snapshot["measurements"] = _extract_measurements(
             raw_snapshot["technical_details"], source_url
@@ -895,11 +891,7 @@ def capture_source_product_from_extension(
     if normalize_amazon_product_url(source.source_url) != source_url:
         raise HTTPException(status_code=409, detail="source_product_url_mismatch")
     raw_snapshot = dict(payload.snapshot)
-    video_urls = [
-        str(value).strip()
-        for value in raw_snapshot.pop("video_urls", [])
-        if str(value).strip()
-    ]
+    video_urls = select_product_video_urls(raw_snapshot.pop("video_urls", []))
     if not raw_snapshot.get("measurements") and raw_snapshot.get("technical_details"):
         raw_snapshot["measurements"] = _extract_measurements(
             raw_snapshot["technical_details"], source_url

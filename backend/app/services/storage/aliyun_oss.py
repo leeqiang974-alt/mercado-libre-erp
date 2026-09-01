@@ -4,13 +4,12 @@ import asyncio
 import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import httpx
 import oss2
 
 from app.core.config import Settings
-from app.services.image_validation import ImageValidationError, ensure_listing_image_size
+from app.services.image_validation import ImageValidationError, normalize_listing_image
 
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -58,12 +57,14 @@ async def mirror_image_to_oss(source_url: str, settings: Settings) -> str:
     if not data or len(data) > MAX_IMAGE_BYTES:
         raise OssMirrorError(f"图片为空或超过 10MB：{source_url}")
     try:
-        ensure_listing_image_size(data, content_type)
+        data, content_type, _original_dimensions, _final_dimensions = normalize_listing_image(
+            data, content_type
+        )
     except ImageValidationError as exc:
         raise OssMirrorError(f"{exc}：{source_url}") from exc
-    if already_mirrored:
+    if already_mirrored and data == response.content:
         return source_url
-    extension = ".png" if content_type == "image/png" else ".jpg"
+    extension = ".jpg" if content_type in {"image/jpeg", "image/jpg"} else ".png"
     digest = hashlib.sha256(data).hexdigest()
     day = datetime.now(UTC).strftime("%Y%m%d")
     object_key = f"{settings.aliyun_oss_prefix.strip('/')}/{day}/{digest[:32]}{extension}"

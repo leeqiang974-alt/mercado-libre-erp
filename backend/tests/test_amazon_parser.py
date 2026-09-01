@@ -1,7 +1,7 @@
 import pytest
 
 from app.services.amazon.collector import validate_amazon_snapshot
-from app.services.amazon.media import prepare_listing_title, select_listing_images
+from app.services.amazon.media import prepare_listing_title, select_listing_images, select_product_video_urls
 from app.services.amazon.normalizer import normalize_amazon_product
 from app.services.amazon.parser import _normalize_measurement_label, parse_amazon_html
 
@@ -290,7 +290,7 @@ def test_normalize_amazon_product_removes_source_brand_and_gallery_sizes():
     ]
 
 
-def test_select_listing_images_limits_and_prefers_high_resolution():
+def test_select_listing_images_keeps_eligible_gallery_order_after_deduplication():
     images = [
         "https://example.com/a._AC_US100_.jpg",
         "https://example.com/b._AC_SL1200_.jpg",
@@ -298,7 +298,7 @@ def test_select_listing_images_limits_and_prefers_high_resolution():
         "https://example.com/b._AC_SX500_.jpg",
     ]
 
-    assert select_listing_images(images, limit=1) == ["https://example.com/b._AC_SL1200_.jpg"]
+    assert select_listing_images(images, limit=1) == ["https://example.com/a._AC_SY450_.jpg"]
     assert prepare_listing_title("CAKETIME Best Silicone Pan", "CAKETIME") == "Silicone Pan"
 
 
@@ -598,3 +598,20 @@ def test_no_other_variant_is_selected_when_requested_asin_is_not_in_options():
 
     assert parsed["variants"][0]["asin"] == "B000TEST02"
     assert parsed["variants"][0]["selected"] is False
+
+
+def test_select_product_video_urls_rejects_non_vse_or_non_amazon_urls():
+    valid = "https://m.media-amazon.com/images/S/vse-vms-transcoding-artifact-us-east-1-prod/a/video.mp4"
+    assert select_product_video_urls([
+        "https://m.media-amazon.com/images/S/ads/recommendation.mp4",
+        "https://cdn.example/video.mp4",
+        valid,
+        valid,
+    ]) == [valid]
+
+
+def test_select_listing_images_keeps_resizable_100px_render_and_rejects_tinier_icon():
+    assert select_listing_images([
+        "https://example.com/icon._AC_US99_.jpg",
+        "https://example.com/eligible._AC_US100_.jpg",
+    ]) == ["https://example.com/eligible._AC_US100_.jpg"]

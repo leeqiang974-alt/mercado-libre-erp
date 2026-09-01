@@ -179,7 +179,8 @@ async def mirror_draft_images_to_oss(
         mirrored_urls = await mirror_images_to_oss(draft.image_urls_json or [], get_settings())
     except OssMirrorError as exc:
         raise HTTPException(status_code=422, detail=f"oss_image_mirror_failed: {exc}") from exc
-    if mirrored_urls == (draft.image_urls_json or []):
+    original_urls = draft.image_urls_json or []
+    if mirrored_urls == original_urls:
         return to_draft_read(draft)
     previous_version = draft.content_version
     update_draft_content(
@@ -187,6 +188,22 @@ async def mirror_draft_images_to_oss(
         product_draft_id,
         expected_content_version=previous_version,
         image_urls_json=mirrored_urls,
+    )
+    create_audit_event(
+        db=db,
+        actor_type="system",
+        actor_id="oss_image_normalizer",
+        action="draft.images_normalized",
+        entity_type="product_draft",
+        entity_id=str(product_draft_id),
+        before={"content_version": previous_version, "image_count": len(original_urls)},
+        after={
+            "content_version": previous_version + 1,
+            "image_count": len(mirrored_urls),
+            "discarded_count": max(0, len(original_urls) - len(mirrored_urls)),
+            "oss_mirrored": True,
+        },
+        commit=False,
     )
     db.commit()
     db.refresh(draft)
@@ -379,4 +396,3 @@ def approve_draft(
     db: Session = Depends(get_db),
 ) -> DraftApprovalRead:
     return to_approval_read(approve_product_draft(db, product_draft_id, payload))
-

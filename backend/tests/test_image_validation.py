@@ -1,8 +1,16 @@
+from io import BytesIO
 import struct
+
+from PIL import Image
 
 import pytest
 
-from app.services.image_validation import ImageValidationError, ensure_listing_image_size, image_dimensions
+from app.services.image_validation import (
+    ImageValidationError,
+    ensure_listing_image_size,
+    image_dimensions,
+    normalize_listing_image,
+)
 
 
 def jpeg(width: int, height: int) -> bytes:
@@ -25,3 +33,24 @@ def test_rejects_picture_below_mercado_libre_minimum_edge():
 
 def test_accepts_picture_at_mercado_libre_minimum_edge():
     assert ensure_listing_image_size(jpeg(500, 500), "image/jpeg") == (500, 500)
+
+
+def valid_jpeg(width: int, height: int) -> bytes:
+    image = Image.new("RGB", (width, height), "#4477aa")
+    output = BytesIO()
+    image.save(output, format="JPEG", quality=90)
+    return output.getvalue()
+
+
+def test_upscales_eligible_image_without_ai():
+    data, content_type, original, final = normalize_listing_image(valid_jpeg(250, 400), "image/jpeg")
+
+    assert content_type == "image/jpeg"
+    assert original == (250, 400)
+    assert final == (500, 800)
+    assert ensure_listing_image_size(data, content_type) == (500, 800)
+
+
+def test_does_not_upscale_icon_sized_source_image():
+    with pytest.raises(ImageValidationError, match="小于 100px"):
+        normalize_listing_image(valid_jpeg(99, 300), "image/jpeg")
