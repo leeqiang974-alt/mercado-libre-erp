@@ -96,3 +96,4 @@
 - Continue implementation through coding, verification, review, and commit. Do not stop after one subsystem while meaningful credential-independent product work remains.
 - Progress reports must distinguish long-lived services, currently executing commands, active review agents, and completed code. Never present container uptime as active development time.
 - Treat queue workers that report zero processed items as idle services, not running tasks, and close completed review agents promptly.
+- Manual AI content generation is exempt from the short 20-second general request guard and uses its own bounded provider timeout (90 seconds by default), which must remain below the public proxy timeout. Provider timeouts return a normalized retryable error, leave draft content unchanged, and create a `draft.ai_content_failed` audit event; never automatically retry a paid generation request.

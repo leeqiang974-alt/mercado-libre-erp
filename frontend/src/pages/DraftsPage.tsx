@@ -528,7 +528,7 @@ export function DraftsPage({
       onReviewChange(null);
       setProviderReview(null);
     } catch (generationError) {
-      setError(readableDraftError(generationError, "火山 AI 生成失败"));
+      setError(readableDraftError(generationError, "AI 生成失败"));
     } finally {
       setBusy("");
     }
@@ -784,6 +784,10 @@ function readableDraftError(error: unknown, fallback: string) {
       category_site_mismatch: "分类与目标站点不匹配。",
       volcengine_api_key_required: "请先在店铺管理中配置火山 AI API Key。",
       volcengine_unreachable: "火山 AI 暂时无法连接，请稍后重试。",
+      deepseek_api_key_required: "请先配置 DeepSeek API Key。",
+      deepseek_unreachable: "DeepSeek 暂时无法连接，请稍后重试。",
+      deepseek_timeout: "DeepSeek 响应超时，本次没有写入新内容，请稍后手动重试。",
+      volcengine_timeout: "火山 AI 响应超时，本次没有写入新内容，请稍后手动重试。",
       generated_content_invalid: "火山 AI 返回的内容未通过合规检查，请重新生成。",
       draft_content_version_conflict: "草稿已被其他操作修改，请重新选择草稿。",
     };

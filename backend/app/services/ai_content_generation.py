@@ -29,6 +29,7 @@ async def generate_and_save_draft_content(
     product_draft_id: int,
     category_id: str,
     fields: set[str] | None = None,
+    timeout_seconds: float = 90,
 ) -> tuple[ProductDraft, GeneratedListingContent, str]:
     draft = db.get(ProductDraft, product_draft_id)
     if draft is None:
@@ -58,7 +59,14 @@ async def generate_and_save_draft_content(
     source = db.get(SourceProduct, draft.source_product_id) if draft.source_product_id else None
     draft_evidence_description_length = len(draft.description or "")
     prompt = _build_prompt(draft, source, normalized_category)
-    generated = await _request_content(base_url=base_url, model=model, provider=provider, api_key=api_key, prompt=prompt)
+    generated = await _request_content(
+        base_url=base_url,
+        model=model,
+        provider=provider,
+        api_key=api_key,
+        prompt=prompt,
+        timeout_seconds=timeout_seconds,
+    )
     source_brand = str(source.brand or "") if source else ""
     try:
         content = _validate_generated(generated, source_brand)
@@ -69,6 +77,7 @@ async def generate_and_save_draft_content(
             provider=provider,
             api_key=api_key,
             prompt=f"{prompt}\nThe previous output failed this validation: {first_error}. Return corrected JSON only.",
+            timeout_seconds=timeout_seconds,
         )
         try:
             content = _validate_generated(generated, source_brand)
@@ -124,7 +133,13 @@ async def generate_and_save_draft_content(
 
 
 async def _request_content(
-    *, base_url: str, model: str, provider: str, api_key: str, prompt: str
+    *,
+    base_url: str,
+    model: str,
+    provider: str,
+    api_key: str,
+    prompt: str,
+    timeout_seconds: float,
 ) -> dict[str, object]:
     url = f"{base_url.rstrip('/')}/chat/completions"
     payload = {
@@ -136,7 +151,7 @@ async def _request_content(
         ],
     }
     try:
-        async with httpx.AsyncClient(timeout=45) as client:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             response = await client.post(
                 url,
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -144,6 +159,11 @@ async def _request_content(
             )
             response.raise_for_status()
             body = response.json()
+    except httpx.TimeoutException as exc:
+        raise HTTPException(
+            status_code=504,
+            detail={"code": f"{provider}_timeout", "retryable": True},
+        ) from exc
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail={"code": f"{provider}_unreachable"}) from exc
     except (TypeError, ValueError) as exc:

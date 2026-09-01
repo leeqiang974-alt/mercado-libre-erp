@@ -212,7 +212,12 @@ async def generate_content(
     runtime_settings = get_settings()
     try:
         draft, content, model = await generate_and_save_draft_content(
-            db, runtime_settings, product_draft_id, payload.category_id, set(payload.fields)
+            db,
+            runtime_settings,
+            product_draft_id,
+            payload.category_id,
+            set(payload.fields),
+            timeout_seconds=runtime_settings.ai_content_generation_timeout_seconds,
         )
     except HTTPException as exc:
         # Every attempted paid/manual generation needs an operator-visible

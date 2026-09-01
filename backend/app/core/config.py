@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com/v1"
     deepseek_model: str = "deepseek-v4-flash"
     content_generation_provider: str = "deepseek"
+    ai_content_generation_timeout_seconds: int = 90
     alibaba_1688_app_key: str = ""
     alibaba_1688_app_secret: str = ""
     alibaba_1688_redirect_uri: str = "https://ml-erp.woxq.cn/api/integrations/1688/callback"
@@ -51,6 +52,8 @@ class Settings(BaseSettings):
             raise ValueError("Live publishing requires PostgreSQL task locking.")
         if self.api_request_timeout_seconds < 5:
             raise ValueError("API request timeout must be at least five seconds.")
+        if self.ai_content_generation_timeout_seconds < 30:
+            raise ValueError("AI content generation timeout must be at least thirty seconds.")
         if self.job_execution_timeout_seconds >= self.job_stale_after_seconds:
             raise ValueError("Job execution timeout must be shorter than the stale-job threshold.")
         if self.amazon_domain_min_interval_seconds < 1:
