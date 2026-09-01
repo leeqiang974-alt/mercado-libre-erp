@@ -202,6 +202,7 @@ export function CbtGlobalPublishingPanel({
   const [categoryId, setCategoryId] = useState("");
   const [categoryLeafVerified, setCategoryLeafVerified] = useState(false);
   const [categoryPath, setCategoryPath] = useState("");
+  const [categoryActionStatus, setCategoryActionStatus] = useState("");
   const [categorySearchQuery, setCategorySearchQuery] = useState(normalizeCbtTitle(draft.title));
   const [predictions, setPredictions] = useState<Record<string, unknown>[]>([]);
   const [categoryTree, setCategoryTree] = useState<Record<string, unknown>[]>([]);
@@ -322,6 +323,7 @@ export function CbtGlobalPublishingPanel({
     setCategoryId("");
     setCategoryLeafVerified(false);
     setCategoryPath("");
+    setCategoryActionStatus("");
     setPredictions([]);
     setAttributeDefinitions([]);
     setAttributes({ BRAND: "Unbranded", ITEM_CONDITION: "new", SELLER_SKU: defaultSku(draftId), MODEL: defaultSku(draftId) });
@@ -386,8 +388,11 @@ export function CbtGlobalPublishingPanel({
       getCbtListingConfig(draftId),
       getSystemReadiness(),
       getDraftPricing(draftId).catch(() => null),
+      // The parent can still hold a compact/stale draft while the editor is
+      // opening. Read the authoritative draft before restoring category state.
+      getDraft(draftId),
     ])
-      .then(([storeRows, config, system, savedPricing]) => {
+      .then(([storeRows, config, system, savedPricing, persistedDraft]) => {
         if (cancelled) return;
         setStores(storeRows);
         setReadiness(system);
@@ -403,7 +408,7 @@ export function CbtGlobalPublishingPanel({
           // Category confirmation is persisted on the draft before the full CBT
           // listing form is saved. Restore that confirmed leaf on reload instead
           // of treating it as merely a source-category hint.
-          const confirmedCategoryId = draft.target_category_id;
+          const confirmedCategoryId = persistedDraft.target_category_id;
           if (confirmedCategoryId?.startsWith("CBT")) {
             setCategoryId(confirmedCategoryId);
             getCategoryDetails(confirmedCategoryId)
@@ -419,6 +424,7 @@ export function CbtGlobalPublishingPanel({
                   setStatus("已保存的分类不是可刊登的最底层分类，请重新选择叶子分类。");
                   return;
                 }
+                setCategoryActionStatus("已恢复并确认最终 CBT 分类");
                 try {
                   const attributesResult = await getCategoryAttributes(confirmedCategoryId);
                   if (!cancelled) setAttributeDefinitions(attributesResult.attributes);
@@ -618,6 +624,7 @@ export function CbtGlobalPublishingPanel({
   async function selectCategory(nextCategoryId: string, prediction?: Record<string, unknown>) {
     if (!nextCategoryId) return;
     setCategoryId(nextCategoryId);
+    setCategoryActionStatus("正在确认最终 CBT 分类...");
     setBusy("attributes");
     try {
       const details = await getCategoryDetails(nextCategoryId);
@@ -631,11 +638,13 @@ export function CbtGlobalPublishingPanel({
       setListingRail((current) => current.map((item) => item.id === confirmed.draft.id ? confirmed.draft : item));
       setCategoryLeafVerified(true);
       setCategoryPath((details.path_from_root_zh ?? details.path_from_root).map((item) => item.name_zh || item.name).filter(Boolean).join(" > "));
+      setCategoryActionStatus("已确认最终 CBT 分类");
       const attributesResult = await getCategoryAttributes(nextCategoryId);
       setAttributeDefinitions(attributesResult.attributes);
       setStatus("已自动选择并确认最底层分类，官方属性已加载。");
     } catch (error) {
       setCategoryLeafVerified(false);
+      setCategoryActionStatus(error instanceof Error ? `分类确认失败：${error.message}` : "分类确认失败");
       setStatus(error instanceof Error ? error.message : "自动确认分类失败");
     } finally { setBusy(""); }
   }
@@ -658,6 +667,7 @@ export function CbtGlobalPublishingPanel({
       setListingRail((current) => current.map((item) => item.id === confirmed.draft.id ? confirmed.draft : item));
       setCategoryLeafVerified(true);
       setCategoryPath((details.path_from_root_zh ?? details.path_from_root).map((item) => item.name_zh || item.name).filter(Boolean).join(" > "));
+      setCategoryActionStatus("已确认最终 CBT 分类");
       const result = await getCategoryAttributes(categoryId);
       setAttributeDefinitions(result.attributes);
       setStatus(result.verified ? "已读取美客多官方类目属性" : "属性尚未验证");
@@ -909,7 +919,8 @@ export function CbtGlobalPublishingPanel({
         {profile && <p className="section-note">卖家 {profile.seller_id} · {profile.model === "traditional_global" ? "传统 Global Selling" : "User Products"}。Remote 站点默认全部勾选；墨西哥 FULL 由独立流程处理。</p>}
           <div className="wf-category-line"><label>分类关键词搜索<small>标题智能匹配保留；也可输入中文或英文关键词，候选不合适时逐级浏览分类。</small><input value={categorySearchQuery} placeholder="例如：淋浴喷头 / shower head" onChange={(event) => setCategorySearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void predictCategory(); }} /></label><button type="button" onClick={() => void predictCategory(globalTitle)} disabled={busy === "category" || busy === "attributes"}><Search size={16} /> 按标题智能匹配</button><button type="button" onClick={() => void predictCategory()} disabled={busy === "category" || busy === "attributes"}><Search size={16} /> 搜索关键词</button></div><label>搜索匹配分类<select className="category-prediction-select" value="" onChange={(event) => choosePrediction(event.target.value)} disabled={predictions.length === 0 || busy === "attributes"}><option value="">{predictions.length ? "选择一个匹配分类" : "输入关键词后搜索"}</option>{predictions.map((item) => { const id = String(item.category_id ?? ""); const name = String(item.category_name_zh ?? item.category_name ?? item.domain_name ?? id); const isLeaf = item.is_leaf === true; return <option key={id} value={id}>{name} · {isLeaf ? "最底层，点击即确认" : "父级，点击进入下一级"}</option>; })}</select></label><label>已选最终 CBT 分类 *<input readOnly value={categoryId} placeholder="选择最底层分类后自动确认" /></label>
         {categoryPath && <p className="category-path-label">{categoryPath}{categoryId ? ` · ${categoryLeafVerified ? "最终 CBT 最底层分类已确认" : "待确认最终 CBT 分类"}` : " · 请在上方选择对应的 CBT 最底层分类"}</p>}
-        {predictions.length > 0 && <div className="prediction-list">{predictions.map((item) => { const id = String(item.category_id ?? ""); const name = String(item.category_name_zh ?? item.category_name ?? item.domain_name ?? id); const isSelected = id === categoryId; const isLeaf = item.is_leaf === true; return <button className={isSelected ? "selected" : ""} key={id} onClick={() => isLeaf ? void selectCategory(id, item) : void browseCategoryTree(id)}><strong>{name}{isLeaf ? " · 最底层" : " · 进入下一级"}</strong><small>{String(item.parent_path_zh ?? item.parent_path ?? "正在读取母级分类路径")}</small><small>{id} · {isSelected ? "已确认并加载属性" : isLeaf ? "点击后自动确认" : "点击进入子分类"}</small></button>; })}</div>}
+        {categoryActionStatus && <p className={`category-action-status ${categoryLeafVerified ? "success" : "error"}`} role="status">{categoryActionStatus}</p>}
+        {predictions.length > 0 && <div className="prediction-list">{predictions.map((item) => { const id = String(item.category_id ?? ""); const name = String(item.category_name_zh ?? item.category_name ?? item.domain_name ?? id); const isSelected = id === categoryId; const isLeaf = item.is_leaf === true; return <button type="button" className={isSelected ? "selected" : ""} key={id} onClick={(event) => { event.preventDefault(); event.stopPropagation(); if (isLeaf) void selectCategory(id, item); else void browseCategoryTree(id); }}><strong>{name}{isLeaf ? " · 最底层" : " · 进入下一级"}</strong><small>{String(item.parent_path_zh ?? item.parent_path ?? "正在读取母级分类路径")}</small><small>{id} · {isSelected ? "已确认并加载属性" : isLeaf ? "点击后自动确认" : "点击进入子分类"}</small></button>; })}</div>}
         <div className="section-note">搜索结果不合适？<button className="tiny-button" type="button" onClick={() => { setShowCategoryTree((value) => !value); if (!showCategoryTree && !categoryTree.length) void browseCategoryTree(); }}>{showCategoryTree ? "收起分类目录" : "浏览完整分类目录"}</button></div>
         {showCategoryTree && <div className="prediction-list"><div className="section-note"><strong>官方 CBT 分类目录</strong> · {categoryTreePath || "正在读取"} <button className="tiny-button" type="button" onClick={() => browseCategoryTree()} disabled={busy === "category-tree"}>返回根分类</button></div>{categoryTree.map((item) => { const id = String(item.id ?? ""); const name = String(item.name_zh ?? item.name ?? id); return <button key={id} type="button" onClick={() => browseCategoryTree(id)}><strong>{name}</strong><small>{id} · 点击展开；没有子分类时即选为最终候选</small></button>; })}</div>}
       </section>

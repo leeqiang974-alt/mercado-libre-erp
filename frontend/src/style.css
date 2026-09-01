@@ -1981,6 +1981,9 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .wf-sites .is-disabled { color:#98a2b3; }
 .wf-category-line { align-items:end; display:grid; gap:10px; grid-template-columns:minmax(260px,1fr) auto auto; margin-top:14px; }
 .wf-category-line label { margin:0; }
+.category-action-status { border-left:3px solid #98a2b3; font-size:12px; margin:10px 0 0; padding:8px 10px; }
+.category-action-status.success { background:#ecfdf3; border-left-color:#12b76a; color:#027a48; }
+.category-action-status.error { background:#fff4f2; border-left-color:#f04438; color:#b42318; }
 .wf-title-input { align-items:center; display:flex; position:relative; }
 .wf-title-input input { padding-right:56px; }
 .wf-title-input small { color:#667085; font-size:12px; position:absolute; right:10px; }
