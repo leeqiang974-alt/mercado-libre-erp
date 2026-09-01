@@ -56,6 +56,7 @@ const REQUIRED_ATTRIBUTE_IDS = [
   "PACKAGE_WEIGHT",
 ];
 const MAX_PRODUCT_IMAGES = 12;
+const MAX_PRODUCT_VIDEOS = 3;
 
 const MARKET_NAMES: Record<string, string> = {
   MLA: "阿根廷", MLB: "巴西", MLC: "智利", MCO: "哥伦比亚", MLM: "墨西哥", MLU: "乌拉圭",
@@ -209,6 +210,7 @@ export function CbtGlobalPublishingPanel({
   const [globalTitle, setGlobalTitle] = useState(normalizeCbtTitle(draft.title));
   const [familyName, setFamilyName] = useState(defaultSku(draftId));
   const [description, setDescription] = useState(sanitizeCbtDescription(draft.description));
+  const [videoUrls, setVideoUrls] = useState<string[]>(draft.video_urls ?? []);
   const [priceUsd, setPriceUsd] = useState(draft.currency === "USD" && draft.price ? String(draft.price) : "");
   const [quantity, setQuantity] = useState("999");
   const [attributes, setAttributes] = useState<Record<string, string>>({
@@ -313,6 +315,7 @@ export function CbtGlobalPublishingPanel({
     setCategorySearchQuery(normalizeCbtTitle(draft.title));
     setGlobalTitle(normalizeCbtTitle(draft.title));
     setDescription(sanitizeCbtDescription(draft.description));
+    setVideoUrls(draft.video_urls ?? []);
     setFamilyName(defaultSku(draftId));
     setPriceUsd(draft.currency === "USD" && draft.price ? String(draft.price) : "");
     setQuantity("999");
@@ -332,7 +335,7 @@ export function CbtGlobalPublishingPanel({
     setConfigLoaded(false);
     setHasSavedConfig(false);
     offersInitializedRef.current = false;
-  }, [draftId, draft.title, draft.description, draft.currency, draft.price]);
+  }, [draftId, draft.title, draft.description, draft.video_urls, draft.currency, draft.price]);
 
   useEffect(() => {
     setListingPage((page) => Math.min(Math.max(page, 1), listingPageCount));
@@ -671,13 +674,16 @@ export function CbtGlobalPublishingPanel({
     if (draft.image_urls.length > MAX_PRODUCT_IMAGES) {
       throw new Error(`美客多最多允许发布 ${MAX_PRODUCT_IMAGES} 张图片，请先删除多余图片。`);
     }
+    if (videoUrls.length > MAX_PRODUCT_VIDEOS) {
+      throw new Error(`当前有 ${videoUrls.length} 个视频，最多保留 ${MAX_PRODUCT_VIDEOS} 个。请在视频区删除 ${videoUrls.length - MAX_PRODUCT_VIDEOS} 个后再保存。`);
+    }
     const updated = await saveDraftContent(draftId, {
       expected_content_version: draft.content_version ?? 1,
       title: normalizeCbtTitle(globalTitle),
       description: sanitizeCbtDescription(description),
       brand: "Unbranded",
       image_urls: draft.image_urls.filter(Boolean),
-      video_urls: draft.video_urls ?? [],
+      video_urls: videoUrls,
     });
     onDraftChange(updated);
     const ossDraft = await mirrorDraftImagesToOss(draftId);
@@ -726,10 +732,14 @@ export function CbtGlobalPublishingPanel({
   }
 
   async function setCoverImage(url: string) {
+    if (videoUrls.length > MAX_PRODUCT_VIDEOS) {
+      setStatus(`请先在视频区删除 ${videoUrls.length - MAX_PRODUCT_VIDEOS} 个视频，再保存图片修改。`);
+      return;
+    }
     const image_urls = [url, ...draft.image_urls.filter((item) => item !== url)];
     try {
       setBusy("media");
-      const updated = await saveDraftContent(draftId, { expected_content_version: draft.content_version ?? 1, title: normalizeCbtTitle(globalTitle), description: sanitizeCbtDescription(description), brand: "Unbranded", image_urls, video_urls: draft.video_urls ?? [] });
+      const updated = await saveDraftContent(draftId, { expected_content_version: draft.content_version ?? 1, title: normalizeCbtTitle(globalTitle), description: sanitizeCbtDescription(description), brand: "Unbranded", image_urls, video_urls: videoUrls });
       onDraftChange(updated);
       setStatus("主图已保存。");
     } catch (error) { setStatus(error instanceof Error ? error.message : "保存图片顺序失败"); }
@@ -737,14 +747,44 @@ export function CbtGlobalPublishingPanel({
   }
 
   async function removeImage(url: string) {
+    if (videoUrls.length > MAX_PRODUCT_VIDEOS) {
+      setStatus(`请先在视频区删除 ${videoUrls.length - MAX_PRODUCT_VIDEOS} 个视频，再保存图片修改。`);
+      return;
+    }
     const image_urls = draft.image_urls.filter((item) => item !== url);
     try {
       setBusy("media");
-      const updated = await saveDraftContent(draftId, { expected_content_version: draft.content_version ?? 1, title: normalizeCbtTitle(globalTitle), description: sanitizeCbtDescription(description), brand: "Unbranded", image_urls, video_urls: draft.video_urls ?? [] });
+      const updated = await saveDraftContent(draftId, { expected_content_version: draft.content_version ?? 1, title: normalizeCbtTitle(globalTitle), description: sanitizeCbtDescription(description), brand: "Unbranded", image_urls, video_urls: videoUrls });
       onDraftChange(updated);
       setStatus("图片已移除。");
     } catch (error) { setStatus(error instanceof Error ? error.message : "删除图片失败"); }
     finally { setBusy(""); }
+  }
+
+  async function removeVideo(url: string) {
+    const next = videoUrls.filter((item) => item !== url);
+    setVideoUrls(next);
+    setSaved(null); setPreview(null); setExecution(null);
+    if (next.length > MAX_PRODUCT_VIDEOS) {
+      setStatus(`已从待保存视频中移除 1 个；还需再移除 ${next.length - MAX_PRODUCT_VIDEOS} 个视频。`);
+      return;
+    }
+    try {
+      setBusy("media");
+      const updated = await saveDraftContent(draftId, {
+        expected_content_version: draft.content_version ?? 1,
+        title: normalizeCbtTitle(globalTitle),
+        description: sanitizeCbtDescription(description),
+        brand: "Unbranded",
+        image_urls: draft.image_urls,
+        video_urls: next,
+      });
+      onDraftChange(updated);
+      setStatus(`视频已保存，当前保留 ${next.length}/${MAX_PRODUCT_VIDEOS} 个。`);
+    } catch (error) {
+      setVideoUrls(videoUrls);
+      setStatus(error instanceof Error ? error.message : "删除视频失败");
+    } finally { setBusy(""); }
   }
 
   function marketplaceValidationErrors() {
@@ -854,7 +894,7 @@ export function CbtGlobalPublishingPanel({
 
       <section id="basic" className="surface wf-section"><div className="wf-section-title"><span>2</span><div><h3>产品基本信息</h3><p>标题强制英文不超过 60 字符；品牌固定为无品牌。</p></div></div><div className="form-grid two-col"><label>Parent SKU / 产品族名称 *<input value={familyName} placeholder="例如 SKU02761" onChange={(event) => { const value = event.target.value; setFamilyName(value); setAttributes((current) => ({ ...current, MODEL: value })); setSaved(null); setPreview(null); }} /></label><label>可售库存 *<input type="number" min="1" step="1" value={quantity} onChange={(event) => { setQuantity(event.target.value); setSaved(null); setPreview(null); }} /></label></div><label><span className="wf-field-label-row">英文标题 *<button type="button" className="tiny-button wf-ai-button" disabled={busy.startsWith("ai-")} onClick={() => void generateAiField("title")}><Sparkles size={13} />{busy === "ai-title" ? "生成中…" : "AI"}</button></span><div className="wf-title-input"><input value={globalTitle} onChange={(event) => { setGlobalTitle(normalizeCbtTitle(event.target.value)); setSaved(null); setPreview(null); }} /><small>{globalTitle.length}/60</small></div>{aiFeedback?.field === "title" && <small className={`wf-ai-feedback ${aiFeedback.error ? "error" : "success"}`} role="status">{aiFeedback.message}</small>}{globalTitle.length > 60 && <small className="inline-warning">标题超过 60 字符：不会自动截断，请使用 AI 重新生成或手动精简。</small>}</label><label>品牌（固定）<input disabled value="Unbranded（无品牌）" /></label></section>
 
-      <section id="media" className="surface wf-section"><div className="wf-section-title"><span>3</span><div><h3>产品图片</h3><p>使用采集到的原图；第 1 张是主图。小规格缩略图不会入库，美客多最多发布 12 张。</p></div><strong>{draft.image_urls.length}/{MAX_PRODUCT_IMAGES} 张</strong></div>{draft.image_urls.length > MAX_PRODUCT_IMAGES && <p className="inline-warning">当前有 {draft.image_urls.length} 张图片，请删除 {draft.image_urls.length - MAX_PRODUCT_IMAGES} 张后再保存或发布。</p>}<div className="wf-media-grid">{draft.image_urls.map((url,index) => <article className={`wf-media-card ${index === 0 ? "cover" : ""}`} key={url}><div className="wf-media-label">{index === 0 ? "主图" : `图片 ${index + 1}`}</div><button className="wf-media-preview-trigger" type="button" title="点击查看大图" onClick={() => openImagePreview(url)}><img src={url} alt={`商品图片 ${index + 1}`} /></button><div><button className="tiny-button" disabled={index === 0 || busy === "media"} onClick={() => setCoverImage(url)}>设为主图</button><button className="tiny-button danger" disabled={busy === "media"} onClick={() => removeImage(url)}>删除</button></div></article>)}</div>{draft.image_urls.length === 0 && <p className="inline-warning">当前没有可发布图片，请先回到上架库补充素材。</p>}<div className="wf-video-line"><strong>产品视频</strong><span>{draft.video_urls?.length ?? 0}/3 个；视频独立保存，未进入商品图片。</span></div></section>
+      <section id="media" className="surface wf-section"><div className="wf-section-title"><span>3</span><div><h3>产品图片</h3><p>使用采集到的原图；第 1 张是主图。小规格缩略图不会入库，美客多最多发布 12 张。</p></div><strong>{draft.image_urls.length}/{MAX_PRODUCT_IMAGES} 张</strong></div>{draft.image_urls.length > MAX_PRODUCT_IMAGES && <p className="inline-warning">当前有 {draft.image_urls.length} 张图片，请删除 {draft.image_urls.length - MAX_PRODUCT_IMAGES} 张后再保存或发布。</p>}<div className="wf-media-grid">{draft.image_urls.map((url,index) => <article className={`wf-media-card ${index === 0 ? "cover" : ""}`} key={url}><div className="wf-media-label">{index === 0 ? "主图" : `图片 ${index + 1}`}</div><button className="wf-media-preview-trigger" type="button" title="点击查看大图" onClick={() => openImagePreview(url)}><img src={url} alt={`商品图片 ${index + 1}`} /></button><div><button className="tiny-button" disabled={index === 0 || busy === "media"} onClick={() => setCoverImage(url)}>设为主图</button><button className="tiny-button danger" disabled={busy === "media"} onClick={() => removeImage(url)}>删除</button></div></article>)}</div>{draft.image_urls.length === 0 && <p className="inline-warning">当前没有可发布图片，请先回到上架库补充素材。</p>}<div className="wf-video-line"><strong>产品视频</strong><span>{videoUrls.length}/{MAX_PRODUCT_VIDEOS} 个；视频独立保存，未进入商品图片。</span></div>{videoUrls.length > MAX_PRODUCT_VIDEOS && <p className="inline-warning">当前视频超过保存上限。请从下方选择删除 {videoUrls.length - MAX_PRODUCT_VIDEOS} 个；删除到 3 个后会自动保存。</p>}<div className="wf-video-grid">{videoUrls.map((url, index) => <article className="wf-video-card" key={url}><div className="wf-media-label">视频 {index + 1}</div><video controls preload="metadata" src={url}>当前浏览器无法预览此视频。</video><div><a className="tiny-button" href={url} target="_blank" rel="noreferrer">打开视频</a><button className="tiny-button danger" disabled={busy === "media"} onClick={() => void removeVideo(url)}>删除</button></div></article>)}</div>{videoUrls.length === 0 && <p className="section-note">当前未采集到视频链接。</p>}</section>
 
       <section id="description" className="surface wf-section"><div className="wf-section-title"><span>4</span><div><h3>描述</h3><p>英文、基于采集信息；不出现品牌。末尾保留 7 天店铺保修说明。</p></div><button type="button" className="tiny-button wf-ai-button" disabled={busy.startsWith("ai-")} onClick={() => void generateAiField("description")}><Sparkles size={13} />{busy === "ai-description" ? "生成中…" : "AI 生成描述"}</button></div><label>英文商品描述 *<textarea rows={10} value={description} onChange={(event) => { setDescription(sanitizeCbtDescription(event.target.value)); setSaved(null); setPreview(null); }} /></label>{aiFeedback?.field === "description" && <p className={`wf-ai-feedback ${aiFeedback.error ? "error" : "success"}`} role="status">{aiFeedback.message}</p>}</section>
 
