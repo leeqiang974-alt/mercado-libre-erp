@@ -920,7 +920,23 @@ def capture_source_product_from_extension(
     for draft in drafts:
         variant = next((row for row in source.variants_json if str(row.get("asin", "")).upper() == (draft.source_variant_asin or "").upper()), None)
         images = variant.get("image_urls", []) if variant and variant.get("image_urls") else source.image_urls_json
-        update_draft_content(db, draft.id, expected_content_version=draft.content_version, image_urls_json=images, video_urls_json=video_urls)
+        # A re-collection is the authoritative update for the currently bound
+        # Amazon ASIN.  Keep its selected Color/Size/etc. on the draft as well
+        # as on the source row; otherwise the editor still says "single item"
+        # even though the source has just returned its variant set.
+        variant_attributes = (
+            dict(variant.get("attributes") or {})
+            if isinstance(variant, dict)
+            else {}
+        )
+        update_draft_content(
+            db,
+            draft.id,
+            expected_content_version=draft.content_version,
+            image_urls_json=images,
+            video_urls_json=video_urls,
+            source_variant_attributes_json=variant_attributes,
+        )
     create_audit_event(
         db,
         actor_type="extension",
@@ -934,6 +950,16 @@ def capture_source_product_from_extension(
                 snapshot,
                 image_count=len(source.image_urls_json),
                 video_count=len(video_urls),
+            ),
+            "variant_attributes_updated": sum(
+                1
+                for draft in drafts
+                if any(
+                    str(row.get("asin", "")).upper()
+                    == (draft.source_variant_asin or "").upper()
+                    for row in source.variants_json
+                    if isinstance(row, dict)
+                )
             ),
         },
         commit=False,

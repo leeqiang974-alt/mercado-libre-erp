@@ -37,6 +37,7 @@ import {
   saveCbtListingConfig,
   searchAlibaba1688SimilarOffers,
   type Alibaba1688SimilarResult,
+  type AmazonSourceVariant,
   type CbtListingConfig,
   type CbtMarketplace,
   type CbtPublishingProfile,
@@ -166,6 +167,27 @@ function attributeNameZh(attribute: Record<string, unknown> | undefined, id: str
   return ATTRIBUTE_NAMES_ZH[id] ?? String(attribute?.name_zh ?? attribute?.name ?? id);
 }
 
+function normalizedAttributeKey(value: string) {
+  return value.replace(/[^a-z0-9]+/gi, "").toLowerCase();
+}
+
+function sourceVariantValueForDefinition(
+  definition: Record<string, unknown>,
+  sourceAttributes: Record<string, string>,
+) {
+  const targetKeys = new Set([
+    normalizedAttributeKey(String(definition.id ?? "")),
+    normalizedAttributeKey(String(definition.name ?? "")),
+  ]);
+  for (const [sourceName, sourceValue] of Object.entries(sourceAttributes)) {
+    const sourceKey = normalizedAttributeKey(sourceName);
+    if (sourceKey && targetKeys.has(sourceKey)) return sourceValue;
+    // Amazon uses Colour in some locales while Mercado Libre exposes COLOR.
+    if ((sourceKey === "color" || sourceKey === "colour") && targetKeys.has("color")) return sourceValue;
+  }
+  return "";
+}
+
 type Offer = CbtListingConfig["sites_to_sell"][number];
 
 function normalizeCbtTitle(value: string) {
@@ -254,6 +276,7 @@ export function CbtGlobalPublishingPanel({
     BRAND: "Unbranded", ITEM_CONDITION: "new", SELLER_SKU: defaultSku(draftId), MODEL: defaultSku(draftId),
   });
   const [attributeDefinitions, setAttributeDefinitions] = useState<Record<string, unknown>[]>([]);
+  const [sourceVariants, setSourceVariants] = useState<AmazonSourceVariant[]>([]);
   const [offers, setOffers] = useState<Offer[]>([]);
   const [officialTypes, setOfficialTypes] = useState<Record<string, string[]>>({});
   const [officialTypesLoading, setOfficialTypesLoading] = useState(false);
@@ -317,6 +340,15 @@ export function CbtGlobalPublishingPanel({
       .filter(Boolean);
     return [...new Set([...REQUIRED_ATTRIBUTE_IDS, ...fromMetadata])];
   }, [attributeDefinitions]);
+  const variationDefinitions = useMemo(() => attributeDefinitions.filter((attribute) => {
+    const tags = attribute.tags as Record<string, unknown> | undefined;
+    return tags?.variation_attribute === true;
+  }), [attributeDefinitions]);
+  const draftVariantAttributes = draft.source_variant_attributes ?? {};
+  const draftVariantAttributesKey = Object.entries(draftVariantAttributes)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, value]) => `${name}:${value}`)
+    .join("\u001f");
   // Amazon-derived listings are always unbranded. Keep the official attribute
   // in the payload, but never expose a brand entry field to the operator.
   const missing = requiredIds.filter((id) => id !== "BRAND" && !attributes[id]?.trim());
@@ -371,6 +403,7 @@ export function CbtGlobalPublishingPanel({
     setCategoryActionStatus("");
     setPredictions([]);
     setAttributeDefinitions([]);
+    setSourceVariants([]);
     setAttributes({ BRAND: "Unbranded", ITEM_CONDITION: "new", SELLER_SKU: defaultSku(draftId), MODEL: defaultSku(draftId) });
     setOffers([]);
     setSaved(null);
@@ -383,6 +416,41 @@ export function CbtGlobalPublishingPanel({
     setHasSavedConfig(false);
     offersInitializedRef.current = false;
   }, [draftId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!draft.source_product_id) {
+      setSourceVariants([]);
+      return () => { cancelled = true; };
+    }
+    getSourceProduct(draft.source_product_id)
+      .then((source) => {
+        if (!cancelled) setSourceVariants(source.snapshot?.variants ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setSourceVariants([]);
+      });
+    return () => { cancelled = true; };
+  }, [draftId, draft.source_product_id]);
+
+  useEffect(() => {
+    if (!variationDefinitions.length || !Object.keys(draftVariantAttributes).length) return;
+    // Only fill empty official variation fields.  Re-collection may enrich
+    // Color/Size, but it must never overwrite an operator's manual choice.
+    setAttributes((current) => {
+      const next = { ...current };
+      let changed = false;
+      for (const definition of variationDefinitions) {
+        const id = String(definition.id ?? "").trim().toUpperCase();
+        const sourceValue = sourceVariantValueForDefinition(definition, draftVariantAttributes);
+        if (id && sourceValue && !next[id]?.trim()) {
+          next[id] = sourceValue;
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [draftId, draftVariantAttributesKey, variationDefinitions]);
 
   // Keep source content changes (AI generation, recollection, or a server-side
   // save) visible without resetting category confirmation, selected markets,
@@ -663,6 +731,8 @@ export function CbtGlobalPublishingPanel({
         await new Promise((resolve) => window.setTimeout(resolve, 500));
         updated = await getDraft(item.id);
       }
+      const refreshedSource = await getSourceProduct(item.source_product_id);
+      setSourceVariants(refreshedSource.snapshot?.variants ?? []);
       setListingRail((current) => uniqueDrafts(current.map((row) => row.id === updated.id ? updated : row)));
       if (updated.id === draftId) onDraftChange(updated);
       const qualityWarning = result.quality?.complete === false && result.quality.issues?.length
@@ -1017,7 +1087,41 @@ export function CbtGlobalPublishingPanel({
 
       <section id="description" className="surface wf-section"><div className="wf-section-title"><span>4</span><div><h3>描述</h3><p>英文、基于采集信息；不出现品牌。末尾保留 7 天店铺保修说明。</p></div><button type="button" className="tiny-button wf-ai-button" disabled={busy.startsWith("ai-")} onClick={() => void generateAiField("description")}><Sparkles size={13} />{busy === "ai-description" ? "生成中…" : "AI 生成描述"}</button></div><label>英文商品描述 *<textarea rows={10} value={description} onChange={(event) => { setDescription(sanitizeCbtDescription(event.target.value)); setSaved(null); setPreview(null); }} /></label>{aiFeedback?.field === "description" && <p className={`wf-ai-feedback ${aiFeedback.error ? "error" : "success"}`} role="status">{aiFeedback.message}</p>}</section>
 
-      <section id="variants" className="surface wf-section"><div className="wf-section-title"><span>5</span><div><h3>变体与 SKU</h3><p>当前为采集到的 SKU 信息；选择分类后才可确认官方变体属性。</p></div></div><div className="wf-sku-row"><div><span>来源 ASIN</span><strong>{draft.source_variant_asin || "未提供"}</strong></div><div><span>已采集规格</span><strong>{Object.entries(draft.source_variant_attributes ?? {}).map(([key,value]) => `${key}: ${value}`).join(" · ") || "单品，无变体"}</strong></div><div><span>卖家 SKU *</span><input value={attributes.SELLER_SKU ?? ""} placeholder="内部 SKU" onChange={(event) => setAttribute("SELLER_SKU", event.target.value)} /></div></div><div className="form-grid two-col cbt-attributes"><label>型号（自动同步 Parent SKU）<input disabled value={familyName} /></label>{requiredIds.filter((id) => id !== "SELLER_SKU" && id !== "BRAND" && id !== "MODEL").map((id) => { const definition = attributeDefinitions.find((item) => String(item.id).toUpperCase() === id); return <label key={id}>{attributeNameZh(definition, id)} *<input value={attributes[id] ?? ""} placeholder={id === "ITEM_CONDITION" ? "new" : "例如 10 cm / 250 g"} onChange={(event) => setAttribute(id, event.target.value)} /></label>; })}</div><label>店铺质保条款<select value={warranty} onChange={(event) => { setWarranty(event.target.value); setSaved(null); setPreview(null); }}><option value="7 days">7 天</option><option value="No warranty">无质保</option><option value="30 days">30 天</option></select></label>{missing.length > 0 && <p className="inline-warning">还缺少官方必填字段：{missing.join("、")}。</p>}</section>
+      <section id="variants" className="surface wf-section">
+        <div className="wf-section-title"><span>5</span><div><h3>变体与 SKU</h3><p>先展示 Amazon 采集到的全部变体，再将当前 ASIN 的颜色/尺寸匹配到官方变体属性。</p></div></div>
+        <div className="wf-sku-row">
+          <div><span>来源 ASIN</span><strong>{draft.source_variant_asin || "未提供"}</strong></div>
+          <div><span>已采集规格</span><strong>{Object.entries(draftVariantAttributes).map(([key, value]) => `${key}: ${value}`).join(" · ") || "等待重新采集变体"}</strong></div>
+          <div><span>卖家 SKU *</span><input value={attributes.SELLER_SKU ?? ""} placeholder="内部 SKU" onChange={(event) => setAttribute("SELLER_SKU", event.target.value)} /></div>
+        </div>
+        {sourceVariants.length > 0 ? (
+          <div className="attribute-mapping" aria-label="Amazon 采集变体">
+            <div className="attribute-mapping-heading"><span><strong>Amazon 变体</strong><small>已采集 {sourceVariants.length} 个 ASIN；当前 ASIN 已高亮</small></span></div>
+            <div className="attribute-suggestion-list">
+              {sourceVariants.map((variant) => <div className={`attribute-suggestion ${variant.selected || variant.asin === draft.source_variant_asin ? "selected" : ""}`} key={variant.asin}>
+                <span><small>{variant.asin}</small><strong>{Object.entries(variant.attributes).map(([name, value]) => `${name}: ${value}`).join(" · ") || "未返回规格"}</strong></span>
+                <span className={variant.selected || variant.asin === draft.source_variant_asin ? "state-pill ready" : "state-pill"}>{variant.selected || variant.asin === draft.source_variant_asin ? "当前草稿" : "同款变体"}</span>
+              </div>)}
+            </div>
+          </div>
+        ) : <p className="section-note">当前未采集到变体；点击上架库卡片的绿色“采”可重新抓取当前 Amazon 商品卡。</p>}
+        {variationDefinitions.length > 0 && Object.keys(draftVariantAttributes).length > 0 && (
+          <div className="form-grid two-col cbt-attributes" aria-label="官方变体属性设置">
+            {variationDefinitions.map((definition) => {
+              const id = String(definition.id ?? "").toUpperCase();
+              const values = Array.isArray(definition.values) ? definition.values.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === "object")) : [];
+              const listId = `variation-values-${id}`;
+              return <label key={id}>{attributeNameZh(definition, id)}（官方变体属性）
+                <input list={values.length ? listId : undefined} value={attributes[id] ?? ""} placeholder={sourceVariantValueForDefinition(definition, draftVariantAttributes) || "填写当前 ASIN 的规格"} onChange={(event) => setAttribute(id, event.target.value)} />
+                {values.length > 0 && <datalist id={listId}>{values.map((value) => <option key={String(value.id ?? value.name)} value={String(value.name ?? "")} />)}</datalist>}
+              </label>;
+            })}
+          </div>
+        )}
+        {sourceVariants.length > 1 && <p className="section-note">当前授权店铺为传统 CBT Global Selling：每个 Amazon ASIN 会保持独立草稿/发布，不会把不同商品强行合并成一个美客多变体。</p>}
+        <div className="form-grid two-col cbt-attributes"><label>型号（自动同步 Parent SKU）<input disabled value={familyName} /></label>{requiredIds.filter((id) => id !== "SELLER_SKU" && id !== "BRAND" && id !== "MODEL").map((id) => { const definition = attributeDefinitions.find((item) => String(item.id).toUpperCase() === id); return <label key={id}>{attributeNameZh(definition, id)} *<input value={attributes[id] ?? ""} placeholder={id === "ITEM_CONDITION" ? "new" : "例如 10 cm / 250 g"} onChange={(event) => setAttribute(id, event.target.value)} /></label>; })}</div>
+        <label>店铺质保条款<select value={warranty} onChange={(event) => { setWarranty(event.target.value); setSaved(null); setPreview(null); }}><option value="7 days">7 天</option><option value="No warranty">无质保</option><option value="30 days">30 天</option></select></label>{missing.length > 0 && <p className="inline-warning">还缺少官方必填字段：{missing.join("、")}。</p>}
+      </section>
 
       <section id="sales" className="surface wf-section"><div className="wf-section-title"><span>6</span><div><h3>销售配置</h3><p>只填写一次目标净收益（USD）；提交值以 USD 保存，不填写采购成本、国内运费或平台费用。</p></div></div><div className="cbt-pricing-rule">全球销售采用净收益模式：ERP 会把你的“采购成本 + 国内运费 + 利润率”收益测算自动带入 USD 净收益；美客多据此计算各站买家售价。</div><div className="cbt-sales-table-wrap"><table className="cbt-sales-table"><thead><tr><th>站点</th><th>美客多售价</th><th>目标净收益（USD）</th><th>刊登类型</th><th>标题</th></tr></thead><tbody><tr className="cbt-global-row"><th><Globe2 size={16} /> 全球</th><td><span className="cbt-derived-value">由美客多自动计算</span></td><td><input type="number" min="0.01" step="0.01" value={priceUsd} placeholder="填写 USD 净收益" onChange={(event) => { setPriceUsd(event.target.value); setSaved(null); setPreview(null); }} />{pricing && <small>收益测算自动值：USD {pricing.target_price.toFixed(2)}</small>}</td><td><span className="cbt-derived-value">按站点配置</span></td><td><div className="cbt-title-input"><input value={globalTitle} onChange={(event) => setGlobalTitle(normalizeCbtTitle(event.target.value))} /><small>{globalTitle.length}/60</small></div></td></tr>{remoteMarkets.map((market) => { const offer = offers.find((item) => item.site_id === market.site_id); const enabled = Boolean(offer); return <tr className={enabled ? "" : "disabled"} key={market.site_id}><th><div className="cbt-site-toggle"><span><strong>{MARKET_NAMES[market.site_id] ?? market.site_id}</strong><small>{market.site_id} · Remote · {enabled ? "已在上方选中" : "未选中"}</small></span></div></th><td><span className="cbt-derived-value">由美客多结算</span></td><td><span className="cbt-derived-value">{estimatedProfitUsd === null ? "-" : estimatedProfitUsd.toFixed(2)}</span></td><td>{(() => { const ids = officialTypes[market.site_id]; if (!categoryId.startsWith("CBT")) return <span className="cbt-derived-value">请先确认 CBT 分类</span>; if (officialTypesLoading) return <span className="cbt-derived-value">正在读取官方类型…</span>; if (!ids?.length) return <span className="cbt-derived-value">官方未返回，可预检确认</span>; return <select disabled={!enabled} value={offer?.listing_type_id ?? ids[0]} onChange={(event) => updateOffer(market.site_id, "listing_type_id", event.target.value)}>{ids.includes("gold_pro") && <option value="gold_pro">Premium（优质）</option>}{ids.includes("gold_special") && <option value="gold_special">Classic（经典）</option>}</select>; })()}</td><td><div className="cbt-title-input"><input disabled={!enabled} value={offer?.title ?? globalTitle} onChange={(event) => updateOffer(market.site_id, "title", event.target.value)} /><small>{(offer?.title ?? globalTitle).length}/60</small></div></td></tr>; })}{fullMarkets.map((market) => <tr className="disabled cbt-full-row" key={`${market.site_id}-${market.logistic_type}`}><th><div className="cbt-site-toggle"><span><strong>墨西哥（FULL）</strong><small>MLM · FULL 履约不参与本次发布</small></span></div></th><td>不发布</td><td>-</td><td>已排除</td><td>由 FULL 流程单独管理</td></tr>)}</tbody></table></div>{pricing && pricing.target_currency !== "USD" && <p className="inline-warning">请补充 USD 成本定价后保存；当前草稿的本地站价格不能用于 CBT 发布。</p>}{preview && <div className={`validation-result ${preview.allowed ? "ready" : "blocked"}`}><strong>{preview.allowed ? "官方请求预检通过" : "刊登请求未通过"}</strong>{preview.errors.map((error) => <span key={error}>{error}</span>)}</div>}{execution && <div className={`validation-result ${execution.status === "published" ? "ready" : "blocked"}`}><strong>{execution.status === "published" ? "已提交并创建商品" : "未创建商品"}</strong>{execution.item_id && <span>商品 ID：{execution.item_id}</span>}{execution.permalink && <a href={execution.permalink} target="_blank" rel="noreferrer">打开商品页</a>}{execution.errors.map((error) => <span key={error}>{error}</span>)}{execution.response_details && Object.keys(execution.response_details).length > 0 && <SitePublishResults details={execution.response_details} />}</div>}</section>
       </main>
