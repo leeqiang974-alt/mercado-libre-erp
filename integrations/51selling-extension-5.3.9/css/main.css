@@ -1,0 +1,638 @@
+* {
+    margin: 0;
+    padding: 0;
+    font-family: Verdana, Geneva, Tahoma, sans-serif;
+}
+
+/* 会影响到采集页面背景颜色 */
+/* body {
+    background-color: #f2f2f2;
+} */
+
+/* 顶部 */
+.topContent {
+    width: 100%;
+    background-color: #438eb9;
+    height: 50px;
+}
+
+.topContent>.content {
+    width: 1100px;
+    margin: 0 auto;
+    display: flex;
+    justify-content: end;
+}
+
+.topContent>.content>.leftContent {
+    display: flex;
+    justify-content: space-between;
+    width: 28%;
+}
+
+.topContent>.content>.leftContent .logo {
+    width: 50%;
+    margin-top: 5px;
+}
+
+.topContent>.content>.leftContent>.toolName {
+    width: 50%;
+    font-size: 16px;
+    margin-top: 12px;
+    color: #fff;
+}
+
+.toolName label {
+    font-size: 0.6em;
+    margin-left: 5px;
+}
+
+.toolName span {
+    font-size: 13px;
+    font-weight: 200;
+    margin-right: 10px;
+}
+
+.topContent>.content>.leftContent>.logo img {
+    width: 90%;
+}
+
+.topContent>.content>.rightContent {
+    width: 15%;
+    display: flex;
+    justify-content: space-around;
+    color: #fff;
+    line-height: 80px;
+    /* font-weight: 900; */
+    font-size: 1.6em;
+}
+
+.toHome a {
+    text-decoration: none;
+    color: #fff;
+}
+
+.topContent>.content>.rightContent>div {
+    cursor: pointer;
+    width: 50%;
+    text-align: center;
+}
+
+.topContent>.content>.rightContent>div:hover {
+    background-color: #438eb9;
+}
+
+.topContent>.content>.rightContent>.toLogin a {
+    text-decoration: none;
+    color: #fff;
+}
+
+/* 采集部分页面内容 */
+.mainConent {
+    width: 100%;
+    background-color: #f2f2f2;
+}
+
+.mainConent>.content {
+    background-color: #fff;
+    width: 1100px;
+    margin: 20px auto;
+    overflow: hidden;
+    padding: 5px 10px;
+}
+
+.mainConent>.content>.title {
+    float: left;
+    font-size: 13px;
+    color: #8b8b8b;
+    margin: 10px 24px;
+}
+
+#errorMessage {
+    display: none;
+    margin: 0 22px;
+    color: red;
+}
+
+#errorMessage.visible {
+    display: block;
+}
+
+.mainConent>.content>#showCollected {
+    float: right;
+    margin: 10px 24px;
+    color: #438eb9;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+#urlCollect {
+    width: 95%;
+    max-width: 95%;
+    min-height: 140px;
+    margin: 0px 20px 10px;
+    padding: 10px;
+    border: 1px solid #dbd9d9;
+    font-size: 13px;
+    resize: vertical;
+}
+
+#urlCollect.visible {
+    border: 1px solid red;
+}
+
+#urlCollect:focus {
+    outline: none;
+    /* 取消默认的外边框 */
+    border-color: #438eb9;
+    /* 设置焦点时的边框颜色 */
+    box-shadow: 0 0 0 0px #438eb9;
+    /* 设置焦点时的阴影效果 */
+}
+
+.tip:after {
+    content: "?";
+    color: #fff;
+    background: #999;
+    width: 13px;
+    display: inline-block;
+    height: 13px;
+    text-align: center;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 500;
+}
+
+.mainConent>.content>.footContent {
+    width: 97%;
+    margin: 10px auto;
+    display: flex;
+    justify-content: space-between;
+}
+
+.mainConent>.content>.footContent>.terrace {
+    font-size: 14px;
+    width: 55%;
+    color: #8b8b8b;
+}
+
+.mainConent>.content>.footContent>.terrace a {
+    text-decoration: none;
+    color: #8b8b8b;
+    font-size: 13px;
+}
+
+.mainConent>.content>.footContent>.terrace a:hover {
+    color: #438eb9;
+}
+
+.mainConent>.content>.footContent>.terrace h3 {
+    /* color: #656565; */
+    font-size: 0.8em;
+    line-height: 1.4em;
+}
+
+.mainConent>.content>.footContent>.terrace p {
+    font-size: 13px;
+}
+
+    .mainConent > .content > .footContent > .btn {
+        width: 40%;
+        display: flex;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+    }
+
+    .mainConent > .content > .footContent > .btn > div {
+        font-size: 13px;
+        color: #6f6f6f;
+        width: 100%;
+        text-align:right;
+    }
+
+.mainConent>.content>.footContent>.btn>div>input {
+    border: 1px solid #dbd9d9;
+    width: 60px;
+    height: 22px;
+}
+
+.mainConent>.content>.footContent>.btn>div>input:focus {
+    outline: none;
+    /* 取消默认的外边框 */
+    border-color: #438eb9;
+    /* 设置焦点时的边框颜色 */
+    box-shadow: 0 0 0 0px #438eb9;
+    /* 设置焦点时的阴影效果 */
+}
+
+
+.mainConent>.content>.footContent>.btn button {
+    outline: none;
+    width: 80px;
+    font-size: 14px;
+    /*margin-top: 20px;*/
+    font-family: inherit;
+    line-height: 30px;
+    text-align: center;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 13px;
+    /* padding: 11px 12px; */
+}
+
+.mainConent>.content>.footContent>.btn button:active {
+    border: 2px solid #6f6f6f;
+}
+
+.mainConent>.content>.footContent #urlCollectBtn:active {
+    border: 2px solid #fcfcfc;
+}
+
+.mainConent>.content>.footContent #urlCollectBtn {
+    background-color: #438eb9;
+    color: #fff;
+}
+
+.mainConent>.content>.footContent #reset,#toHome {
+    border-color: #d0d3d6;
+    color: #6f6f6f;
+}
+
+
+/* 未登录时的弹框 */
+.promptPopup {
+    display: none;
+    position: fixed;
+    top: 52px;
+    left: 37%;
+    width: 338px;
+    border-radius: 5px;
+    background-color: #fff;
+    z-index: 2;
+}
+
+.promptPopup.visible {
+    display: block;
+}
+
+.prompt-top {
+    width: 100%;
+    height: 30px;
+    line-height: 30px;
+    border-bottom: 1px solid gainsboro;
+}
+
+.prompt-text {
+    float: left;
+    margin-left: 20px;
+}
+
+.prompt-no {
+    cursor: pointer;
+    float: right;
+    margin-right: 20px;
+}
+
+.prompt-content {
+    margin: 10px 20px;
+    width: 90%;
+    height: 35px;
+}
+
+.prompt-content p {
+    margin-bottom: 12px;
+}
+
+.prompt-buttom a {
+    cursor: pointer;
+    text-decoration: none;
+    color: #438eb9;
+    margin-top: 10px;
+}
+
+.prompt-content a:hover {
+    color: #000000;
+}
+
+.prompt-buttom {
+    margin: 0 auto;
+    width: 90%;
+    height: 50px;
+    display: flex;
+    justify-content: space-between;
+}
+
+.prompt-close {
+    cursor: pointer;
+    /* float: right; */
+    /* margin: 8px 15px; */
+    padding: 6px 11px;
+    border-radius: 4px;
+    color: #fff;
+    background-color: #438eb9;
+    border: none;
+    height: 34px;
+}
+
+/* 重复采集时的弹出框 */
+.popup {
+    display: none;
+    position: fixed;
+    top: 52px;
+    left: 20%;
+    width: 60%;
+    border-radius: 5px;
+    background-color: #fff;
+    z-index: 2;
+    overflow: auto;
+}
+
+.popup.visible {
+    display: block;
+}
+
+/* 遮罩层 */
+.popup-mask {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 1;
+}
+
+.popup-mask.visible {
+    display: block;
+}
+
+.popup-container {
+    background-color: #fff;
+    width: 500px;
+    margin: 0 auto;
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+}
+
+.popup-body {
+    max-height: 320px;
+    overflow: auto;
+    border-top: 1px solid #ccc;
+    border-bottom: 1px solid #ccc;
+    padding: 10px;
+}
+
+.popup-body tr:hover {
+    background-color: #eaeaea;
+}
+
+.popup-body .info {
+    width: 90%;
+    margin: 5px auto 10px;
+    border: 1px solid #ccc;
+    height: 33px;
+    line-height: 33px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+    text-align: center;
+    background-color: #FFFFC9;
+    color: #999;
+    font-size: 15px;
+}
+
+.popup-body table {
+    border-collapse: collapse;
+    width: 90%;
+    margin: 0 auto;
+    border: none;
+}
+
+.popup-body table input {
+    width: 18px;
+    height: 18px;
+}
+
+.popup-body th,
+.popup-body td {
+    border: 1px solid #ccc;
+    padding: 8px;
+    text-align: center;
+}
+
+.imgStyle {
+    width: 71px;
+    height: 71px;
+    margin: auto;
+}
+
+.popup-body td:first-child {
+    text-align: center;
+}
+
+.popup-header {
+    padding: 10px;
+    display: flex;
+    justify-content: space-between;
+}
+
+.popup-header h2 {
+    margin: 0 10px;
+    margin-top: 10px;
+    font-size: 14px;
+    font-weight: normal;
+}
+
+.popup-header button {
+    background-color: transparent;
+    border: none;
+    font-size: 25px;
+    cursor: pointer;
+}
+
+.popup-header button:focus {
+    outline: none;
+}
+
+.popup-footer {
+    display: flex;
+    justify-content: flex-end;
+    margin: 10px;
+}
+
+.popup-footer button {
+    background-color: #f5f5f5;
+    border: none;
+    border-radius: 5px;
+    color: #333;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 11px 12px;
+    margin-left: 10px;
+}
+
+.popup-footer button:focus {
+    outline: none;
+}
+
+.popup-footer button.popup-confirm {
+    background-color: #438eb9;
+    color: #fff;
+}
+
+.popup-footer button.popup-cancel {
+    border: 1px solid #d6d6d6;
+    color: #757575;
+}
+
+
+/* 采集结果提醒 */
+.collect_results {
+    display: none;
+    position: fixed;
+    top: 52px;
+    left: 30%;
+    width: 40%;
+    border-radius: 5px;
+    background-color: #fff;
+    z-index: 2;
+    font-size: 12px;
+}
+
+.collect_results.visible {
+    display: block;
+}
+
+.collect_results-top {
+    width: 100%;
+    height: 40px;
+    line-height: 40px;
+    border-bottom: 1px solid gainsboro;
+}
+
+.collect_results-text {
+    float: left;
+    margin-left: 20px;
+}
+
+.collect_results-no {
+    cursor: pointer;
+    float: right;
+    margin-right: 20px;
+    font-size: 25px;
+}
+
+.collect_results-content {
+    margin: 15px auto 0;
+    padding: 0 13px 0 20px;
+}
+
+.wyys-main-link {
+    word-wrap: break-word;
+    width: 100%;
+    max-width: 100%;
+    max-height: 300px;
+    overflow: auto;
+}
+
+/* .link::-webkit-scrollbar {
+  width: 6px;
+  height: 120px;
+  background-color: #bcbcbc;
+} */
+.reasonP {
+    margin-top: 10px;
+}
+
+.failUrl {
+    color: #438eb9;
+}
+
+.collect_results-content>div {
+    color: #000000;
+}
+
+.collect_results-content label {
+    color: #438eb9;
+}
+
+.collect_results-close {
+    cursor: pointer;
+    float: right;
+    margin: 8px 15px;
+    padding: 9px 12px;
+    border-radius: 4px;
+    color: #fff;
+    background-color: #438eb9;
+    border: none;
+    font-size: 13px;
+    /* font-weight: bold; */
+}
+
+/* 进度条、 */
+.progress[data-percent] {
+    position: relative;
+}
+
+.progress {
+    border-radius: 0;
+    -webkit-box-shadow: none;
+    box-shadow: none;
+    background: #dadada;
+    height: 15px;
+    margin-bottom: 10px;
+    width: 99%;
+}
+
+/* .progress:before {
+display: inline-block;
+content: "";
+position: absolute;
+left: 0;
+right: 0;
+top: 0;
+bottom: 0;
+background: radial-gradient(9px 9px 0deg,circle cover,#0ff 0,rgba(0,0,255,0) 100%,#00f 95%);
+} */
+.progress[data-percent]:after {
+    display: inline-block;
+    content: attr(data-percent);
+    color: #FFF;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    line-height: 16px;
+    text-align: center;
+    font-size: 12px;
+    font-family: Verdana;
+}
+
+.progress-bar {
+    float: left;
+    /* 修改加载宽度 */
+    width: 0;
+    height: 100%;
+    font-size: 12px;
+    color: #fff;
+    text-align: center;
+    background-color: #438eb9;
+    -webkit-box-shadow: inset 0 -1px 0 rgb(0 0 0 / 15%);
+    box-shadow: inset 0 -1px 0 rgb(0 0 0 / 15%);
+    -webkit-transition: width .6s ease;
+    transition: width .6s ease;
+}
+
+.progress .progress-bar {
+    -webkit-box-shadow: none;
+    box-shadow: none;
+    line-height: 18px;
+}
+
+.btn button {
+    height: 35px;
+}
+
+/* 右上角提醒 */

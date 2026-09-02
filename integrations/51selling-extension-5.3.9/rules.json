@@ -1,0 +1,11 @@
+﻿[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||h5api.m.tmall.com/h5/mtop.taobao.pcdetail.data.get/*slide*|*|item.taobao.com/item.htm/*slide*",
+      "resourceTypes": ["xmlhttprequest"]
+    }
+  }
+]
