@@ -1094,7 +1094,7 @@ export function CbtGlobalPublishingPanel({
       <section id="description" className="surface wf-section"><div className="wf-section-title"><span>4</span><div><h3>描述</h3><p>英文、基于采集信息；不出现品牌。末尾保留 7 天店铺保修说明。</p></div><button type="button" className="tiny-button wf-ai-button" disabled={busy.startsWith("ai-")} onClick={() => void generateAiField("description")}><Sparkles size={13} />{busy === "ai-description" ? "生成中…" : "AI 生成描述"}</button></div><label>英文商品描述 *<textarea rows={10} value={description} onChange={(event) => { setDescription(sanitizeCbtDescription(event.target.value)); setSaved(null); setPreview(null); }} /></label>{aiFeedback?.field === "description" && <p className={`wf-ai-feedback ${aiFeedback.error ? "error" : "success"}`} role="status">{aiFeedback.message}</p>}</section>
 
       <section id="variants" className="surface wf-section">
-        <div className="wf-section-title"><span>5</span><div><h3>变体与 SKU</h3><p>先展示 Amazon 采集到的全部变体，再将当前 ASIN 的颜色/尺寸匹配到官方变体属性。</p></div></div>
+        <div className="wf-section-title"><span>5</span><div><h3>变体与 SKU</h3><p>先展示 Amazon 采集到的全部变体和 SKU 图；当前高亮 ASIN 可在本页编辑，其他 ASIN 需采集具体页面后生成独立草稿。</p></div></div>
         <div className="wf-sku-row">
           <div><span>来源 ASIN</span><strong>{draft.source_variant_asin || "未提供"}</strong></div>
           <div><span>已采集规格</span><strong>{Object.entries(draftVariantAttributes).map(([key, value]) => `${key}: ${value}`).join(" · ") || "等待重新采集变体"}</strong></div>
@@ -1105,7 +1105,10 @@ export function CbtGlobalPublishingPanel({
             <div className="attribute-mapping-heading"><span><strong>Amazon 变体</strong><small>已采集 {sourceVariants.length} 个 ASIN；当前 ASIN 已高亮</small></span></div>
             <div className="attribute-suggestion-list">
               {sourceVariants.map((variant) => <div className={`attribute-suggestion ${variant.selected || variant.asin === draft.source_variant_asin ? "selected" : ""}`} key={variant.asin}>
-                <span><small>{variant.asin}</small><strong>{Object.entries(variant.attributes).map(([name, value]) => `${name}: ${value}`).join(" · ") || "未返回规格"}</strong></span>
+                <span className="amazon-variant-source">
+                  {variant.image_urls[0] ? <a href={variant.image_urls[0]} target="_blank" rel="noreferrer" title="打开 SKU 图片"><img src={variant.image_urls[0]} alt={`${variant.asin} SKU 图片`} /></a> : <span className="amazon-variant-no-image">无 SKU 图</span>}
+                  <span><small>{variant.asin}</small><strong>{Object.entries(variant.attributes).map(([name, value]) => `${name}: ${value}`).join(" · ") || "未返回规格"}</strong><small>{variant.image_urls.length > 0 ? `${variant.image_urls.length} 张 SKU 图` : "未采集 SKU 图"}</small></span>
+                </span>
                 <span className={variant.selected || variant.asin === draft.source_variant_asin ? "state-pill ready" : "state-pill"}>{variant.selected || variant.asin === draft.source_variant_asin ? "当前草稿" : "同款变体"}</span>
               </div>)}
             </div>
