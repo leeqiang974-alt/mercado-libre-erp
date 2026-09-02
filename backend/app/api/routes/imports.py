@@ -1027,6 +1027,20 @@ def create_source_variant_product_draft(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    create_audit_event(
+        db,
+        actor_type="operator",
+        actor_id="web",
+        action="source_product.variant_draft_opened",
+        entity_type="product_draft",
+        entity_id=str(draft.id),
+        after={
+            "source_product_id": source_product_id,
+            "source_variant_asin": normalized_asin,
+            "target_site_id": target_site_id,
+        },
+        commit=True,
+    )
     return to_draft_read(draft)
 
 

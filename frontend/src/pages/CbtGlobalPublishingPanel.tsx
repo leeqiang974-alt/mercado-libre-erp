@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   confirmDraftCategory,
+  createSourceVariantDraft,
   getCategoryAttributes,
   getCategoryDetails,
   getCbtCategoryPredictions,
@@ -167,6 +168,21 @@ function attributeNameZh(attribute: Record<string, unknown> | undefined, id: str
   return ATTRIBUTE_NAMES_ZH[id] ?? String(attribute?.name_zh ?? attribute?.name ?? id);
 }
 
+function readableVariantDraftError(error: unknown) {
+  const raw = error instanceof Error ? error.message : "";
+  try {
+    const detail = JSON.parse(raw) as { detail?: string };
+    if (detail.detail === "variant_page_collection_required") {
+      return "该 ASIN 还没有单独采集页面，请先打开这个 ASIN 的 Amazon 页面并点击采集，再回来编辑。";
+    }
+    if (detail.detail === "source_variant_not_found") return "源商品中没有找到这个 ASIN 的变体证据。";
+    if (detail.detail === "source_snapshot_unavailable") return "源商品采集快照不可用，请先重新采集。";
+  } catch {
+    // Keep the server message when it is not a JSON error response.
+  }
+  return raw || "建立变体独立草稿失败";
+}
+
 function normalizedAttributeKey(value: string) {
   return value.replace(/[^a-z0-9]+/gi, "").toLowerCase();
 }
@@ -288,6 +304,7 @@ export function CbtGlobalPublishingPanel({
   const [pricing, setPricing] = useState<DraftPricing | null>(null);
   const [busy, setBusy] = useState("");
   const [recollectBusy, setRecollectBusy] = useState<number | null>(null);
+  const [variantDraftBusy, setVariantDraftBusy] = useState<string | null>(null);
   const [similarSearchBusy, setSimilarSearchBusy] = useState(false);
   const [similarOffers, setSimilarOffers] = useState<Alibaba1688SimilarResult | null>(null);
   const LISTING_PAGE_SIZE = 20;
@@ -912,6 +929,23 @@ export function CbtGlobalPublishingPanel({
     setImageZoom(1);
   }
 
+  async function editSourceVariant(variant: AmazonSourceVariant) {
+    if (!draft.source_product_id || variant.asin === draft.source_variant_asin || variantDraftBusy) return;
+    setVariantDraftBusy(variant.asin);
+    setStatus(`正在打开 ${variant.asin} 的独立草稿...`);
+    try {
+      const updated = await createSourceVariantDraft(draft.source_product_id, variant.asin, draft.target_site_id || "CBT");
+      setListingRail((current) => uniqueDrafts([...current.filter((item) => item.id !== updated.id), updated]));
+      onDraftChange(updated);
+      onSelectDraft?.(updated);
+      setStatus(`已打开 ${variant.asin} 的独立草稿 #${updated.id}。`);
+    } catch (error) {
+      setStatus(readableVariantDraftError(error));
+    } finally {
+      setVariantDraftBusy(null);
+    }
+  }
+
   function moveImagePreview(direction: -1 | 1) {
     const currentIndex = previewImage ? draft.image_urls.indexOf(previewImage) : -1;
     const nextImage = draft.image_urls[currentIndex + direction];
@@ -1109,7 +1143,12 @@ export function CbtGlobalPublishingPanel({
                   {variant.image_urls[0] ? <a href={variant.image_urls[0]} target="_blank" rel="noreferrer" title="打开 SKU 图片"><img src={variant.image_urls[0]} alt={`${variant.asin} SKU 图片`} /></a> : <span className="amazon-variant-no-image">无 SKU 图</span>}
                   <span><small>{variant.asin}</small><strong>{Object.entries(variant.attributes).map(([name, value]) => `${name}: ${value}`).join(" · ") || "未返回规格"}</strong><small>{variant.image_urls.length > 0 ? `${variant.image_urls.length} 张 SKU 图` : "未采集 SKU 图"}</small></span>
                 </span>
-                <span className={variant.selected || variant.asin === draft.source_variant_asin ? "state-pill ready" : "state-pill"}>{variant.selected || variant.asin === draft.source_variant_asin ? "当前草稿" : "同款变体"}</span>
+                <span className="amazon-variant-actions">
+                  {variant.selected || variant.asin === draft.source_variant_asin
+                    ? <span className="state-pill ready">本页可编辑</span>
+                    : <button type="button" className="tiny-button" disabled={variantDraftBusy !== null} onClick={() => void editSourceVariant(variant)}>{variantDraftBusy === variant.asin ? "打开中..." : "编辑此变体"}</button>}
+                  {!(variant.selected || variant.asin === draft.source_variant_asin) && <span className="state-pill">独立草稿</span>}
+                </span>
               </div>)}
             </div>
           </div>

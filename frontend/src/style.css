@@ -518,6 +518,9 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .attribute-suggestion > svg { color: #697586; }
 .attribute-suggestion .icon-text-button { min-height: 32px; padding: 5px 8px; background: #e7ebf0; color: #1f2933; font-size: 12px; }
 .attribute-suggestion > .state-pill { justify-self: end; }
+.wf-listing-editor .attribute-suggestion { grid-template-columns: minmax(0, 1fr) auto; }
+.amazon-variant-actions { display: flex !important; align-items: center; justify-content: flex-end; gap: 8px; }
+.amazon-variant-actions .tiny-button { white-space: nowrap; }
 .success-text { color: #126c33; display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
 .release-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid #dde3ea; }
 .release-summary div { display: grid; gap: 5px; padding: 12px; border-right: 1px solid #dde3ea; }
@@ -779,6 +782,7 @@ input[readonly] { background: #eef1f4; color: #52606d; }
   .category-controls { grid-template-columns: 1fr; align-items: stretch; }
   .attribute-mapping-heading { align-items: stretch; flex-direction: column; }
   .attribute-suggestion { grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr); }
+  .wf-listing-editor .attribute-suggestion { grid-template-columns: minmax(0, 1fr) auto; }
   .attribute-suggestion .icon-text-button { grid-column: 1 / -1; width: 100%; }
   .attribute-suggestion > .state-pill { grid-column: 1 / -1; justify-self: stretch; text-align: center; }
   .shipping-choice { grid-template-columns: 1fr; align-items: stretch; }
