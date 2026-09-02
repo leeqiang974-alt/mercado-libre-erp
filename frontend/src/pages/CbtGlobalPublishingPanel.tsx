@@ -890,7 +890,13 @@ export function CbtGlobalPublishingPanel({
       onReviewInvalidated();
       setAiFeedback({ field, error: false, message: field === "title" ? "AI 英文标题已生成，请检查后保存。" : "AI 英文商品描述已生成，请检查后保存。" });
     } catch (error) {
-      setAiFeedback({ field, error: true, message: error instanceof Error ? error.message : "AI 生成失败，请稍后重试。" });
+      const rawMessage = error instanceof Error ? error.message : "";
+      const message = rawMessage.includes("ai_content_already_generated")
+        ? "该字段已经由 AI 生成过，系统未再次调用，避免重复消耗。需要重构时，请先清空该字段并保存，再点 AI。"
+        : rawMessage.includes("generated_content_invalid")
+          ? "AI 返回内容未通过描述质量门禁，本次没有写入；请稍后手动再试。"
+          : rawMessage || "AI 生成失败，请稍后重试。";
+      setAiFeedback({ field, error: true, message });
     } finally {
       setBusy("");
     }

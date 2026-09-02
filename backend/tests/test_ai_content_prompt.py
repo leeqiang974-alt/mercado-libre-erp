@@ -26,7 +26,9 @@ def test_ai_prompt_keeps_existing_draft_evidence_when_source_text_is_sparse():
     assert "SOURCE TITLE: 20Pcs Black Cable Clips, Desk Wall Cord Organizer Holders" in prompt
     assert 'SOURCE DESCRIPTION: (not captured)' in prompt
     assert 'CURRENT DRAFT VARIANT ATTRIBUTES: {"Color": "Black"}' in prompt
-    assert "120-250 English words" in prompt
+    assert "80-260 English words" in prompt
+    assert "Key details:" in prompt
+    assert "Suitable uses:" in prompt
 
 
 def test_ai_prompt_includes_all_available_source_evidence_blocks():
