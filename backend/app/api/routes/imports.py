@@ -24,7 +24,7 @@ from app.services.amazon.import_file import MAX_IMPORT_FILE_BYTES, parse_amazon_
 from app.services.amazon.discovery import discover_amazon_products
 from app.services.amazon.throttle import record_domain_outcome, reserve_domain_request
 from app.services.drafts import create_product_draft, to_draft_read, update_draft_content
-from app.services.amazon.media import select_listing_images, select_product_video_urls
+from app.services.amazon.media import merge_listing_images, select_listing_images, select_product_video_urls
 from app.services.audit_events import create_audit_event
 from app.services.source_products import (
     EXACT_PAGE_EVIDENCE_STATUSES,
@@ -919,7 +919,10 @@ def capture_source_product_from_extension(
     drafts = db.query(ProductDraft).filter(ProductDraft.source_product_id == source.id).all()
     for draft in drafts:
         variant = next((row for row in source.variants_json if str(row.get("asin", "")).upper() == (draft.source_variant_asin or "").upper()), None)
-        images = variant.get("image_urls", []) if variant and variant.get("image_urls") else source.image_urls_json
+        images = merge_listing_images(
+            variant.get("image_urls", []) if variant else [],
+            source.image_urls_json or [],
+        )
         # A re-collection is the authoritative update for the currently bound
         # Amazon ASIN.  Keep its selected Color/Size/etc. on the draft as well
         # as on the source row; otherwise the editor still says "single item"

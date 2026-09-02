@@ -1,7 +1,12 @@
 import pytest
 
 from app.services.amazon.collector import validate_amazon_snapshot
-from app.services.amazon.media import prepare_listing_title, select_listing_images, select_product_video_urls
+from app.services.amazon.media import (
+    merge_listing_images,
+    prepare_listing_title,
+    select_listing_images,
+    select_product_video_urls,
+)
 from app.services.amazon.normalizer import normalize_amazon_product
 from app.services.amazon.parser import _normalize_measurement_label, parse_amazon_html
 
@@ -615,3 +620,17 @@ def test_select_listing_images_keeps_resizable_100px_render_and_rejects_tinier_i
         "https://example.com/icon._AC_US99_.jpg",
         "https://example.com/eligible._AC_US100_.jpg",
     ]) == ["https://example.com/eligible._AC_US100_.jpg"]
+
+
+def test_merge_listing_images_keeps_variant_and_shared_gallery_images():
+    assert merge_listing_images(
+        ["https://m.media-amazon.com/images/I/variant._SX500_.jpg"],
+        [
+            "https://m.media-amazon.com/images/I/shared-one._SL1200_.jpg",
+            "https://m.media-amazon.com/images/I/shared-two._SL1200_.jpg",
+        ],
+    ) == [
+        "https://m.media-amazon.com/images/I/variant._SX500_.jpg",
+        "https://m.media-amazon.com/images/I/shared-one._SL1200_.jpg",
+        "https://m.media-amazon.com/images/I/shared-two._SL1200_.jpg",
+    ]

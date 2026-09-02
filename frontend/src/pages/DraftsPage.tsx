@@ -62,7 +62,7 @@ const EMPTY_PRICING: DraftPricingInput = {
 
 const MAX_REVIEW_BATCH_SIZE = 50;
 const UNBRANDED = "Unbranded";
-const MIN_LISTING_IMAGE_EDGE = 500;
+const MIN_RESIZABLE_SOURCE_IMAGE_EDGE = 100;
 
 function publicationStatusLabel(draft: ProductDraftRead) {
   if (draft.publication_status === "published") return `已发布：${draft.published_sites.join("、") || "CBT"}`;
@@ -131,7 +131,7 @@ function selectListingImages(urls: string[], limit = 12) {
     if (!url) return;
     const identity = imageIdentity(url);
     const candidate = { url, resolution: imageResolution(url), index };
-    if (candidate.resolution < MIN_LISTING_IMAGE_EDGE) return;
+    if (candidate.resolution < MIN_RESIZABLE_SOURCE_IMAGE_EDGE) return;
     const current = selected.get(identity);
     if (!current || candidate.resolution > current.resolution) selected.set(identity, candidate);
   });

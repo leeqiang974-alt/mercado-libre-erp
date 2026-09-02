@@ -62,6 +62,14 @@ def select_listing_images(image_urls: list[object], limit: int = 12) -> list[str
     return [candidate[2] for candidate in selected.values()][:limit]
 
 
+def merge_listing_images(*image_groups: list[object], limit: int = 12) -> list[str]:
+    """Merge shared and variant-specific gallery images without duplicates."""
+    return select_listing_images(
+        [image for group in image_groups for image in group],
+        limit=limit,
+    )
+
+
 def select_product_video_urls(video_urls: list[object], limit: int = 3) -> list[str]:
     """Keep only Amazon VSE delivery URLs captured from the product gallery."""
     selected: list[str] = []
