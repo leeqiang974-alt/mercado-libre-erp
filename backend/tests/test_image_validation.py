@@ -54,3 +54,11 @@ def test_upscales_eligible_image_without_ai():
 def test_does_not_upscale_icon_sized_source_image():
     with pytest.raises(ImageValidationError, match="小于 100px"):
         normalize_listing_image(valid_jpeg(99, 300), "image/jpeg")
+
+
+def test_resizes_both_edges_proportionally_for_publish_minimum():
+    data, content_type, original, final = normalize_listing_image(valid_jpeg(320, 480), "image/jpeg")
+
+    assert content_type == "image/jpeg"
+    assert original == (320, 480)
+    assert final == (500, 750)

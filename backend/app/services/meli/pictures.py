@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from app.services.image_validation import ImageValidationError, ensure_listing_image_size
+from app.services.image_validation import ImageValidationError, normalize_listing_image
 from app.services.meli.client import MercadoLibreClient
 
 
@@ -50,12 +50,16 @@ async def materialize_global_picture_sources(
             if not response.content or len(response.content) > MAX_PICTURE_BYTES:
                 raise PictureUploadError("图片为空或超过 10MB")
             try:
-                ensure_listing_image_size(response.content, content_type)
+                image_data, normalized_type, _original_dimensions, _final_dimensions = normalize_listing_image(
+                    response.content, content_type
+                )
             except ImageValidationError as exc:
                 raise PictureUploadError(f"{exc}：{source}") from exc
-            filename = PurePosixPath(urlparse(source).path).name or "listing-image.jpg"
+            source_name = PurePosixPath(urlparse(source).path).name or "listing-image.jpg"
+            source_stem = PurePosixPath(source_name).stem or "listing-image"
+            filename = f"{source_stem}.jpg" if normalized_type == "image/jpeg" else source_name
             uploaded = await client.upload_picture(
-                content=response.content, filename=filename, content_type=content_type
+                content=image_data, filename=filename, content_type=normalized_type
             )
             picture_id = str(uploaded.get("id", "")).strip() if isinstance(uploaded, dict) else ""
             if not picture_id:
