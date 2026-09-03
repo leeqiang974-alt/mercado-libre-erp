@@ -7,13 +7,14 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
+from app.models.audit_event import AuditEvent
 from app.models.product_draft import ProductDraft
 from app.models.source_product import SourceProduct
 from app.schemas.content_generation import GeneratedListingContent
-from app.services.integration_credentials import resolve_integration_credentials
-from app.services.meli.metadata_cache import category_attributes_key, get_cached_metadata
 from app.services.audit_events import create_audit_event
 from app.services.drafts import sanitize_unbranded_description
+from app.services.integration_credentials import resolve_integration_credentials
+from app.services.meli.metadata_cache import category_attributes_key, get_cached_metadata
 
 
 WARRANTY_SENTENCE = "The store provides a 7-day warranty for this product."
@@ -21,6 +22,8 @@ PROHIBITED_TERMS = (
     "best", "top", "hot", "sale", "discount", "free shipping", "limited",
     "premium", "buy now", "deal", "clearance", "guaranteed",
 )
+MIN_DESCRIPTION_WORDS = 80
+MAX_DESCRIPTION_WORDS = 260
 
 
 async def generate_and_save_draft_content(
@@ -29,6 +32,7 @@ async def generate_and_save_draft_content(
     product_draft_id: int,
     category_id: str,
     fields: set[str] | None = None,
+    timeout_seconds: float = 90,
 ) -> tuple[ProductDraft, GeneratedListingContent, str]:
     draft = db.get(ProductDraft, product_draft_id)
     if draft is None:
@@ -38,6 +42,18 @@ async def generate_and_save_draft_content(
         raise HTTPException(status_code=409, detail="category_confirmation_required")
     if not normalized_category.startswith(draft.target_site_id.strip().upper()):
         raise HTTPException(status_code=422, detail="category_site_mismatch")
+    selected_fields = fields or {"title", "description"}
+    if not selected_fields <= {"title", "description"}:
+        raise HTTPException(status_code=422, detail="invalid_content_fields")
+    duplicate_fields = _already_generated_fields(db, draft, selected_fields)
+    if duplicate_fields:
+        # A second click must never silently consume another paid request for
+        # an AI field that is still present on the draft.  The operator can
+        # first clear/edit that field and then explicitly generate anew.
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "ai_content_already_generated", "fields": duplicate_fields},
+        )
     metadata = get_cached_metadata(db, category_attributes_key(normalized_category))
     if not metadata or metadata.get("verified") is not True:
         raise HTTPException(status_code=409, detail="category_attributes_not_verified")
@@ -58,29 +74,25 @@ async def generate_and_save_draft_content(
     source = db.get(SourceProduct, draft.source_product_id) if draft.source_product_id else None
     draft_evidence_description_length = len(draft.description or "")
     prompt = _build_prompt(draft, source, normalized_category)
-    generated = await _request_content(base_url=base_url, model=model, provider=provider, api_key=api_key, prompt=prompt)
+    generated = await _request_content(
+        base_url=base_url,
+        model=model,
+        provider=provider,
+        api_key=api_key,
+        prompt=prompt,
+        timeout_seconds=timeout_seconds,
+    )
     source_brand = str(source.brand or "") if source else ""
     try:
         content = _validate_generated(generated, source_brand)
-    except ValueError as first_error:
-        generated = await _request_content(
-            base_url=base_url,
-            model=model,
-            provider=provider,
-            api_key=api_key,
-            prompt=f"{prompt}\nThe previous output failed this validation: {first_error}. Return corrected JSON only.",
-        )
-        try:
-            content = _validate_generated(generated, source_brand)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=502,
-                detail={"code": "generated_content_invalid", "reason": str(exc)},
-            ) from exc
-
-    selected_fields = fields or {"title", "description"}
-    if not selected_fields <= {"title", "description"}:
-        raise HTTPException(status_code=422, detail="invalid_content_fields")
+    except ValueError as exc:
+        # Do not auto-correct with a second paid model call.  The failed
+        # attempt is audited by the route and the operator decides whether to
+        # retry after reviewing the source evidence.
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "generated_content_invalid", "reason": str(exc)},
+        ) from exc
     content = GeneratedListingContent(
         title=content.title,
         description=sanitize_unbranded_description(content.description, source_brand),
@@ -124,7 +136,13 @@ async def generate_and_save_draft_content(
 
 
 async def _request_content(
-    *, base_url: str, model: str, provider: str, api_key: str, prompt: str
+    *,
+    base_url: str,
+    model: str,
+    provider: str,
+    api_key: str,
+    prompt: str,
+    timeout_seconds: float,
 ) -> dict[str, object]:
     url = f"{base_url.rstrip('/')}/chat/completions"
     payload = {
@@ -136,7 +154,7 @@ async def _request_content(
         ],
     }
     try:
-        async with httpx.AsyncClient(timeout=45) as client:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             response = await client.post(
                 url,
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -144,6 +162,11 @@ async def _request_content(
             )
             response.raise_for_status()
             body = response.json()
+    except httpx.TimeoutException as exc:
+        raise HTTPException(
+            status_code=504,
+            detail={"code": f"{provider}_timeout", "retryable": True},
+        ) from exc
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail={"code": f"{provider}_unreachable"}) from exc
     except (TypeError, ValueError) as exc:
@@ -176,11 +199,58 @@ def _validate_generated(value: dict[str, object], source_brand: str = "") -> Gen
         raise ValueError("title contains a prohibited marketing term")
     if source_brand.strip() and source_brand.casefold() in title.casefold():
         raise ValueError("title contains the source brand")
-    if WARRANTY_SENTENCE.lower() not in description.lower():
-        raise ValueError("description must include the 7-day warranty sentence")
-    if len(description) > 50000:
-        raise ValueError("description is too long")
+    if any(ord(char) > 127 for char in description):
+        raise ValueError("description must be English")
+    if source_brand.strip() and source_brand.casefold() in description.casefold():
+        raise ValueError("description contains the source brand")
+    if any(term in description.lower() for term in PROHIBITED_TERMS):
+        raise ValueError("description contains a prohibited marketing term")
+    if re.search(r"<[^>]+>|https?://|www\.", description, flags=re.IGNORECASE):
+        raise ValueError("description must not contain HTML or URLs")
+    if not description.endswith(WARRANTY_SENTENCE):
+        raise ValueError("description must end with the 7-day warranty sentence")
+    word_count = len(re.findall(r"[A-Za-z0-9]+(?:['-][A-Za-z0-9]+)*", description))
+    if not MIN_DESCRIPTION_WORDS <= word_count <= MAX_DESCRIPTION_WORDS:
+        raise ValueError(f"description must contain {MIN_DESCRIPTION_WORDS}-{MAX_DESCRIPTION_WORDS} English words")
+    if "\n" not in description:
+        raise ValueError("description must use readable paragraphs or bullet lines")
     return GeneratedListingContent(title=title, description=description, brand="Unbranded")
+
+
+def _already_generated_fields(
+    db: Session,
+    draft: ProductDraft,
+    selected_fields: set[str],
+) -> list[str]:
+    """Return requested AI fields that still contain prior AI output.
+
+    Audit metadata stores only field names and lengths, never the generated
+    copy itself.  That is sufficient to stop an accidental duplicate paid call
+    while allowing a deliberately cleared field to be generated again.
+    """
+    rows = (
+        db.query(AuditEvent.after_json)
+        .filter(
+            AuditEvent.entity_type == "product_draft",
+            AuditEvent.entity_id == str(draft.id),
+            AuditEvent.action == "draft.ai_content_generated",
+        )
+        .all()
+    )
+    generated_fields: set[str] = set()
+    for (after,) in rows:
+        if not isinstance(after, dict):
+            continue
+        generated_fields.update(
+            field
+            for field in after.get("updated_fields", [])
+            if field in {"title", "description"}
+        )
+    current = {"title": draft.title, "description": draft.description}
+    return sorted(
+        field for field in selected_fields
+        if field in generated_fields and str(current.get(field) or "").strip()
+    )
 
 
 def _build_prompt(draft: ProductDraft, source: SourceProduct | None, category_id: str) -> str:
@@ -203,7 +273,7 @@ Rules:
 - JSON object only with keys title, description, brand.
 - title must be 60 characters or fewer, factual, and contain no brand or marketing language.
 - brand must be exactly Unbranded.
-- description must be a complete, useful listing description, not a one-sentence summary. Preserve every supported fact from the source and existing draft, using short paragraphs or bullet points. When the evidence contains several concrete facts, aim for roughly 120-250 English words; do not pad sparse evidence with guesses.
+- description must be a complete, useful listing description, not a one-sentence summary. Use this exact plain-text structure: an overview paragraph; a `Key details:` section with factual bullet lines; a `Suitable uses:` paragraph; then the warranty sentence as the final line. Preserve every supported fact from the source and existing draft. It must be 80-260 English words, use plain ASCII punctuation, and contain line breaks; do not pad sparse evidence with guesses.
 - description must be factual and based only on the source data or existing draft evidence. Do not invent certifications, guarantees, materials, dimensions, compatibility, or features.
 - never mention the source brand in the title or description; the listing brand is always exactly Unbranded.
 - End the description with exactly this sentence: {WARRANTY_SENTENCE}

@@ -69,6 +69,12 @@ async def fail_fast_on_stuck_request(request: Request, call_next):
     """Do not allow a slow third-party call to block every ERP screen."""
     if request.url.path == "/health":
         return await call_next(request)
+    # Manual AI generation has its own bounded provider timeout. Do not let
+    # the short screen-request guard cancel it first and hide the real result.
+    if request.url.path.startswith("/api/drafts/") and request.url.path.endswith(
+        "/generate-content"
+    ):
+        return await call_next(request)
     try:
         return await asyncio.wait_for(
             call_next(request), timeout=settings.api_request_timeout_seconds

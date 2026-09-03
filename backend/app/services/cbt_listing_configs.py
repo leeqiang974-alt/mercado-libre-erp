@@ -14,8 +14,66 @@ from app.schemas.cbt_listing_config import (
 from app.schemas.drafts import ProductDraftRead
 from app.services.audit_events import create_audit_event
 from app.services.drafts import normalize_listing_title, sanitize_unbranded_description, to_draft_read, update_draft_content
+from app.services.meli.metadata_cache import category_attributes_key, get_cached_metadata
 from app.models.source_product import SourceProduct
 from app.services.source_products import source_variant_evidence_error
+
+
+def resolve_cbt_attribute_value_ids(
+    db: Session,
+    category_id: str,
+    attributes: list[dict],
+) -> tuple[list[dict], list[str]]:
+    """Attach official IDs to enumerated CBT attribute values.
+
+    The editor displays the human-readable value, but Mercado Libre rejects
+    list attributes such as ``MAIN_COLOR`` when only that label is submitted.
+    Resolve the label against the verified category metadata once and persist
+    both the canonical label and its ID.  Unknown free-text/list values are
+    returned as validation errors instead of failing later during publication.
+    """
+    cached = get_cached_metadata(db, category_attributes_key(category_id)) or {}
+    if cached.get("verified") is not True:
+        return [dict(attribute) for attribute in attributes], []
+    definitions = {
+        str(definition.get("id", "")).strip().upper(): definition
+        for definition in cached.get("attributes", [])
+        if isinstance(definition, dict)
+    }
+    resolved: list[dict] = []
+    errors: list[str] = []
+    for raw in attributes:
+        attribute = dict(raw)
+        attribute_id = str(attribute.get("id", "")).strip().upper()
+        definition = definitions.get(attribute_id, {})
+        values = [
+            value
+            for value in definition.get("values", [])
+            if isinstance(value, dict) and str(value.get("id", "")).strip()
+        ] if isinstance(definition, dict) else []
+        if not values:
+            resolved.append(attribute)
+            continue
+        current_id = str(attribute.get("value_id") or "").strip()
+        current_name = str(attribute.get("value_name") or "").strip()
+        match = next((value for value in values if str(value.get("id")) == current_id), None)
+        if match is None and current_name:
+            match = next(
+                (
+                    value
+                    for value in values
+                    if str(value.get("name") or "").strip().casefold() == current_name.casefold()
+                ),
+                None,
+            )
+        if match is None:
+            errors.append(f"cbt_attribute_official_value_required:{attribute_id}")
+            resolved.append(attribute)
+            continue
+        attribute["value_id"] = str(match["id"])
+        attribute["value_name"] = str(match.get("name") or current_name).strip()
+        resolved.append(attribute)
+    return resolved, errors
 
 
 def upsert_cbt_listing_config(
@@ -56,7 +114,17 @@ def upsert_cbt_listing_config(
     config.description = normalized_description
     config.price_usd = payload.price_usd
     config.available_quantity = payload.available_quantity
-    config.attributes_json = [item.model_dump(exclude_none=True) for item in payload.attributes]
+    resolved_attributes, attribute_errors = resolve_cbt_attribute_value_ids(
+        db,
+        payload.category_id,
+        [item.model_dump(exclude_none=True) for item in payload.attributes],
+    )
+    if attribute_errors:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_cbt_attribute_values", "errors": attribute_errors},
+        )
+    config.attributes_json = resolved_attributes
     config.sale_terms_json = [item.model_dump(exclude_none=True) for item in payload.sale_terms]
     config.sites_to_sell_json = [item.model_dump(exclude_none=True) for item in payload.sites_to_sell]
     config.updated_at = datetime.now(UTC)
@@ -141,5 +209,23 @@ def _audit_snapshot(config: CbtListingConfig) -> dict:
         "available_quantity": config.available_quantity,
         "draft_content_version": config.draft_content_version,
         "attribute_ids": [item.get("id") for item in config.attributes_json or []],
+        "attributes": [
+            {
+                key: item.get(key)
+                for key in ("id", "value_id", "value_name")
+                if item.get(key) not in (None, "")
+            }
+            for item in config.attributes_json or []
+            if isinstance(item, dict)
+        ],
         "marketplaces": [item.get("site_id") for item in config.sites_to_sell_json or []],
+        "site_offers": [
+            {
+                key: item.get(key)
+                for key in ("site_id", "listing_type_id", "logistic_type")
+                if item.get(key) not in (None, "")
+            }
+            for item in config.sites_to_sell_json or []
+            if isinstance(item, dict)
+        ],
     }

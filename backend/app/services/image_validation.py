@@ -1,9 +1,23 @@
-"""Validate real image bytes before they enter a Mercado Libre listing."""
+"""Validate and normalize product image bytes for Mercado Libre."""
 
+from io import BytesIO
+from pathlib import Path
 import struct
+import sys
+
+# The production image carries Pillow. During a low-memory rolling upgrade the
+# optional bind-mounted vendor folder lets the running image load the exact same
+# library without rebuilding all Playwright dependencies.
+_VENDOR_PATH = Path(__file__).parents[1] / "_vendor"
+if _VENDOR_PATH.is_dir():
+    sys.path.insert(0, str(_VENDOR_PATH))
+
+from PIL import Image, ImageOps, UnidentifiedImageError  # noqa: E402
 
 
 MIN_LISTING_IMAGE_EDGE = 500
+MIN_RESIZABLE_SOURCE_IMAGE_EDGE = 100
+MAX_NORMALIZED_IMAGE_BYTES = 10 * 1024 * 1024
 
 
 class ImageValidationError(ValueError):
@@ -11,7 +25,7 @@ class ImageValidationError(ValueError):
 
 
 def image_dimensions(data: bytes, content_type: str) -> tuple[int, int]:
-    """Return real PNG/JPEG pixel dimensions without depending on Pillow."""
+    """Return real PNG/JPEG pixel dimensions without depending on URL hints."""
     normalized_type = content_type.split(";", 1)[0].strip().lower()
     if normalized_type == "image/png":
         if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
@@ -36,6 +50,57 @@ def ensure_listing_image_size(data: bytes, content_type: str) -> tuple[int, int]
             f"{MIN_LISTING_IMAGE_EDGE}×{MIN_LISTING_IMAGE_EDGE}px 的要求"
         )
     return width, height
+
+
+def normalize_listing_image(data: bytes, content_type: str) -> tuple[bytes, str, tuple[int, int], tuple[int, int]]:
+    """Keep valid images unchanged, or locally upscale eligible small images.
+
+    This is deterministic image processing only: no AI service is called.  Tiny
+    source assets are usually icons/thumbnails, so any edge below 100 px stays
+    rejected instead of producing a blurred 500 px listing image.
+    """
+    original_dimensions = image_dimensions(data, content_type)
+    width, height = original_dimensions
+    if width < MIN_RESIZABLE_SOURCE_IMAGE_EDGE or height < MIN_RESIZABLE_SOURCE_IMAGE_EDGE:
+        raise ImageValidationError(
+            f"图片尺寸 {width}×{height}px，任一边小于 "
+            f"{MIN_RESIZABLE_SOURCE_IMAGE_EDGE}px，不能用于自动放大"
+        )
+    if width >= MIN_LISTING_IMAGE_EDGE and height >= MIN_LISTING_IMAGE_EDGE:
+        return data, content_type, original_dimensions, original_dimensions
+
+    try:
+        with Image.open(BytesIO(data)) as source:
+            source.load()
+            image = ImageOps.exif_transpose(source)
+            scale = max(MIN_LISTING_IMAGE_EDGE / image.width, MIN_LISTING_IMAGE_EDGE / image.height)
+            target_size = (
+                max(MIN_LISTING_IMAGE_EDGE, round(image.width * scale)),
+                max(MIN_LISTING_IMAGE_EDGE, round(image.height * scale)),
+            )
+            # A normal Amazon listing image will remain well below this bound.
+            # Do not allow a pathological panorama to exhaust the API worker.
+            if target_size[0] * target_size[1] > 30_000_000:
+                raise ImageValidationError("图片比例异常，自动放大后像素过大")
+            image = image.resize(target_size, Image.Resampling.LANCZOS)
+            if image.mode in {"RGBA", "LA"} or (image.mode == "P" and "transparency" in image.info):
+                background = Image.new("RGB", image.size, "white")
+                background.paste(image.convert("RGBA"), mask=image.convert("RGBA").getchannel("A"))
+                image = background
+            elif image.mode != "RGB":
+                image = image.convert("RGB")
+            output = BytesIO()
+            image.save(output, format="JPEG", quality=90, optimize=True)
+    except ImageValidationError:
+        raise
+    except (OSError, UnidentifiedImageError) as exc:
+        raise ImageValidationError("图片无法解码或自动放大") from exc
+
+    normalized = output.getvalue()
+    if not normalized or len(normalized) > MAX_NORMALIZED_IMAGE_BYTES:
+        raise ImageValidationError("自动放大后的图片为空或超过 10MB")
+    final_dimensions = image_dimensions(normalized, "image/jpeg")
+    return normalized, "image/jpeg", original_dimensions, final_dimensions
 
 
 def _jpeg_dimensions(data: bytes) -> tuple[int, int]:

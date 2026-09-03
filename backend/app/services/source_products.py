@@ -11,7 +11,7 @@ from app.schemas.source_products import (
     SourceProductSummaryRead,
 )
 from app.services.amazon.parser import extract_amazon_asin
-from app.services.amazon.media import select_listing_images
+from app.services.amazon.media import merge_listing_images, select_listing_images
 from app.services.amazon.normalizer import normalize_amazon_product
 from app.services.drafts import create_product_draft
 
@@ -181,8 +181,10 @@ def create_or_get_source_variant_draft(
         return existing, False
 
     draft_snapshot = snapshot.model_dump()
-    if variant.image_urls:
-        draft_snapshot["images"] = variant.image_urls
+    # Keep the selected variant image first, but retain the shared gallery too.
+    # Amazon often exposes only one color image in the variant block while the
+    # remaining product images live in the common gallery.
+    draft_snapshot["images"] = merge_listing_images(variant.image_urls, snapshot.images)
     draft = normalize_amazon_product(draft_snapshot, target_site_id)
     if variant.attributes:
         variant_lines = "\n".join(

@@ -20,7 +20,7 @@ AMAZON_GENERIC_RENDER_DIMENSION_PATTERN = re.compile(
     r"\._(?:SL|SX|SY|US|SS|SR)(\d+)_",
     re.IGNORECASE,
 )
-MIN_LISTING_IMAGE_EDGE = 500
+MIN_RESIZABLE_SOURCE_IMAGE_EDGE = 100
 
 
 def _image_identity(url: str) -> str:
@@ -49,9 +49,10 @@ def select_listing_images(image_urls: list[object], limit: int = 12) -> list[str
             continue
         resolution = _image_resolution(url)
         # Amazon carousel thumbnails such as _AC_US100_ are navigation assets,
-        # not listing media. Keep unknown-size originals and reject known small
-        # render variants before they reach the database or publish payload.
-        if resolution < MIN_LISTING_IMAGE_EDGE:
+        # not listing media. Keep unknown-size originals and reject only known
+        # icon-size renders; eligible 100-499 px images are locally upscaled
+        # while mirroring to OSS before they can reach a publish payload.
+        if resolution < MIN_RESIZABLE_SOURCE_IMAGE_EDGE:
             continue
         identity = _image_identity(url)
         candidate = (resolution, -index, url)
@@ -60,6 +61,37 @@ def select_listing_images(image_urls: list[object], limit: int = 12) -> list[str
             selected[identity] = candidate
     return [candidate[2] for candidate in selected.values()][:limit]
 
+
+def merge_listing_images(*image_groups: list[object], limit: int = 12) -> list[str]:
+    """Merge shared and variant-specific gallery images without duplicates."""
+    return select_listing_images(
+        [image for group in image_groups for image in group],
+        limit=limit,
+    )
+
+
+def select_product_video_urls(video_urls: list[object], limit: int = 3) -> list[str]:
+    """Keep only Amazon VSE delivery URLs captured from the product gallery."""
+    selected: list[str] = []
+    seen: set[str] = set()
+    for raw_url in video_urls:
+        url = str(raw_url or "").strip()
+        parts = urlsplit(url)
+        host = parts.netloc.lower()
+        path = parts.path.lower()
+        if (
+            parts.scheme not in {"http", "https"}
+            or host != "m.media-amazon.com"
+            or "vse" not in path
+            or not path.endswith((".mp4", ".m3u8"))
+            or url in seen
+        ):
+            continue
+        seen.add(url)
+        selected.append(url)
+        if len(selected) >= limit:
+            break
+    return selected
 
 def prepare_listing_title(source_title: object, source_brand: str) -> str:
     title = " ".join(str(source_title or "").split())

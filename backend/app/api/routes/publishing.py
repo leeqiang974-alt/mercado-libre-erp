@@ -33,12 +33,9 @@ from app.schemas.publishing import (
     PublishValidationResult,
 )
 from app.schemas.reviews import ReviewResponse
-from app.services.draft_approvals import (
-    get_product_draft_approval,
-    is_product_draft_approved,
-)
+from app.services.draft_approvals import is_product_draft_approved
 from app.services.draft_listing_configs import build_configured_draft
-from app.services.cbt_listing_configs import get_cbt_listing_config
+from app.services.cbt_listing_configs import get_cbt_listing_config, resolve_cbt_attribute_value_ids
 from app.services.integration_credentials import resolve_integration_credentials
 from app.services.audit_events import create_audit_event
 from app.services.meli.client import MercadoLibreClient
@@ -69,7 +66,6 @@ from app.services.publish_jobs import (
 from app.services.reviews import (
     get_latest_behavioral_review,
     get_publish_review,
-    provider_review_context_errors,
 )
 
 router = APIRouter(prefix="/api/publishing", tags=["publishing"])
@@ -365,6 +361,10 @@ def preview_cbt_publish_from_draft(
     errors: list[str] = []
     if store is None or store.site_id.strip().upper() != "CBT" or store.oauth_status != "connected":
         errors.append("connected_cbt_store_required")
+    resolved_attributes, attribute_errors = resolve_cbt_attribute_value_ids(
+        db, config.category_id, config.attributes_json or []
+    )
+    errors.extend(attribute_errors)
     raw_config = {
         "store_id": config.store_id,
         "category_id": config.category_id,
@@ -373,7 +373,7 @@ def preview_cbt_publish_from_draft(
         "description": config.description,
         "price_usd": config.price_usd,
         "available_quantity": config.available_quantity,
-        "attributes": config.attributes_json or [],
+        "attributes": resolved_attributes,
         "sale_terms": config.sale_terms_json or [],
         "sites_to_sell": config.sites_to_sell_json or [],
     }
@@ -427,6 +427,26 @@ async def execute_cbt_publish_from_draft(
             status="blocked", errors=["cbt_listing_config_stale_save_again_required"]
         )
 
+    resolved_attributes, attribute_errors = resolve_cbt_attribute_value_ids(
+        db, config.category_id, config.attributes_json or []
+    )
+    if attribute_errors:
+        return PublishExecutionResult(status="blocked", errors=attribute_errors)
+    if resolved_attributes != (config.attributes_json or []):
+        before_attributes = config.attributes_json or []
+        config.attributes_json = resolved_attributes
+        config.updated_at = datetime.now(UTC)
+        create_audit_event(
+            db=db,
+            actor_type="system",
+            actor_id="cbt_attribute_resolver",
+            action="cbt_listing_config.attribute_value_ids_resolved",
+            entity_type="product_draft",
+            entity_id=str(draft.id),
+            before={"attributes": before_attributes},
+            after={"attributes": resolved_attributes},
+            commit=False,
+        )
     raw_config = {
         "store_id": config.store_id,
         "category_id": config.category_id,
@@ -435,7 +455,7 @@ async def execute_cbt_publish_from_draft(
         "description": config.description,
         "price_usd": config.price_usd,
         "available_quantity": config.available_quantity,
-        "attributes": config.attributes_json or [],
+        "attributes": resolved_attributes,
         "sale_terms": config.sale_terms_json or [],
         "sites_to_sell": config.sites_to_sell_json or [],
     }

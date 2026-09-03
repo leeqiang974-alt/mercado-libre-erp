@@ -24,7 +24,7 @@ from app.services.amazon.import_file import MAX_IMPORT_FILE_BYTES, parse_amazon_
 from app.services.amazon.discovery import discover_amazon_products
 from app.services.amazon.throttle import record_domain_outcome, reserve_domain_request
 from app.services.drafts import create_product_draft, to_draft_read, update_draft_content
-from app.services.amazon.media import select_listing_images
+from app.services.amazon.media import merge_listing_images, select_listing_images, select_product_video_urls
 from app.services.audit_events import create_audit_event
 from app.services.source_products import (
     EXACT_PAGE_EVIDENCE_STATUSES,
@@ -698,7 +698,7 @@ def receive_amazon_extension_job_result(
         db.commit()
         return {"ok": True, "job_id": job.id, "status": job.status.value, "draft_id": None}
     raw_snapshot = dict(payload.snapshot)
-    video_urls = [str(value).strip() for value in raw_snapshot.pop("video_urls", []) if str(value).strip()]
+    video_urls = select_product_video_urls(raw_snapshot.pop("video_urls", []))
     if not raw_snapshot.get("measurements") and raw_snapshot.get("technical_details"):
         raw_snapshot["measurements"] = _extract_measurements(
             raw_snapshot["technical_details"], source_url
@@ -817,11 +817,7 @@ def create_source_product_from_extension(
     source_url = _normalized_amazon_url_or_422(payload.source_url)
     target_site_id = _target_site_or_422(payload.target_site_id)
     raw_snapshot = dict(payload.snapshot)
-    video_urls = [
-        str(value).strip()
-        for value in raw_snapshot.pop("video_urls", [])
-        if str(value).strip()
-    ]
+    video_urls = select_product_video_urls(raw_snapshot.pop("video_urls", []))
     if not raw_snapshot.get("measurements") and raw_snapshot.get("technical_details"):
         raw_snapshot["measurements"] = _extract_measurements(
             raw_snapshot["technical_details"], source_url
@@ -895,11 +891,7 @@ def capture_source_product_from_extension(
     if normalize_amazon_product_url(source.source_url) != source_url:
         raise HTTPException(status_code=409, detail="source_product_url_mismatch")
     raw_snapshot = dict(payload.snapshot)
-    video_urls = [
-        str(value).strip()
-        for value in raw_snapshot.pop("video_urls", [])
-        if str(value).strip()
-    ]
+    video_urls = select_product_video_urls(raw_snapshot.pop("video_urls", []))
     if not raw_snapshot.get("measurements") and raw_snapshot.get("technical_details"):
         raw_snapshot["measurements"] = _extract_measurements(
             raw_snapshot["technical_details"], source_url
@@ -927,8 +919,27 @@ def capture_source_product_from_extension(
     drafts = db.query(ProductDraft).filter(ProductDraft.source_product_id == source.id).all()
     for draft in drafts:
         variant = next((row for row in source.variants_json if str(row.get("asin", "")).upper() == (draft.source_variant_asin or "").upper()), None)
-        images = variant.get("image_urls", []) if variant and variant.get("image_urls") else source.image_urls_json
-        update_draft_content(db, draft.id, expected_content_version=draft.content_version, image_urls_json=images, video_urls_json=video_urls)
+        images = merge_listing_images(
+            variant.get("image_urls", []) if variant else [],
+            source.image_urls_json or [],
+        )
+        # A re-collection is the authoritative update for the currently bound
+        # Amazon ASIN.  Keep its selected Color/Size/etc. on the draft as well
+        # as on the source row; otherwise the editor still says "single item"
+        # even though the source has just returned its variant set.
+        variant_attributes = (
+            dict(variant.get("attributes") or {})
+            if isinstance(variant, dict)
+            else {}
+        )
+        update_draft_content(
+            db,
+            draft.id,
+            expected_content_version=draft.content_version,
+            image_urls_json=images,
+            video_urls_json=video_urls,
+            source_variant_attributes_json=variant_attributes,
+        )
     create_audit_event(
         db,
         actor_type="extension",
@@ -942,6 +953,16 @@ def capture_source_product_from_extension(
                 snapshot,
                 image_count=len(source.image_urls_json),
                 video_count=len(video_urls),
+            ),
+            "variant_attributes_updated": sum(
+                1
+                for draft in drafts
+                if any(
+                    str(row.get("asin", "")).upper()
+                    == (draft.source_variant_asin or "").upper()
+                    for row in source.variants_json
+                    if isinstance(row, dict)
+                )
             ),
         },
         commit=False,
@@ -1006,6 +1027,20 @@ def create_source_variant_product_draft(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    create_audit_event(
+        db,
+        actor_type="operator",
+        actor_id="web",
+        action="source_product.variant_draft_opened",
+        entity_type="product_draft",
+        entity_id=str(draft.id),
+        after={
+            "source_product_id": source_product_id,
+            "source_variant_asin": normalized_asin,
+            "target_site_id": target_site_id,
+        },
+        commit=True,
+    )
     return to_draft_read(draft)
 
 
