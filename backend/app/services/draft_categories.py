@@ -30,8 +30,13 @@ def confirm_draft_category(
     category_details = get_cached_metadata(db, category_details_key(category_id)) or {}
     if category_details.get("verified") is not True or category_details.get("leaf") is not True:
         raise HTTPException(status_code=409, detail="category_leaf_not_verified")
-    if draft.content_version != payload.expected_content_version:
-        raise HTTPException(status_code=409, detail="draft_content_version_conflict")
+    # Category selection only replaces the category/configuration binding.  It does
+    # not overwrite the title, description, media, price, or any other operator
+    # content.  A capture/image-normalization/AI operation can legitimately bump
+    # the content version while the operator is browsing the cached category tree;
+    # rejecting that selection made a valid leaf category look as if it had not
+    # been saved.  The row lock below serializes the category change against other
+    # writes, while content edits retain their optimistic-version conflict guard.
     if draft.target_category_id.strip().upper() == category_id and draft.target_site_id == site_id:
         metadata = get_cached_metadata(db, category_attributes_key(category_id)) or {}
         return draft, metadata.get("attributes", []) if metadata.get("verified") is True else [], metadata.get("verified") is True
