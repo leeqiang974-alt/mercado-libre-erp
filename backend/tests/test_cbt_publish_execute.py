@@ -155,7 +155,12 @@ def make_client() -> TestClient:
                 payload_json={
                     "verified": True,
                     "attributes": [
-                        {"id": "ITEM_CONDITION", "tags": {}, "value_type": "text"},
+                        {
+                            "id": "ITEM_CONDITION",
+                            "tags": {},
+                            "value_type": "list",
+                            "values": [{"id": "2230284", "name": "New"}],
+                        },
                         {"id": "SELLER_SKU", "tags": {}},
                         {"id": "PACKAGE_HEIGHT", "tags": {}},
                         {"id": "PACKAGE_LENGTH", "tags": {}},
@@ -248,6 +253,11 @@ def test_cbt_execute_posts_global_item_once_and_replays_idempotently(monkeypatch
     assert calls[0][1]["sites_to_sell"][0]["pictures"] == [
         {"source": "https://example.com/source.jpg"}
     ]
+    assert calls[0][1]["attributes"][0] == {
+        "id": "ITEM_CONDITION",
+        "value_name": "New",
+        "value_id": "2230284",
+    }
 
 
 def test_cbt_execute_blocks_stale_config_before_token_resolution(monkeypatch):

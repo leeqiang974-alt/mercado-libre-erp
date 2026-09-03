@@ -204,6 +204,36 @@ function sourceVariantValueForDefinition(
   return "";
 }
 
+function attributesForSave(
+  attributes: Record<string, string>,
+  definitions: Record<string, unknown>[],
+  savedAttributes: CbtListingConfig["attributes"] = [],
+) {
+  const definitionsById = new Map(
+    definitions.map((definition) => [String(definition.id ?? "").toUpperCase(), definition]),
+  );
+  const savedById = new Map(savedAttributes.map((attribute) => [attribute.id.toUpperCase(), attribute]));
+  return Object.entries(attributes).filter(([, value]) => value.trim()).map(([rawId, rawName]) => {
+    const id = rawId.toUpperCase();
+    const value_name = rawName.trim();
+    const definition = definitionsById.get(id);
+    const values = Array.isArray(definition?.values)
+      ? definition.values.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === "object"))
+      : [];
+    const official = values.find(
+      (value) => String(value.name ?? "").trim().toLowerCase() === value_name.toLowerCase(),
+    );
+    if (official?.id) {
+      return { id, value_name: String(official.name ?? value_name), value_id: String(official.id) };
+    }
+    const previous = savedById.get(id);
+    if (previous?.value_id && previous.value_name.trim().toLowerCase() === value_name.toLowerCase()) {
+      return { id, value_name, value_id: previous.value_id };
+    }
+    return { id, value_name };
+  });
+}
+
 type Offer = CbtListingConfig["sites_to_sell"][number];
 
 function normalizeCbtTitle(value: string) {
@@ -1043,7 +1073,7 @@ export function CbtGlobalPublishingPanel({
         store_id: Number(storeId), category_id: categoryId, family_name: familyName,
         global_title: normalizeCbtTitle(globalTitle), description: sanitizeCbtDescription(description), price_usd: Number(priceUsd),
         available_quantity: Number(quantity),
-        attributes: Object.entries(attributes).filter(([, value]) => value.trim()).map(([id, value_name]) => ({ id, value_name })),
+        attributes: attributesForSave(attributes, attributeDefinitions, saved?.attributes),
         sale_terms: warrantySaleTerms(warranty),
         sites_to_sell: offers,
       });
