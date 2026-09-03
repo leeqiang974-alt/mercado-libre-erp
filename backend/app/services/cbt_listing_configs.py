@@ -209,5 +209,23 @@ def _audit_snapshot(config: CbtListingConfig) -> dict:
         "available_quantity": config.available_quantity,
         "draft_content_version": config.draft_content_version,
         "attribute_ids": [item.get("id") for item in config.attributes_json or []],
+        "attributes": [
+            {
+                key: item.get(key)
+                for key in ("id", "value_id", "value_name")
+                if item.get(key) not in (None, "")
+            }
+            for item in config.attributes_json or []
+            if isinstance(item, dict)
+        ],
         "marketplaces": [item.get("site_id") for item in config.sites_to_sell_json or []],
+        "site_offers": [
+            {
+                key: item.get(key)
+                for key in ("site_id", "listing_type_id", "logistic_type")
+                if item.get(key) not in (None, "")
+            }
+            for item in config.sites_to_sell_json or []
+            if isinstance(item, dict)
+        ],
     }

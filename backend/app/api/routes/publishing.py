@@ -33,10 +33,7 @@ from app.schemas.publishing import (
     PublishValidationResult,
 )
 from app.schemas.reviews import ReviewResponse
-from app.services.draft_approvals import (
-    get_product_draft_approval,
-    is_product_draft_approved,
-)
+from app.services.draft_approvals import is_product_draft_approved
 from app.services.draft_listing_configs import build_configured_draft
 from app.services.cbt_listing_configs import get_cbt_listing_config, resolve_cbt_attribute_value_ids
 from app.services.integration_credentials import resolve_integration_credentials
@@ -69,7 +66,6 @@ from app.services.publish_jobs import (
 from app.services.reviews import (
     get_latest_behavioral_review,
     get_publish_review,
-    provider_review_context_errors,
 )
 
 router = APIRouter(prefix="/api/publishing", tags=["publishing"])

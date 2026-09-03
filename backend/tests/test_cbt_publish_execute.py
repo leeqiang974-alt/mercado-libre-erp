@@ -228,10 +228,14 @@ def test_cbt_execute_posts_global_item_once_and_replays_idempotently(monkeypatch
         assert kwargs["store"].seller_id == "2942677449"
         return "access-token"
 
+    async def keep_test_picture_sources(_client, payload):
+        return payload
+
     monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
     monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
     monkeypatch.setattr(publishing, "MercadoLibreClient", FakeClient)
     monkeypatch.setattr(publishing, "resolve_fresh_store_access_token", fake_token)
+    monkeypatch.setattr(publishing, "materialize_global_picture_sources", keep_test_picture_sources)
     client = make_client()
 
     first = client.post(
