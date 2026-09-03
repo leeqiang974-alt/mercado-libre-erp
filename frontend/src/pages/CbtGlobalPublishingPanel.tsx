@@ -1075,11 +1075,21 @@ export function CbtGlobalPublishingPanel({
   }
 
   async function executePublish() {
-    if (!window.confirm("确认向 Mercado Libre 提交真实刊登吗？提交后将创建商品。")) return;
-    setBusy("execute"); setStatus("");
+    if (busy) return;
+    setStatus("正在等待发布确认…");
+    if (!window.confirm("确认向 Mercado Libre 提交真实刊登吗？提交后将创建商品。")) {
+      setStatus("已取消发布，未向美客多提交请求。");
+      return;
+    }
+    setBusy("execute"); setExecution(null); setStatus("正在提交跨境发布任务，请等待美客多返回结果…");
     try {
-      setExecution(await executeCbtPublishFromDraft(draftId));
-    } catch (error) { setStatus(error instanceof Error ? error.message : "跨境发布请求失败"); }
+      const result = await executeCbtPublishFromDraft(draftId);
+      setExecution(result);
+      const normalizedStatus = String(result.status || "").toLowerCase();
+      if (normalizedStatus === "published") setStatus(`发布成功${result.item_id ? `，商品 ${result.item_id}` : ""}。`);
+      else if (normalizedStatus === "blocked") setStatus(`发布结果待核对${result.job_id ? `（任务 #${result.job_id}）` : ""}，请查看下方逐站点结果。`);
+      else setStatus(`发布失败${result.job_id ? `（任务 #${result.job_id}）` : ""}，请查看下方错误明细。`);
+    } catch (error) { setStatus(error instanceof Error ? error.message : "跨境发布请求失败，请查看发布任务记录。"); }
     finally { setBusy(""); }
   }
 
@@ -1184,7 +1194,7 @@ export function CbtGlobalPublishingPanel({
         </div>
       </div>
     </div>}
-    <footer className="wf-action-bar"><span>{status || (saved ? "配置已保存" : "请先完成必填内容")}</span><div><button className="secondary-button" onClick={onBackToEditing}>取消</button><button disabled={busy === "save"} onClick={saveConfig}><Save size={16} /> 保存</button><button className="secondary-button" disabled={busy === "preview"} onClick={previewPayload}><ListChecks size={16} /> 预检</button><button disabled={!preview?.allowed || !readiness?.mercado_libre.live_publish_enabled || busy === "execute"} onClick={executePublish}><Globe2 size={16} /> 立即发布</button></div></footer>
+    <footer className="wf-action-bar"><span role="status" aria-live="polite">{status || (saved ? "配置已保存" : "请先完成必填内容")}</span><div><button className="secondary-button" onClick={onBackToEditing}>取消</button><button disabled={busy === "save"} onClick={saveConfig}><Save size={16} /> 保存</button><button className="secondary-button" disabled={busy === "preview"} onClick={previewPayload}><ListChecks size={16} /> 预检</button><button disabled={!preview?.allowed || !readiness?.mercado_libre.live_publish_enabled || busy === "execute"} onClick={executePublish} aria-busy={busy === "execute"}>{busy === "execute" ? <RefreshCw className="spin" size={16} /> : <Globe2 size={16} />} {busy === "execute" ? "正在提交…" : "立即发布"}</button></div></footer>
   </section>;
 }
 
