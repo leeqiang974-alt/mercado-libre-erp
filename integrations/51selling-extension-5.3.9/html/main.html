@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+
+<head>
+    <meta charset="utf-8" />
+    <title>无忧易售助手</title>
+    <link href="../css/msg.css" rel="stylesheet" type="text/css">
+    <link href="../css/link.css" rel="stylesheet" type="text/css">
+    <link href="../css/main.css?v=1.03" rel="stylesheet" type="text/css">
+</head>
+
+<body style="background-color: #f2f2f2;">
+    <!-- 顶部 -->
+    <div class="topContent">
+        <div class="content">
+            <div class="leftContent">
+                <div class="logo">
+                    <img src="../img/logo.png" alt="">
+                </div>
+                <div class="toolName">
+                    <span>|</span>采集助手<label id="label-version"></label>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- 页面内容 -->
+    <div class="mainConent">
+        <div class="content">
+            <div class="title">
+                <p>批量采集</p>
+            </div>
+            <a id="showCollected" target="_blank">查看已采集数据>>&nbsp;</a>
+            <textarea id="urlCollect" placeholder="请输入产品网址，多个网址用回车换行；" cols="3"></textarea>
+            <span id="errorMessage">错误提示</span>
+            <div class="footContent">
+                <div class="terrace">
+                    <p>
+                        可批量采集：
+                        <a href="https://www.wish.com/" target="_blank">Wish</a>、
+                        <a href="https://www.aliexpress.com/" target="_blank">速卖通</a>、
+                        <a href="https://www.1688.com/" target="_blank">1688</a>、
+                        <a href="https://www.alibaba.com/" target="_blank">阿里巴巴国际站</a>、
+                        <!--<a href="https://www.joom.com/" target="_blank">Joom</a>、-->
+                        <a href="https://www.lazada.co.th/" target="_blank">Lazada</a>、
+                        <a href="https://www.taobao.com/" target="_blank">淘宝</a>、
+                        <!--<a href="https://www.tmall.com/" target="_blank">天猫</a>、-->
+                        <a href="https://www.walmart.com/" target="_blank">Walmart</a>、
+                        <a href="https://www.banggood.com/" target="_blank">Banggood</a>、
+                        <a href="https://www.temu.com/" target="_blank">Temu</a>、
+                        <a href="https://www.yiwugo.com/" target="_blank">义乌购</a>、
+                        <a href="https://www.vvic.com/" target="_blank">搜款网</a>、
+                        <!-- <a href="https://shopee.com.my/" target="_blank">Shopee</a>、 -->
+                        <a href="https://sooxie.com" target="_blank">搜鞋网</a>、
+                        <a href="https://dhgate.com" target="_blank">敦煌网</a>、
+                        <a href="https://www.go2.cn/" target="_blank">购途网</a>、
+                        <a href="https://www.wsy.com/" target="_blank">网商园</a>、
+                        <a href="https://www.etsy.com/" target="_blank">ETSY</a>、
+                        <a href="https://www.amazon.com/" target="_blank">Amazon</a>、
+                        <a href="https://mobile.yangkeduo.com/" target="_blank">拼多多</a>、
+                        <a href="https://www.wildberries.ru/" target="_blank">Wildberries</a>、
+                        <a href="https://us.shein.com/" target="_blank">Shein</a>、
+                        <a href="#">Tiktok</a>、
+                        <a href="https://www.gigab2b.com/" target="_blank">大健云仓</a>、
+                        <a href="https://www.fruugo.us/" target="_blank">Fruugo</a>、
+                        <a href="https://www.saleyee.cn/" target="_blank">Saleyee</a>、
+                        <a href="https://detail.91jf.com/" target="_blank">91家纺网</a>、
+                        <a href="https://market.yandex.ru/" target="_blank">Yandex</a>、
+                        <a href="https://www.xiaohongshu.com/" target="_blank">小红书</a>、
+                        <a href="https://www.bao66.cn/" target="_blank">包牛牛</a>、
+                        <a href="https://westmonth.com/" target="_blank">西之月</a>、
+                        <a href="https://www.mercadolibre.com.mx/" target="_blank">Mercado</a>、
+                        <a href="https://www.doba.com/" target="_blank">Doba</a>、
+                        <a href="https://www.made-in-china.com/" target="_blank">中国制造网</a>、
+                        <a href="https://www.miravia.es/" target="_blank">Miravia</a>、
+                        <a href="https://www.arkswift.com/" target="_blank">ArkSwift</a>、
+                        <a href="https://www.ebay.com/" target="_blank">eBay</a>
+                    </p>
+                    <br>
+                    <p>
+                        可页面采集：
+                        <a href="https://www.joom.com/" target="_blank">Joom</a>、
+                        <a href="https://www.ozon.ru/" target="_blank">OZON</a>、
+                        <a href="https://www.coupang.com/" target="_blank">Coupang</a>、
+                        <a href="https://www.cdiscount.com/" target="_blank">Cdiscount</a>、
+                        <a href="https://www.onbuy.com/" target="_blank">Onbuy</a>、
+                        <a href="https://www.tmall.com/" target="_blank">天猫</a>、
+                        <a href="https://jd.com" target="_blank">京东</a>、
+                        <a href="https://shopee.com.my/" target="_blank">Shopee</a>、
+                        <a href="https://www.17qcc.com/" target="_blank">青创网</a>、
+                        <a href="https://www.douyin.com/" target="_blank">抖音</a>
+                    </p>
+                </div>
+                <div class="btn">
+                    <div>
+                        <span>采集间隔</span>
+                        <span class="tip" title="由于部分平台（比如天猫）不支持频繁采集，因此可设置采集间隔减少此类问题，即设置后会每间隔一定时间后再去采集下一个产品"></span>
+                        <input type="number" id="stopTime" value="0" min="0" />
+                        <span>秒</span>
+                    </div>
+                    <div>
+                        <button id="toHome">返回首页</button>
+                        <button id="reset">清空</button>
+                        <button id="urlCollectBtn">开始采集</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- 重复采集时的弹出框 -->
+    <div class="popup-mask"></div>
+    <div class="popup">
+        <div class="popup-content">
+            <div class="popup-header">
+                <h2 class="popup-title">重复采集</h2>
+                <button class="popup-close">×</button>
+            </div>
+            <div class="popup-body">
+                <div class="info">重复采集提示：以下产品在无忧易售已有采集记录，若需要再次采集请手动勾选。</div>
+                <table>
+                    <thead>
+                        <tr style="background-color: #c6c6c6;">
+                            <th style="width: 10%;"><input type="checkbox" id="selectAll"></th>
+                            <th style="width: 20%;">图片</th>
+                            <th style="width: 60%;">标题</th>
+                            <!--<th>售价</th>-->
+                        </tr>
+                    </thead>
+                    <tbody class="popup-tbody">
+                    </tbody>
+                </table>
+            </div>
+            <div class="popup-footer">
+                <button class="popup-confirm">确认采集</button>
+                <button class="popup-cancel">跳过</button>
+            </div>
+        </div>
+    </div>
+    <!-- 采集结果提醒 -->
+    <div class="collect_results">
+        <div class="collect_results-top">
+            <!-- <span class="collect_results-text">提醒</span> -->
+            <span class="collect_results-no">×</span>
+        </div>
+        <div class="collect_results-content">
+            <div id="progressbar" class="progress progress-striped">
+                <div class="progress-bar progress-bar-success"></div>
+            </div>
+            <!-- <p>采集完成 ！</p> -->
+            <div>采集成功：<label class="successNum">0</label></div>
+            <div class="div-repeat">重复采集：<label class="repeatNum">0</label></div>
+            <div style="margin-bottom: 10px;">
+                采集失败：<label class="errorNum" style="color: red;">0</label>
+                <label class="copyText" style="cursor: pointer;"></label>
+            </div>
+            <div class="wyys-main-link">
+                <!-- 采集失败的链接 -->
+            </div>
+        </div>
+        <div style="border-top: 1px solid gainsboro;">
+            <button class="collect_results-close">关闭</button>
+        </div>
+    </div>
+</body>
+
+</html>
+
+<script type="text/javascript" src="../js/jquery-1.8.3.js"></script>
+<script type="text/javascript" src="../js/requestapi.js"></script>
+<script type="text/javascript" src="../js/msg.js"></script>
+<script type="text/javascript" src="../js/config.js"></script>
+<script type="text/javascript" src="../js/productacquisition.js"></script>
+<script type="text/javascript" src="../js/sendmessage.js"></script>
+<script type="text/javascript" src="../js/content.js"></script>
+<script type="text/javascript" src="../js/callserver.js"></script>
+<script type="text/javascript" src="../js/analyticalproducts.js"></script>
+<script type="text/javascript" src="../js/main.js"></script>

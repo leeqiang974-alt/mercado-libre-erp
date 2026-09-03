@@ -3,7 +3,8 @@ from types import SimpleNamespace
 
 from app.schemas.cbt_listing_config import CbtListingConfigUpsert
 from app.schemas.drafts import ProductDraftCreate, ProductDraftRead
-from app.services.cbt_listing_configs import to_cbt_listing_config_read
+from app.services.cbt_listing_configs import resolve_cbt_attribute_value_ids, to_cbt_listing_config_read
+from app.models.meli_metadata_cache import MeliMetadataCache
 from app.services.meli.cbt import normalize_cbt_profile
 from app.services.meli.payload_builder import build_cbt_global_item_payload
 
@@ -235,3 +236,33 @@ def test_cbt_config_response_accepts_the_saved_draft_snapshot():
 
     assert result.draft.id == 14
     assert result.draft.content_version == 8
+
+
+def test_cbt_list_attribute_label_resolves_to_official_value_id():
+    class Query:
+        def filter(self, *_args):
+            return self
+
+        def one_or_none(self):
+            return MeliMetadataCache(
+                cache_key="category_attributes:CBT127691",
+                payload_json={
+                    "verified": True,
+                    "attributes": [{
+                        "id": "MAIN_COLOR",
+                        "value_type": "list",
+                        "values": [{"id": "2450295", "name": "Black"}],
+                    }],
+                },
+            )
+
+    class Db:
+        def query(self, _model):
+            return Query()
+
+    resolved, errors = resolve_cbt_attribute_value_ids(
+        Db(), "CBT127691", [{"id": "MAIN_COLOR", "value_name": "black"}]
+    )
+
+    assert errors == []
+    assert resolved == [{"id": "MAIN_COLOR", "value_name": "Black", "value_id": "2450295"}]

@@ -754,16 +754,37 @@ export function PublishingPage({
   }
 
   async function executePublish() {
-    if (
-      !draftId || !storeId || !previewMatchesCurrentConfig || busy === "config"
-    ) return;
+    if (!draftId) {
+      setStatus("未选择商品，无法发布。");
+      return;
+    }
+    if (!storeId) {
+      setStatus("请先选择已授权店铺，再发布。");
+      return;
+    }
+    if (!previewMatchesCurrentConfig) {
+      setStatus("请先点击“发布前检查”；配置变更后需要重新预检。");
+      return;
+    }
+    if (busy) return;
+
     setBusy("execute");
+    setExecution(null);
+    setStatus("正在提交发布任务，请等待美客多返回结果…");
     try {
       const result = await executePublishFromDraft(draftId, Number(storeId), operatorReview, listingTypes, true);
       setExecution(result);
+      const normalizedStatus = String(result.status || "").toLowerCase();
+      if (normalizedStatus === "published") {
+        setStatus(`发布成功${result.item_id ? `，商品 ${result.item_id}` : ""}。`);
+      } else if (normalizedStatus === "blocked") {
+        setStatus(`发布结果待核对${result.job_id ? `（任务 #${result.job_id}）` : ""}，请查看下方错误明细。`);
+      } else {
+        setStatus(`发布失败${result.job_id ? `（任务 #${result.job_id}）` : ""}，请查看下方错误明细。`);
+      }
       await refreshPublishJobs(false);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Failed to execute publish request");
+      setStatus(error instanceof Error ? error.message : "发布请求失败，请查看发布任务记录。");
     } finally {
       setBusy("");
     }
@@ -1331,18 +1352,55 @@ export function PublishingPage({
         <div className="button-row">
           <button disabled={!canApprove || busy === "approval"} onClick={approveCurrentDraft}><CheckCircle2 size={16} /> 人工确认可发布</button>
           <button className="secondary-button" disabled={!canPreview || busy === "preview"} onClick={createPreview}><ListChecks size={16} /> 发布前检查</button>
-          <button disabled={!previewMatchesCurrentConfig || !selectedStore || !readiness?.mercado_libre.live_publish_enabled || busy === "execute" || busy === "config"} onClick={executePublish}><Rocket size={16} /> 立即发布</button>
+          <button disabled={!previewMatchesCurrentConfig || !selectedStore || !readiness?.mercado_libre.live_publish_enabled || busy === "execute" || busy === "config"} onClick={executePublish} aria-busy={busy === "execute"}>
+            {busy === "execute" ? <RefreshCw className="spin" size={16} /> : <Rocket size={16} />} {busy === "execute" ? "正在提交…" : "立即发布"}
+          </button>
           <button className="secondary-button" disabled={!previewMatchesCurrentConfig || !selectedStore || busy === "queue" || busy === "config"} onClick={queuePublish}><Rocket size={16} /> 加入发布队列</button>
         </div>
         {!readiness?.mercado_libre.live_publish_enabled && <p className="inline-warning">服务器尚未开启真实发布，当前只能完成预检。</p>}
+        {readiness?.mercado_libre.live_publish_enabled && !previewMatchesCurrentConfig && <p className="inline-warning">“立即发布”暂不可用：请先人工确认、保存配置并完成“发布前检查”。</p>}
         {preview && <div className={`validation-result ${preview.allowed ? "ready" : "blocked"}`}><strong>{preview.allowed ? "发布参数已通过检查" : "发布被阻断"}</strong>{preview.errors.map((item) => <span key={item}>{readablePublishError(item)}</span>)}</div>}
-        {execution && <div className={`validation-result ${execution.status === "published" ? "ready" : "blocked"}`}><strong>{execution.status}</strong>{execution.item_id && <span>{execution.item_id}</span>}{execution.shipping_mode && <span>Shipping: {execution.shipping_mode}{execution.shipping_logistic_type ? ` · ${execution.shipping_logistic_type}` : ""}</span>}{execution.errors.map((item) => <span key={item}>{readablePublishError(item)}</span>)}</div>}
+        {execution && <PublishExecutionResultPanel execution={execution} />}
       </section>
 
       {status && <p className="status-line">{status}</p>}
       {batchPublishSection}
       {publishJobsSection}
     </section>
+  );
+}
+
+function PublishExecutionResultPanel({ execution }: { execution: PublishExecutionResult }) {
+  const normalizedStatus = String(execution.status || "").toLowerCase();
+  const published = normalizedStatus === "published";
+  const pendingReview = normalizedStatus === "blocked";
+  return (
+    <div className={`validation-result ${published ? "ready" : "blocked"}`} aria-live="polite">
+      <strong>{published ? "已提交并创建商品" : pendingReview ? "发布结果待核对" : "未创建商品"}</strong>
+      {execution.job_id && <span>发布任务 #{execution.job_id}</span>}
+      {execution.item_id && <span>商品：{execution.item_id}</span>}
+      {execution.shipping_mode && <span>物流：{execution.shipping_mode}{execution.shipping_logistic_type ? ` · ${execution.shipping_logistic_type}` : ""}</span>}
+      {execution.permalink && <a href={execution.permalink} target="_blank" rel="noreferrer">打开商品页面</a>}
+      {execution.errors.map((item, index) => <span key={`${item}-${index}`}>{readablePublishError(item)}</span>)}
+      {execution.response_details && <PublishResponseDetails details={execution.response_details} />}
+    </div>
+  );
+}
+
+function PublishResponseDetails({ details }: { details: Record<string, unknown> }) {
+  const siteItems = Array.isArray(details.site_items) ? details.site_items : [];
+  if (siteItems.length === 0) return null;
+  return (
+    <div className="publish-site-results">
+      <strong>逐站点结果</strong>
+      {siteItems.map((item, index) => {
+        const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
+        const site = String(row.site_id ?? row.site ?? `站点 ${index + 1}`);
+        const itemId = row.item_id ? `商品 ${String(row.item_id)}` : "未创建";
+        const error = row.error ?? row.message ?? row.status;
+        return <span key={`${site}-${index}`}><b>{site}</b>：{itemId}{error ? ` · ${String(error)}` : ""}</span>;
+      })}
+    </div>
   );
 }
 

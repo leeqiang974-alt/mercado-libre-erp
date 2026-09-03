@@ -512,6 +512,8 @@ def test_browser_extension_first_capture_creates_a_draft_and_quality_summary():
                 "price": {"amount": 22.99, "currency": "USD"},
                 "bullets": ["Flexible silicone blade"],
                 "images": ["https://images-na.ssl-images-amazon.com/images/I/example._AC_SL1500_.jpg"],
+                # A generic CDN MP4 is not evidence for the selected Amazon
+                # product gallery and must not be persisted as product video.
                 "video_urls": ["https://example.test/product-video.mp4"],
                 "technical_details": {
                     "Blade Material": "Silicone",
@@ -529,17 +531,66 @@ def test_browser_extension_first_capture_creates_a_draft_and_quality_summary():
         "complete": True,
         "issues": [],
         "image_count": 1,
-        "video_count": 1,
+        "video_count": 0,
         "variant_count": 0,
         "technical_detail_count": 3,
     }
     with Session(testing_session.kw["bind"]) as session:
         draft = session.query(ProductDraft).one()
         source = session.query(SourceProduct).one()
-        assert draft.video_urls_json == ["https://example.test/product-video.mp4"]
+        assert draft.video_urls_json == []
         assert source.collection_method == "browser_extension"
         assert source.measurements_json["item_weight"]["value"] == 1.2
         assert source.measurements_json["package_dimensions"]["length"] == 12.0
+
+
+def test_browser_extension_recollection_updates_bound_draft_variant_attributes():
+    client, testing_session = make_client()
+    created = client.post(
+        "/api/imports/amazon-extension/capture",
+        json={
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
+            "target_site_id": "CBT",
+            "snapshot": {
+                "source_url": "https://www.amazon.com/dp/B000TEST01",
+                "title": "Cable organizer",
+                "images": ["https://images-na.ssl-images-amazon.com/images/I/example._AC_SL1500_.jpg"],
+            },
+        },
+    )
+    assert created.status_code == 200
+    source_id = created.json()["source_product_id"]
+    draft_id = created.json()["draft_id"]
+
+    recollected = client.post(
+        f"/api/imports/source-products/{source_id}/extension-capture",
+        json={
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
+            "target_site_id": "CBT",
+            "snapshot": {
+                "source_url": "https://www.amazon.com/dp/B000TEST01",
+                "title": "Cable organizer",
+                "images": ["https://images-na.ssl-images-amazon.com/images/I/example._AC_SL1500_.jpg"],
+                "variants": [
+                    {"asin": "B000TEST01", "attributes": {"Color": "Black"}, "selected": True},
+                    {"asin": "B000TEST02", "attributes": {"Color": "Brown"}, "selected": False},
+                ],
+            },
+        },
+    )
+
+    assert recollected.status_code == 200
+    assert recollected.json()["quality"]["variant_count"] == 2
+    with Session(testing_session.kw["bind"]) as session:
+        draft = session.get(ProductDraft, draft_id)
+        source = session.get(SourceProduct, source_id)
+        event = session.query(AuditEvent).filter_by(
+            action="source_product.extension_recollected",
+            entity_id=str(source_id),
+        ).one()
+        assert draft.source_variant_attributes_json == {"Color": "Black"}
+        assert source.variants_json[1]["attributes"] == {"Color": "Brown"}
+        assert event.after_json["variant_attributes_updated"] == 1
 
 
 def test_delete_draft_writes_operation_log():

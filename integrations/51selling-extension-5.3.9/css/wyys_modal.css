@@ -1,0 +1,427 @@
+.wyys-cover {
+    position: fixed;
+    width: 100%;
+    height: 100%;
+    top: 0;
+    left: 0;
+    z-index: 1;
+    visibility: hidden;
+    opacity: 0;
+    background: rgba( 0, 0, 0, 0.5);
+}
+.wyys-active .wyys-cover {
+    visibility: visible;
+    opacity: 1;
+}
+
+.wyys-contents {
+    position: relative;
+    padding: 20px;
+    max-width: 400px;
+    height: 100%;
+    margin: auto;
+}
+.wyys-no-blur.wyys-active .wyys-contents {
+    -webkit-filter: none;
+    -moz-filter: none;
+    -ms-filter: none;
+    -o-filter: none;
+    filter: none;
+}
+
+.wyys-modal {
+    position: fixed;
+    top: 0;
+    right: 0;
+    left: 0;
+    visibility: hidden;
+    opacity: 0;
+    z-index: 2000;
+}
+.wyys-modal-animate {
+    visibility: visible;
+    opacity: 1;
+
+    -webkit-transform: scale( 1.1 );
+    -moz-transform: scale( 1.1 );
+    -ms-transform: scale( 1.1 );
+    -o-transform: scale( 1.1 );
+    transform: scale( 1.1 );
+}
+.wyys-modal.stack {
+    -webkit-transform: scale( 1.5 );
+    -moz-transform: scale( 1.5 );
+    -ms-transform: scale( 1.5 );
+    -o-transform: scale( 1.5 );
+    transform: scale( 1.5 );
+}
+.wyys-active .wyys-modal.stack {
+    -webkit-transform: scale( 1.1 );
+    -moz-transform: scale( 1.1 );
+    -ms-transform: scale( 1.1 );
+    -o-transform: scale( 1.1 );
+    transform: scale( 1.1 );
+}
+
+
+.wyys-ready .wyys-contents,
+.wyys-ready .wyys-modal,
+.wyys-ready .wyys-cover {
+    -webkit-transform-origin: 50% 50%;
+    -moz-transform-origin: 50% 50%;
+    -ms-transform-origin: 50% 50%;
+    -o-transform-origin: 50% 50%;
+    transform-origin: 50% 50%;
+
+    -webkit-transition: 0.1s all cubic-bezier(0.250, 0.460, 0.450, 0.940);
+    -moz-transition: 0.1s all cubic-bezier(0.250, 0.460, 0.450, 0.940);
+    -ms-transition: 0.1s all cubic-bezier(0.250, 0.460, 0.450, 0.940);
+    -o-transition: 0.1s all cubic-bezier(0.250, 0.460, 0.450, 0.940);
+    transition: 0.1s all cubic-bezier(0.250, 0.460, 0.450, 0.940);
+}
+.wyys-ready .wyys-modal.wyys-no-transition {
+    -webkit-transition: none;
+    -moz-transition: none;
+    -ms-transition: none;
+    -o-transition: none;
+    transition: none;
+}
+.wyys-modal-dialog{
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    margin: 30px auto;
+    width: 500px;
+}
+.wyys-modal-content {
+    background: #fff;
+    box-shadow: 0 0 10px rgba( 0, 0, 0, 0.3 );
+    border-radius: 2px;
+}
+.wyys-modal-head {
+    border-bottom: 1px solid #e8e8e8;
+    padding: 0 15px;
+    line-height: 35px;
+}
+.wyys-modal-head:after {
+    display: block;
+    clear: both;
+    height: 0;
+    content: "\0020";
+}
+.wyys-modal-head-close {
+    float: right;
+    font-size: 28px;
+    text-shadow: 0 1px 0 #fff;
+    color: #a0a3a6;
+    cursor: pointer;
+}
+.wyys-modal-head-close:hover {
+    color: #737679;
+}
+.wyys-modal-body {
+    padding: 15px;
+    max-height: 420px;
+    overflow: auto;
+}
+.wyys-modal-foot {
+    padding: 10px 15px;
+}
+.wyys-modal-foot:after {
+    display: block;
+    clear: both;
+    height: 0;
+    content: "\0020";
+}
+.wyys-m-p0 {
+    margin: 0;
+    padding: 0;
+}
+.wyys-dropdown, .wyys-dropup {
+    position: relative;
+}
+
+.wyys-modal.center {
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    border: 0;
+    background: rgba(0,0,0,.5);
+}
+
+.wyys-modal.right-top {
+    top: 0;
+    right: 0;
+    bottom: auto;
+    left: auto;
+}
+
+.wyys-modal .wyys-modal-body > table td {
+    font-size: 13px;
+    border-top: 1px solid #fff;
+}
+
+.wyys-modal.large > .wyys-modal-dialog {
+    width: 1000px;
+}
+
+.wyys-modal.middle > .wyys-modal-dialog {
+    width: 800px;
+}
+
+.wyys-modal.normal > .wyys-modal-dialog {
+    width: 600px;
+}
+
+.wyys-modal.small > .wyys-modal-dialog {
+    width: 400px;
+}
+
+@media (max-width: 1100px) {
+    .wyys-modal .wyys-modal-dialog {
+        margin: 0;
+        width: 99vmin;
+        height: 99vmin;
+    }
+
+    .wyys-modal .wyys-modal-head {
+        font-size: 15px;
+    }
+
+        .wyys-modal .wyys-modal-head .wyys-modal-head-close {
+            font-size: 25px;
+        }
+
+    .wyys-modal .wyys-modal-head {
+        overflow: auto;
+    }
+}
+
+@media (max-width: 768px) {
+    .outside-modal .modal-dialog {
+        margin: 0;
+        width: 99vmin;
+        height: 99vmin;
+    }
+
+    .wyys-modal .wyys-modal-head h4 {
+        font-size: 20px;
+    }
+
+    .wyys-modal .wyys-modal-head .wyys-modal-head-close {
+        font-size: 45px;
+    }
+
+    .wyys-modal .wyys-modal-head {
+        overflow: auto;
+    }
+}
+
+.wyys-modal.review-display .wyys-modal-head {
+    height: 55px !important;
+}
+
+    .wyys-modal.review-display .wyys-modal-head .logo {
+        position: relative;
+        top: -15px;
+        left: -10px;
+        width: 150px;
+    }
+
+.wyys-modal.msg-modal {
+    position: fixed;
+    width: 460px;
+    margin-right: 0;
+    margin-bottom: 0;
+    bottom: 270px;
+    top: auto;
+    right: -10px;
+    left: auto;
+}
+
+    .wyys-modal.msg-modal .wyys-modal-dialog {
+        width: 360px;
+    }
+
+    .wyys-modal.msg-modal .wyys-modal-head {
+        width: 330px;
+    }
+
+.repeat-crawl-modal-content tbody tr td.has-ipt {
+    text-align: center;
+}
+
+.repeat-crawl-modal-content thead tr th:last-child,
+.repeat-crawl-modal-content tbody tr td:last-child {
+    padding-right: 10px;
+}
+
+.wyys-m-top10{
+    margin-top: 10px;
+}
+.craw-progress{
+    display: inline-block;
+    height: 20px;
+    margin-bottom: 10px;
+    background-color: rgb(245, 245, 245);
+    box-shadow: rgba(0, 0, 0, 0.1) 0px 1px 2px inset;
+    width: 240px;
+    overflow: hidden;
+    border-radius: 4px;
+}
+.craw-progress-bar{
+    float: left;
+    width: 0px;
+    height: 100%;
+    font-size: 12px;
+    line-height: 20px;
+    color: rgb(255, 255, 255);
+    text-align: center;
+    background-color: rgb(47, 184, 100);
+    box-shadow: rgba(0, 0, 0, 0.15) 0px -1px 0px inset;
+    transition: width 0.6s ease 0s;
+}
+.craw-progress-info{
+    display: inline-block;
+    position: relative;
+    top: -15px;
+    margin-left: 10px;
+}
+.wyys-f-blue {
+    color: rgb(66, 139, 202) !important;
+}
+.wyys-f-red {
+    color: rgb(236, 67, 57) !important;
+}
+.wyys-m-left20 {
+    margin-left: 10px;
+}
+.wyys-m-left20 {
+    margin-left: 10px;
+}
+.wyys-aLable {
+    display: inline-block !important;
+    color: rgb(66, 139, 202) !important;
+}
+.wyys-btn-primary {
+    font-size: 13px;
+    background-color: rgb(51, 122, 183);
+    background-image: none;
+    color: rgb(255, 255, 255) !important;
+    border-color: rgb(51, 122, 183);
+}
+.wyys-hide {
+    display: none;
+}
+
+.wyys-m-right10 {
+    margin-right: 10px;
+}
+.copy-icon {
+    display: inline-block;
+    position: relative;
+    top: -1px;
+    margin-left: 30px;
+    width: 15px;
+    height: 15px;
+    vertical-align: middle;
+}
+.wyys-btn{
+    display: inline-block;
+    margin-bottom: 0px;
+    font-weight: 400;
+    min-width: 80px;
+    height: 34px;
+    line-height: 32px;
+    text-align: center;
+    vertical-align: middle;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+    touch-action: manipulation;
+    border-width: 1px;
+    border-style: solid;
+    border-color: transparent;
+    border-image: initial;
+    border-radius: 2px;
+    padding: 0px 12px;
+}
+.wyys-table-modal {
+    border-collapse: collapse;
+    width: 100%;
+    background-color: transparent;
+    border-width: 1px;
+    border-style: solid;
+    border-color: rgb(232, 232, 232);
+    border-image: initial;
+    border-spacing: 0px;
+}
+.wyys-table-modal > tbody > .content > td {
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: break-word;
+    word-break: break-all;
+    border-width: 1px;
+    border-style: solid;
+    border-color: rgb(232, 232, 232);
+    border-image: initial;
+    padding: 5px;
+}
+.wyys-table-modal > tbody > tr > td.img-box {
+    width: 70px;
+    min-width: 70px;
+    max-width: 70px;
+    height: 100%;
+}
+.wyys-table-modal > tbody > tr > td.img-box .img-out {
+    width: 60px;
+    min-width: 60px;
+    max-width: 60px;
+    height: 60px;
+}
+.wyys-table-modal > tbody > .content > td.num {
+    width: 100px;
+    min-width: 100px;
+    max-width: 100px;
+}
+.repeat-crawl-modal-content thead tr th:last-child, .repeat-crawl-modal-content tbody tr td:last-child {
+    padding-right: 10px;
+}
+.wyys-f-right {
+    text-align: right !important;
+}
+.repeat-crawl-pro{
+    margin-top: 20px;
+}
+.repeat-crawl-pro .repeat-crawl-warn {
+    margin-bottom: 10px;
+    text-align: center;
+    background-color: rgb(255, 255, 201);
+    padding: 5px;
+    border-width: 1px;
+    border-style: solid;
+    border-color: rgb(204, 204, 204);
+    border-image: initial;
+    border-radius: 2px;
+}
+.wyys-f15 {
+    font-size: 15px;
+}
+.repeat-crawl-modal-content tbody tr td.has-ipt {
+    text-align: center;
+}
+.wyys-btn-default {
+    font-size: 13px;
+    color: rgb(67, 70, 73);
+    background-color: rgb(240, 240, 240);
+    background-image: none;
+    border-color: rgb(208, 211, 214);
+}
+.craw-fr{
+    float: right;
+}
+.wyys-m-left10{
+    margin-left: 10px;
+}
