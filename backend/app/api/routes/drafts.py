@@ -62,9 +62,27 @@ def list_drafts(
     # The listing rail only needs card metadata. Loading every description and
     # media array made #drafts unresponsive once the library grew large.
     drafts = list_product_drafts(db, limit=limit, compact=compact)
+    _DUPLICATE_ERROR_MARKERS = (
+        "listing.conflict",
+        "This listing already exists",
+        "only support 1 item",
+    )
+
+    def _is_duplicate_failure(job: PublishJob) -> bool:
+        if job.status != PublishJobStatus.FAILED:
+            return False
+        errors = (job.response_summary_json or {}).get("errors", [])
+        joined = " ".join(str(error) for error in errors)
+        return any(marker in joined for marker in _DUPLICATE_ERROR_MARKERS)
+
     jobs = db.query(PublishJob).order_by(PublishJob.id.desc()).all()
     latest: dict[int, PublishJob] = {}
     for job in jobs:
+        # A re-publish that hit an already-existing listing (response lost on
+        # the first attempt, then re-created) must not override the real
+        # PUBLISHED outcome in the listing rail.
+        if _is_duplicate_failure(job):
+            continue
         latest.setdefault(job.product_draft_id, job)
     for draft in drafts:
         job = latest.get(draft.id)
