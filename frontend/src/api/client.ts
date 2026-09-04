@@ -1,6 +1,33 @@
 // Production uses the same-origin reverse proxy; Vite proxies /api locally.
 const API_BASE = "";
 
+// Build a concise, user-safe error message from a failed fetch response.
+// JSON errors (FastAPI) expose a `detail` field that is safe to show; nginx /
+// proxy 5xx responses are full HTML pages that must never be rendered verbatim.
+async function httpError(response: Response): Promise<Error> {
+  const status = response.status;
+  let text = "";
+  try {
+    text = await response.text();
+  } catch {
+    /* ignore body read errors */
+  }
+  let detail: string | null = null;
+  if (text) {
+    try {
+      const parsed = JSON.parse(text) as { detail?: unknown };
+      if (typeof parsed?.detail === "string") detail = parsed.detail;
+    } catch {
+      /* not JSON */
+    }
+  }
+  if (!detail && text && !/<(html|!doctype)/i.test(text)) {
+    const trimmed = text.trim();
+    if (trimmed.length > 0 && trimmed.length <= 300) detail = trimmed;
+  }
+  return new Error(detail ?? `请求失败（HTTP ${status}）`);
+}
+
 export type ProductDraft = {
   title: string;
   description: string;
@@ -457,7 +484,7 @@ export async function importAmazonHtml(
       collection_job_id: collectionJobId,
     }),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<ProductDraft | PersistedDraftResponse>;
 }
 
@@ -575,14 +602,14 @@ export async function importAmazonUrl(sourceUrl: string, targetSiteId: string) {
     if (response.status === 429 && retryAfter) {
       throw new Error(`Amazon collection paused. Retry in ${retryAfter} seconds.`);
     }
-    throw new Error(await response.text());
+    throw await httpError(response);
   }
   return response.json() as Promise<CollectionResult>;
 }
 
 export async function getSystemReadiness() {
   const response = await fetch(`${API_BASE}/api/system/readiness`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<SystemReadiness>;
 }
 
@@ -592,26 +619,26 @@ export async function saveDraftPricing(productDraftId: number, payload: DraftPri
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<DraftPricing>;
 }
 
 export async function getDraftPricing(productDraftId: number) {
   const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/pricing?optional=true`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<DraftPricing | null>;
 }
 
 export async function getCbtCategoryPredictions(storeId: number, query: string, mode: "smart" | "manual" = "smart") {
   const response = await fetch(`${API_BASE}/api/stores/${storeId}/cbt/category-predictions?q=${encodeURIComponent(query)}&mode=${mode}`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<{ store_id: number; query: string; query_en?: string; source?: string; predictions: Record<string, unknown>[] }>;
 }
 
 export async function getCbtCategoryTree(storeId: number, categoryId = "") {
   const query = categoryId ? `?category_id=${encodeURIComponent(categoryId)}` : "";
   const response = await fetch(`${API_BASE}/api/stores/${storeId}/cbt/category-tree${query}`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<{ category: Record<string, unknown> | null; children: Record<string, unknown>[] }>;
 }
 export const EMPTY_PRICING: DraftPricingInput = {
@@ -632,7 +659,7 @@ export async function createCollectionJob(sourceUrl: string, targetSiteId: strin
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source_url: sourceUrl, target_site_id: targetSiteId }),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<CollectionJobRecord>;
 }
 
@@ -650,7 +677,7 @@ export async function createCollectionJobsBatch(
       allow_existing: allowExisting,
     }),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<CollectionBatchResult>;
 }
 
@@ -665,19 +692,19 @@ export async function discoverAmazonProducts(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ keyword, domain, target_site_id: targetSiteId, limit }),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<CollectionBatchResult>;
 }
 
 export async function createKeywordCampaign(payload: { name: string; keywords: string[]; domain: string; target_site_id: string; pages_per_keyword: number }) {
   const response = await fetch(`${API_BASE}/api/imports/amazon-search/campaigns`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<KeywordCampaign>;
 }
 
 export async function listKeywordCampaigns() {
   const response = await fetch(`${API_BASE}/api/imports/amazon-search/campaigns`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<KeywordCampaign[]>;
 }
 
@@ -694,7 +721,7 @@ export async function createCollectionJobsFile(
     method: "POST",
     body,
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<CollectionBatchResult>;
 }
 
@@ -703,7 +730,7 @@ export async function listCollectionJobs(limit = 100, offset = 0, campaignId?: n
   if (campaignId) params.set("campaign_id", String(campaignId));
   if (status) params.set("status", status);
   const response = await fetch(`${API_BASE}/api/imports/amazon-url/jobs?${params}`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<CollectionJobRecord[]>;
 }
 
@@ -717,7 +744,7 @@ export async function listCollectionJobStatuses(jobIds: number[]) {
     const params = new URLSearchParams();
     chunk.forEach((jobId) => params.append("job_ids", String(jobId)));
     const response = await fetch(`${API_BASE}/api/imports/amazon-url/jobs/status?${params}`);
-    if (!response.ok) throw new Error(await response.text());
+    if (!response.ok) throw await httpError(response);
     return response.json() as Promise<CollectionJobRecord[]>;
   }));
   return pages.flat();
@@ -725,7 +752,7 @@ export async function listCollectionJobStatuses(jobIds: number[]) {
 
 export async function getSourceProduct(sourceProductId: number) {
   const response = await fetch(`${API_BASE}/api/imports/source-products/${sourceProductId}`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<SourceProductRecord>;
 }
 
@@ -742,7 +769,7 @@ export async function createSourceVariantDraft(
       body: JSON.stringify({ target_site_id: targetSiteId }),
     },
   );
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<ProductDraftRead>;
 }
 
@@ -759,7 +786,7 @@ export async function createSourceVariantCollectionJob(
       body: JSON.stringify({ target_site_id: targetSiteId }),
     },
   );
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<CollectionJobRecord>;
 }
 
@@ -782,7 +809,7 @@ export async function createSourceVariantCollectionJobs(
       body: JSON.stringify({ target_site_id: targetSiteId }),
     },
   );
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<SourceVariantCollectionBatchResult>;
 }
 
@@ -790,7 +817,7 @@ export async function runCollectionJob(jobId: number) {
   const response = await fetch(`${API_BASE}/api/imports/amazon-url/jobs/${jobId}/run`, {
     method: "POST",
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<CollectionJobRecord>;
 }
 
@@ -801,7 +828,7 @@ export async function reviewDraft(draft: ProductDraft, productDraftId?: number |
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(draft),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json();
 }
 
@@ -844,13 +871,13 @@ export async function enqueueBehavioralAuditBatch(draftIds: number[]) {
       acknowledge_provider_costs: true,
     }),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<ReviewJobBatchResult>;
 }
 
 export async function listReviewJobs(limit = 100) {
   const response = await fetch(`${API_BASE}/api/reviews/jobs?limit=${limit}`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<ReviewJob[]>;
 }
 
@@ -858,13 +885,13 @@ export async function getMeliAuthorizationUrl(siteId: string) {
   const response = await fetch(
     `${API_BASE}/api/stores/meli/authorization-url?site_id=${encodeURIComponent(siteId)}`,
   );
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<{ authorization_url: string; site_id: string }>;
 }
 
 export async function getIntegrationCredentialStatus() {
   const response = await fetch(`${API_BASE}/api/integrations/credentials`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<IntegrationCredentialStatus>;
 }
 
@@ -874,7 +901,7 @@ export async function saveIntegrationCredentials(payload: IntegrationCredentials
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<IntegrationCredentialStatus>;
 }
 
@@ -882,14 +909,14 @@ export async function runIntegrationDiagnostics() {
   const response = await fetch(`${API_BASE}/api/integrations/diagnostics`, {
     method: "POST",
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<IntegrationDiagnostics>;
 }
 
 export async function getProviderModelPrices(includeHistory = false) {
   const suffix = includeHistory ? "?include_history=true" : "";
   const response = await fetch(`${API_BASE}/api/integrations/model-prices${suffix}`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<ProviderModelPrice[]>;
 }
 
@@ -899,7 +926,7 @@ export async function saveProviderModelPrice(payload: ProviderModelPriceCreate) 
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<ProviderModelPrice>;
 }
 
@@ -907,25 +934,25 @@ export async function deactivateProviderModelPrice(priceId: number) {
   const response = await fetch(`${API_BASE}/api/integrations/model-prices/${priceId}`, {
     method: "DELETE",
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<ProviderModelPrice>;
 }
 
 export async function listDrafts() {
   const response = await fetch(`${API_BASE}/api/drafts?limit=1000&compact=true`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<ProductDraftRead[]>;
 }
 
 export async function getDraft(productDraftId: number) {
   const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<ProductDraftRead>;
 }
 
 export async function deleteDraft(productDraftId: number) {
   const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}`, { method: "DELETE" });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
 }
 
 export async function saveDraftContent(productDraftId: number, payload: DraftContentUpdate) {
@@ -934,7 +961,7 @@ export async function saveDraftContent(productDraftId: number, payload: DraftCon
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<ProductDraftRead>;
 }
 
@@ -942,7 +969,7 @@ export async function mirrorDraftImagesToOss(productDraftId: number) {
   const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/mirror-images-to-oss`, {
     method: "POST",
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<ProductDraftRead>;
 }
 
@@ -955,7 +982,7 @@ export async function confirmDraftCategory(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<DraftCategoryResult>;
 }
 
@@ -965,13 +992,13 @@ export async function generateDraftContent(productDraftId: number, categoryId: s
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ category_id: categoryId, language: "en", fields }),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<GeneratedDraftContent>;
 }
 
 export async function listReviewHistory(productDraftId: number) {
   const response = await fetch(`${API_BASE}/api/reviews/drafts/${productDraftId}`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<ReviewResult[]>;
 }
 
@@ -979,13 +1006,13 @@ export async function getLatestBehavioralReview(productDraftId: number) {
   const response = await fetch(
     `${API_BASE}/api/reviews/drafts/${productDraftId}/latest-behavioral`,
   );
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<ReviewResult | null>;
 }
 
 export async function listStores() {
   const response = await fetch(`${API_BASE}/api/stores`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   const payload = await response.json() as unknown;
   if (!Array.isArray(payload)) {
     // A legacy service can still be listening on the local API port. Do not
@@ -1002,13 +1029,13 @@ export async function updateStore(storeId: number, payload: { display_name?: str
   const response = await fetch(`${API_BASE}/api/stores/${storeId}`, {
     method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<StoreRecord>;
 }
 
 export async function getStoreShippingOptions(storeId: number) {
   const response = await fetch(`${API_BASE}/api/stores/${storeId}/shipping-options`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<{
     store_id: number;
     site_id: string;
@@ -1019,7 +1046,7 @@ export async function getStoreShippingOptions(storeId: number) {
 
 export async function getCbtPublishingProfile(storeId: number) {
   const response = await fetch(`${API_BASE}/api/stores/${storeId}/cbt-publishing-profile`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<CbtPublishingProfile>;
 }
 
@@ -1070,7 +1097,7 @@ export async function listStoreItems(storeId: number, options: { limit?: number;
   });
   if (options.search?.trim()) params.set("search", options.search.trim());
   const response = await fetch(`${API_BASE}/api/stores/${storeId}/items?${params}`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<{ store_id: number; site_id: string; items: StoreItem[]; total: number; limit: number; offset: number }>;
 }
 
@@ -1078,13 +1105,13 @@ export async function getStoreItemPriceReference(storeId: number, itemId: string
   const response = await fetch(
     `${API_BASE}/api/stores/${storeId}/items/${encodeURIComponent(itemId)}/price-reference`,
   );
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<StoreItemPriceReference>;
 }
 
 export async function getCbtMarketplaceListingTypes(storeId: number, categoryId: string) {
   const response = await fetch(`${API_BASE}/api/stores/${storeId}/cbt/categories/${encodeURIComponent(categoryId)}/marketplace-listing-types`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<{ store_id: number; category_id: string; markets: Array<{ site_id: string; verified: boolean; listing_type_ids: string[]; error?: string }> }>;
 }
 
@@ -1092,7 +1119,7 @@ export async function getStoreCategoryListingTypes(storeId: number, categoryId: 
   const response = await fetch(
     `${API_BASE}/api/stores/${storeId}/categories/${encodeURIComponent(categoryId)}/listing-types`,
   );
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<{
     store_id: number;
     site_id: string;
@@ -1109,7 +1136,7 @@ export async function getStoreCategoryListingTypes(storeId: number, categoryId: 
 
 export async function getListingTypes(siteId: string) {
   const response = await fetch(`${API_BASE}/api/metadata/sites/${siteId}/listing-types`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<{
     listing_type_ids: string[];
     source: "mercado_libre_api" | "cache" | "standard_catalog";
@@ -1121,7 +1148,7 @@ export async function refreshListingTypes(siteId: string) {
   const response = await fetch(`${API_BASE}/api/metadata/sites/${siteId}/listing-types/refresh`, {
     method: "POST",
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<{
     listing_type_ids: string[];
     source: "mercado_libre_api" | "cache" | "standard_catalog";
@@ -1133,13 +1160,13 @@ export async function getCategoryPredictions(siteId: string, query: string) {
   const response = await fetch(
     `${API_BASE}/api/metadata/sites/${siteId}/category-predictions?q=${encodeURIComponent(query)}`,
   );
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<{ predictions: Record<string, unknown>[] }>;
 }
 
 export async function getCategoryAttributes(categoryId: string) {
   const response = await fetch(`${API_BASE}/api/metadata/categories/${categoryId}/attributes`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<{
     attributes: Record<string, unknown>[];
     verified: boolean;
@@ -1148,7 +1175,7 @@ export async function getCategoryAttributes(categoryId: string) {
 
 export async function getCategoryDetails(categoryId: string) {
   const response = await fetch(`${API_BASE}/api/metadata/categories/${encodeURIComponent(categoryId)}`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<{
     id: string;
     name: string;
@@ -1165,7 +1192,7 @@ export async function getDraftAttributeSuggestions(productDraftId: number, categ
   const response = await fetch(
     `${API_BASE}/api/drafts/${productDraftId}/attribute-suggestions?${params}`,
   );
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<AttributeSuggestionResult>;
 }
 
@@ -1173,7 +1200,7 @@ export async function refreshCategoryAttributes(categoryId: string) {
   const response = await fetch(`${API_BASE}/api/metadata/categories/${categoryId}/attributes/refresh`, {
     method: "POST",
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<{
     attributes: Record<string, unknown>[];
     verified: boolean;
@@ -1183,7 +1210,7 @@ export async function refreshCategoryAttributes(categoryId: string) {
 export async function listPublishJobs(limit = 100, offset = 0) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   const response = await fetch(`${API_BASE}/api/publishing/jobs?${params}`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<PublishJobRecord[]>;
 }
 
@@ -1191,7 +1218,7 @@ export async function retryPublishJob(jobId: number) {
   const response = await fetch(`${API_BASE}/api/publishing/jobs/${jobId}/retry`, {
     method: "POST",
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<PublishExecutionResult>;
 }
 
@@ -1199,7 +1226,7 @@ export async function cancelPublishJob(jobId: number) {
   const response = await fetch(`${API_BASE}/api/publishing/jobs/${jobId}/cancel`, {
     method: "POST",
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<PublishJobRecord>;
 }
 
@@ -1207,7 +1234,7 @@ export async function reconcilePublishJob(jobId: number) {
   const response = await fetch(`${API_BASE}/api/publishing/jobs/${jobId}/reconcile`, {
     method: "POST",
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<PublishExecutionResult>;
 }
 
@@ -1230,13 +1257,13 @@ export async function saveDraftListingConfig(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<DraftListingConfig>;
 }
 
 export async function getDraftListingConfig(productDraftId: number) {
   const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/listing-config?optional=true`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<DraftListingConfig | null>;
 }
 
@@ -1249,13 +1276,13 @@ export async function saveCbtListingConfig(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<CbtListingConfig>;
 }
 
 export async function getCbtListingConfig(productDraftId: number) {
   const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/cbt-listing-config?optional=true`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<CbtListingConfig | null>;
 }
 
@@ -1263,7 +1290,7 @@ export async function previewCbtPublishFromDraft(productDraftId: number) {
   const response = await fetch(`${API_BASE}/api/publishing/cbt/preview-from-draft?product_draft_id=${productDraftId}`, {
     method: "POST",
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<{ allowed: boolean; errors: string[]; payload: Record<string, unknown> | null }>;
 }
 
@@ -1273,7 +1300,7 @@ export async function executeCbtPublishFromDraft(productDraftId: number) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ product_draft_id: productDraftId, acknowledge_publish: true }),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<PublishExecutionResult>;
 }
 
@@ -1283,7 +1310,7 @@ export async function approveDraft(productDraftId: number, approvedBy = "operato
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ approved_by: approvedBy, note }),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<DraftApproval>;
 }
 
@@ -1303,7 +1330,7 @@ export async function previewPublishFromDraft(
       human_approved: humanApproved,
     }),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<PublishValidationResult>;
 }
 
@@ -1325,7 +1352,7 @@ export async function executePublishFromDraft(
       human_approved: humanApproved,
     }),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<PublishExecutionResult>;
 }
 
@@ -1347,7 +1374,7 @@ export async function enqueuePublishFromDraft(
       human_approved: humanApproved,
     }),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<PublishJobRecord>;
 }
 
@@ -1360,7 +1387,7 @@ export async function enqueuePublishBatch(draftIds: number[]) {
       acknowledge_publish: true,
     }),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<PublishBatchEnqueueResult>;
 }
 
@@ -1370,13 +1397,13 @@ export async function preflightPublishBatch(draftIds: number[]) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ draft_ids: draftIds }),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<PublishBatchPreflightResult>;
 }
 
 export async function listAuditEvents(limit = 100) {
   const response = await fetch(`${API_BASE}/api/audit-events?limit=${limit}`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<AuditEventRecord[]>;
 }
 
@@ -1385,7 +1412,7 @@ export type Alibaba1688SimilarResult = { draft_id: number; cover_image: string; 
 
 export async function searchAlibaba1688SimilarOffers(productDraftId: number) {
   const response = await fetch(`${API_BASE}/api/integrations/1688/drafts/${productDraftId}/similar-offers`, { method: "POST" });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await httpError(response);
   return response.json() as Promise<Alibaba1688SimilarResult>;
 }
 
