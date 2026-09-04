@@ -1,5 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
+import asyncio
+
 import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -13,6 +15,7 @@ from app.main import app
 from app.models.cbt_listing_config import CbtListingConfig
 from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.product_draft import ProductDraft
+from app.models.publish_job import PublishJob
 from app.models.product_draft_approval import ProductDraftApproval
 from app.models.registry import import_all_models
 from app.models.review_result import ReviewDecision, ReviewResult
@@ -209,7 +212,73 @@ def teardown_function():
     app.dependency_overrides.clear()
 
 
-def test_cbt_execute_posts_global_item_once_and_replays_idempotently(monkeypatch):
+def test_cbt_execute_queues_global_item_and_replays_idempotently(monkeypatch):
+    monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    client = make_client()
+
+    first = client.post(
+        "/api/publishing/cbt/execute-from-draft",
+        json={"product_draft_id": 1, "acknowledge_publish": True},
+    )
+    replay = client.post(
+        "/api/publishing/cbt/execute-from-draft",
+        json={"product_draft_id": 1, "acknowledge_publish": True},
+    )
+
+    assert first.status_code == 200
+    assert first.json()["status"] == "pending"
+    assert first.json()["job_id"] == 1
+    assert replay.status_code == 200
+    assert replay.json()["status"] == "blocked"
+    assert "publish_already_in_progress" in replay.json()["errors"]
+    assert replay.json()["job_id"] == 1
+
+    generator = app.dependency_overrides[get_db]()
+    db = next(generator)
+    try:
+        job = db.query(PublishJob).filter(PublishJob.id == 1).one()
+        summary = job.request_summary_json or {}
+        assert summary["publication_model"] == "traditional_global"
+        assert summary["payload"]["sites_to_sell"][0]["pictures"] == [
+            {"source": "https://example.com/source.jpg"}
+        ]
+        assert summary["payload"]["attributes"][0] == {
+            "id": "ITEM_CONDITION",
+            "value_name": "New",
+            "value_id": "2230284",
+        }
+    finally:
+        generator.close()
+
+
+def test_cbt_execute_blocks_stale_config_before_token_resolution(monkeypatch):
+    async def unexpected_token(**kwargs):
+        raise AssertionError("A stale CBT config must not resolve a token.")
+
+    monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
+    monkeypatch.setattr(publishing, "resolve_fresh_store_access_token", unexpected_token)
+    client = make_client()
+    generator = app.dependency_overrides[get_db]()
+    db = next(generator)
+    try:
+        config = db.query(CbtListingConfig).one()
+        config.draft_content_version = 1
+        db.commit()
+    finally:
+        generator.close()
+
+    response = client.post(
+        "/api/publishing/cbt/execute-from-draft",
+        json={"product_draft_id": 1, "acknowledge_publish": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "blocked"
+    assert response.json()["errors"] == ["cbt_listing_config_stale_save_again_required"]
+
+
+def test_cbt_global_publish_job_executes_queued_payload(monkeypatch):
     calls: list[tuple[str, dict]] = []
 
     class FakeClient:
@@ -238,53 +307,34 @@ def test_cbt_execute_posts_global_item_once_and_replays_idempotently(monkeypatch
     monkeypatch.setattr(publishing, "materialize_global_picture_sources", keep_test_picture_sources)
     client = make_client()
 
-    first = client.post(
-        "/api/publishing/cbt/execute-from-draft",
-        json={"product_draft_id": 1, "acknowledge_publish": True},
-    )
-    replay = client.post(
-        "/api/publishing/cbt/execute-from-draft",
-        json={"product_draft_id": 1, "acknowledge_publish": True},
-    )
-
-    assert first.status_code == 200
-    assert first.json()["status"] == "published"
-    assert first.json()["item_id"] == "CBT1000001"
-    assert replay.status_code == 200
-    assert replay.json()["item_id"] == "CBT1000001"
-    assert len(calls) == 1
-    assert calls[0][0] == "/global/items"
-    assert calls[0][1]["sites_to_sell"][0]["pictures"] == [
-        {"source": "https://example.com/source.jpg"}
-    ]
-    assert calls[0][1]["attributes"][0] == {
-        "id": "ITEM_CONDITION",
-        "value_name": "New",
-        "value_id": "2230284",
-    }
-
-
-def test_cbt_execute_blocks_stale_config_before_token_resolution(monkeypatch):
-    async def unexpected_token(**kwargs):
-        raise AssertionError("A stale CBT config must not resolve a token.")
-
-    monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
-    monkeypatch.setattr(publishing, "resolve_fresh_store_access_token", unexpected_token)
-    client = make_client()
     generator = app.dependency_overrides[get_db]()
     db = next(generator)
     try:
-        config = db.query(CbtListingConfig).one()
-        config.draft_content_version = 1
-        db.commit()
+        queued = client.post(
+            "/api/publishing/cbt/execute-from-draft",
+            json={"product_draft_id": 1, "acknowledge_publish": True},
+        )
+        assert queued.json()["status"] == "pending"
+        job = db.query(PublishJob).filter(PublishJob.id == queued.json()["job_id"]).one()
+
+        result = asyncio.run(
+            publishing.execute_cbt_global_publish_job(
+                db=db, job=job, token_encryption_key="test-secret"
+            )
+        )
+
+        assert result.status == "published"
+        assert result.item_id == "CBT1000001"
+        assert len(calls) == 1
+        assert calls[0][0] == "/global/items"
+        assert calls[0][1]["sites_to_sell"][0]["pictures"] == [
+            {"source": "https://example.com/source.jpg"}
+        ]
+        assert calls[0][1]["attributes"][0] == {
+            "id": "ITEM_CONDITION",
+            "value_name": "New",
+            "value_id": "2230284",
+        }
     finally:
         generator.close()
 
-    response = client.post(
-        "/api/publishing/cbt/execute-from-draft",
-        json={"product_draft_id": 1, "acknowledge_publish": True},
-    )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "blocked"
-    assert response.json()["errors"] == ["cbt_listing_config_stale_save_again_required"]

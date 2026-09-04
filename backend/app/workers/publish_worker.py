@@ -30,6 +30,7 @@ from app.services.publish_jobs import (
     recover_stale_publish_jobs,
 )
 from app.services.reviews import get_publish_review
+from app.api.routes.publishing import execute_cbt_global_publish_job
 
 Publisher = Callable[..., Awaitable[PublishExecutionResult]]
 WorkerSummary = dict[str, int]
@@ -107,83 +108,94 @@ async def run_pending_publish_job(
     db.refresh(job)
 
     try:
-        draft, listing_choice = build_configured_draft(db, job.product_draft_id)
-        review = get_publish_review(
-            db,
-            job.product_draft_id,
-            (job.request_summary_json or {}).get("review_result_id"),
-        )
-        human_approved = is_product_draft_approved(db, job.product_draft_id)
-        valid_listing_type_ids = sorted(SUPPORTED_LISTING_TYPE_IDS)
-        store = db.get(Store, job.store_id)
-        if store is None:
-            result = PublishExecutionResult(status="failed", errors=["store_not_found"])
-        elif (
-            delivery_errors := validate_store_delivery(
-                store.id, store.site_id, store.oauth_status, listing_choice
+        if (job.request_summary_json or {}).get("publication_model") == "traditional_global":
+            result = await execute_cbt_global_publish_job(
+                db=db,
+                job=job,
+                token_encryption_key=(
+                    get_settings().token_encryption_key
+                    if token_encryption_key is None
+                    else token_encryption_key
+                ),
             )
-        ):
-            result = PublishExecutionResult(status="blocked", errors=delivery_errors)
         else:
-            validation = validate_publish_request(
-                draft=draft,
-                review=review,
-                listing_choice=listing_choice,
-                valid_listing_type_ids=valid_listing_type_ids,
-                human_approved=human_approved,
-            )
-            category_errors = validate_category_attributes(
+            draft, listing_choice = build_configured_draft(db, job.product_draft_id)
+            review = get_publish_review(
                 db,
-                draft.target_category_id,
-                listing_choice.attributes,
-                require_verified_metadata=(
-                    get_settings().allow_live_publish
-                    if allow_live_publish is None
-                    else allow_live_publish
-                ),
+                job.product_draft_id,
+                (job.request_summary_json or {}).get("review_result_id"),
             )
-            listing_type_errors = validate_store_category_listing_type(
-                db,
-                store.id,
-                draft.target_category_id,
-                listing_choice.listing_type_id,
-                require_verified_metadata=(
-                    get_settings().allow_live_publish
-                    if allow_live_publish is None
-                    else allow_live_publish
-                ),
-                max_age_seconds=get_settings().listing_type_cache_ttl_seconds,
-            )
-            if category_errors or listing_type_errors:
-                validation = validation.model_copy(
-                    update={
-                        "allowed": False,
-                        "errors": [
-                            *validation.errors,
-                            *listing_type_errors,
-                            *category_errors,
-                        ],
-                    }
+            human_approved = is_product_draft_approved(db, job.product_draft_id)
+            valid_listing_type_ids = sorted(SUPPORTED_LISTING_TYPE_IDS)
+            store = db.get(Store, job.store_id)
+            if store is None:
+                result = PublishExecutionResult(status="failed", errors=["store_not_found"])
+            elif (
+                delivery_errors := validate_store_delivery(
+                    store.id, store.site_id, store.oauth_status, listing_choice
                 )
-            if not validation.allowed:
-                result = PublishExecutionResult(status="blocked", errors=validation.errors)
+            ):
+                result = PublishExecutionResult(status="blocked", errors=delivery_errors)
             else:
-                result = await _publish_job(
-                    db=db,
-                    product_draft_id=job.product_draft_id,
-                    store=store,
+                validation = validate_publish_request(
                     draft=draft,
                     review=review,
                     listing_choice=listing_choice,
-                    human_approved=human_approved,
                     valid_listing_type_ids=valid_listing_type_ids,
-                    publisher=publisher,
-                    allow_live_publish=allow_live_publish,
-                    token_encryption_key=token_encryption_key,
-                    publish_reference=(job.request_summary_json or {}).get(
-                        "publish_reference", ""
+                    human_approved=human_approved,
+                )
+                category_errors = validate_category_attributes(
+                    db,
+                    draft.target_category_id,
+                    listing_choice.attributes,
+                    require_verified_metadata=(
+                        get_settings().allow_live_publish
+                        if allow_live_publish is None
+                        else allow_live_publish
                     ),
                 )
+                listing_type_errors = validate_store_category_listing_type(
+                    db,
+                    store.id,
+                    draft.target_category_id,
+                    listing_choice.listing_type_id,
+                    require_verified_metadata=(
+                        get_settings().allow_live_publish
+                        if allow_live_publish is None
+                        else allow_live_publish
+                    ),
+                    max_age_seconds=get_settings().listing_type_cache_ttl_seconds,
+                )
+                if category_errors or listing_type_errors:
+                    validation = validation.model_copy(
+                        update={
+                            "allowed": False,
+                            "errors": [
+                                *validation.errors,
+                                *listing_type_errors,
+                                *category_errors,
+                            ],
+                        }
+                    )
+                if not validation.allowed:
+                    result = PublishExecutionResult(status="blocked", errors=validation.errors)
+                else:
+                    result = await _publish_job(
+                        db=db,
+                        product_draft_id=job.product_draft_id,
+                        store=store,
+                        draft=draft,
+                        review=review,
+                        listing_choice=listing_choice,
+                        human_approved=human_approved,
+                        valid_listing_type_ids=valid_listing_type_ids,
+                        publisher=publisher,
+                        allow_live_publish=allow_live_publish,
+                        token_encryption_key=token_encryption_key,
+                        publish_reference=(job.request_summary_json or {}).get(
+                            "publish_reference", ""
+                        ),
+                    )
     except HTTPException as exc:
         result = PublishExecutionResult(
             status="blocked" if 400 <= exc.status_code < 500 else "failed",

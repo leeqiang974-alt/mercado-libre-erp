@@ -30,6 +30,7 @@ import {
   deleteDraft,
   getSourceProduct,
   listDrafts,
+  listPublishJobs,
   listStores,
   mirrorDraftImagesToOss,
   previewCbtPublishFromDraft,
@@ -354,6 +355,14 @@ export function CbtGlobalPublishingPanel({
   const [imageZoom, setImageZoom] = useState(1);
   const [aiFeedback, setAiFeedback] = useState<{ field: "title" | "description"; message: string; error: boolean } | null>(null);
   const offersInitializedRef = useRef(false);
+  // Poll handle for async CBT publish execution (worker path).
+  const publishPollTimer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (publishPollTimer.current !== null) {
+      window.clearInterval(publishPollTimer.current);
+      publishPollTimer.current = null;
+    }
+  }, []);
   // API responses contain newly allocated arrays even when the media did not
   // change. Compare their contents so a same-draft refresh cannot be mistaken
   // for a new editor context.
@@ -1104,6 +1113,39 @@ export function CbtGlobalPublishingPanel({
     finally { setBusy(""); }
   }
 
+  function pollPublishJob(jobId: number | null | undefined) {
+    if (!jobId) return;
+    if (publishPollTimer.current !== null) window.clearInterval(publishPollTimer.current);
+    publishPollTimer.current = window.setInterval(async () => {
+      try {
+        const jobs = await listPublishJobs(200, 0);
+        const job = jobs.find((candidate) => candidate.id === jobId);
+        if (!job) return;
+        const st = String(job.status || "").toLowerCase();
+        if (st === "published" || st === "failed" || st === "blocked") {
+          if (publishPollTimer.current !== null) {
+            window.clearInterval(publishPollTimer.current);
+            publishPollTimer.current = null;
+          }
+          setExecution({
+            status: st,
+            item_id: job.item_id || "",
+            permalink: job.permalink || "",
+            shipping_mode: job.shipping_mode || "",
+            shipping_logistic_type: job.shipping_logistic_type || "",
+            errors: job.errors || [],
+            job_id: job.id,
+          });
+          if (st === "published") setStatus(`发布成功${job.item_id ? `，商品 ${job.item_id}` : ""}。`);
+          else if (st === "blocked") setStatus(`发布结果待核对（任务 #${job.id}），请查看下方逐站点结果。`);
+          else setStatus(`发布失败（任务 #${job.id}），请查看下方错误明细。`);
+        }
+      } catch {
+        // transient polling failure; keep polling on the next tick.
+      }
+    }, 4000);
+  }
+
   async function executePublish() {
     if (busy) return;
     setStatus("正在等待发布确认…");
@@ -1111,12 +1153,15 @@ export function CbtGlobalPublishingPanel({
       setStatus("已取消发布，未向美客多提交请求。");
       return;
     }
-    setBusy("execute"); setExecution(null); setStatus("正在提交跨境发布任务，请等待美客多返回结果…");
+    setBusy("execute"); setExecution(null); setStatus("正在提交跨境发布任务…");
     try {
       const result = await executeCbtPublishFromDraft(draftId);
       setExecution(result);
       const normalizedStatus = String(result.status || "").toLowerCase();
-      if (normalizedStatus === "published") setStatus(`发布成功${result.item_id ? `，商品 ${result.item_id}` : ""}。`);
+      if (normalizedStatus === "pending" || normalizedStatus === "validating") {
+        setStatus(`已提交发布任务${result.job_id ? `（任务 #${result.job_id}）` : ""}，正在创建美客多商品，请稍候…`);
+        pollPublishJob(result.job_id);
+      } else if (normalizedStatus === "published") setStatus(`发布成功${result.item_id ? `，商品 ${result.item_id}` : ""}。`);
       else if (normalizedStatus === "blocked") setStatus(`发布结果待核对${result.job_id ? `（任务 #${result.job_id}）` : ""}，请查看下方逐站点结果。`);
       else setStatus(`发布失败${result.job_id ? `（任务 #${result.job_id}）` : ""}，请查看下方错误明细。`);
     } catch (error) { setStatus(error instanceof Error ? error.message : "跨境发布请求失败，请查看发布任务记录。"); }

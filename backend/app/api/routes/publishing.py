@@ -552,13 +552,14 @@ async def execute_cbt_publish_from_draft(
         store_id=store.id,
         requested_by="operator",
         idempotency_key=idempotency_key,
-        status=PublishJobStatus.VALIDATING,
-        started_at=datetime.now(UTC),
+        status=PublishJobStatus.PENDING,
+        started_at=None,
         request_summary_json={
             "publication_model": "traditional_global",
             "draft_version": draft.content_version,
             "category_id": config.category_id,
             "marketplaces": [offer["site_id"] for offer in payload["sites_to_sell"]],
+            "payload": payload,
         },
     )
     db.add(job)
@@ -572,11 +573,35 @@ async def execute_cbt_publish_from_draft(
         return replay_publish_result(existing)
     db.refresh(job)
 
+    return PublishExecutionResult(status="pending", job_id=job.id)
+
+
+async def execute_cbt_global_publish_job(
+    db: Session,
+    job: PublishJob,
+    token_encryption_key: str,
+) -> PublishExecutionResult:
+    """Execute a queued CBT Global Selling job (worker path).
+
+    The endpoint queues the job with a full payload snapshot in
+    request_summary_json; the publish worker claims PENDING jobs and runs this
+    function to completion. complete_publish_job + audit are handled by the
+    caller so the worker and any other caller stay consistent.
+    """
+    summary = job.request_summary_json or {}
+    payload = summary.get("payload")
+    store = db.get(Store, job.store_id)
+    draft = db.get(ProductDraft, job.product_draft_id)
+    config = get_cbt_listing_config(db, job.product_draft_id)
+    if payload is None or store is None or draft is None:
+        return PublishExecutionResult(
+            status="failed", errors=["cbt_publish_job_payload_missing"]
+        )
     try:
         access_token = await resolve_fresh_store_access_token(
             db=db,
             store=store,
-            encryption_key=settings.token_encryption_key,
+            encryption_key=token_encryption_key,
             oauth_client=create_oauth_client(db),
         )
         if not access_token:
@@ -626,7 +651,7 @@ async def execute_cbt_publish_from_draft(
                             actor_id="cbt_listing_type_fallback",
                             action="cbt_global_publish.premium_downgraded_to_classic",
                             entity_type="product_draft",
-                            entity_id=str(draft.id),
+                            entity_id=str(job.product_draft_id),
                             after={
                                 "parent_item_id": item_id,
                                 "sites": [offer["site_id"] for offer in classic_fallbacks],
@@ -692,24 +717,7 @@ async def execute_cbt_publish_from_draft(
             status="blocked",
             errors=["global_publish_outcome_unknown_manual_reconciliation_required"],
         )
-
-    complete_publish_job(db, job, result)
-    create_audit_event(
-        db=db,
-        actor_type="operator",
-        actor_id="operator",
-        action="cbt_global_publish.executed",
-        entity_type="publish_job",
-        entity_id=str(job.id),
-        after={
-            "product_draft_id": draft.id,
-            "store_id": store.id,
-            "status": result.status,
-            "item_id": result.item_id,
-            "errors": result.errors,
-        },
-    )
-    return result.model_copy(update={"job_id": job.id})
+    return result
 
 
 @dataclass(frozen=True)
