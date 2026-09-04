@@ -1,4 +1,5 @@
 import {
+  Activity,
   ClipboardList,
   FilePenLine,
   Gauge,
@@ -68,6 +69,7 @@ const menuGroups = [
     items: [
       { id: "stores", label: "店铺管理", icon: Store },
       { id: "audit", label: "操作日志", icon: ClipboardList },
+      { id: "diagnostics", label: "系统诊断", icon: Activity },
     ],
   },
 ];

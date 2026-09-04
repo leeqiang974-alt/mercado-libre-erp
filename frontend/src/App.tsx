@@ -6,6 +6,7 @@ import { DraftsPage } from "./pages/DraftsPage";
 import { PublishingPage } from "./pages/PublishingPage";
 import { StoresPage } from "./pages/StoresPage";
 import { AuditPage } from "./pages/AuditPage";
+import { DiagnosticsPage } from "./pages/DiagnosticsPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { OrdersPage } from "./pages/OrdersPage";
 import { InventoryPage } from "./pages/InventoryPage";
@@ -28,6 +29,7 @@ const HASH_PAGE_ALIASES: Record<string, string> = {
   "collection-tasks": "collection-tasks",
   stores: "stores",
   publishing: "publishing",
+  diagnostics: "diagnostics",
 };
 
 function pageFromLocation() {
@@ -216,6 +218,7 @@ export function App() {
       {/* 店铺设置 */}
       {page === "stores" && <StoresPage />}
       {page === "audit" && <AuditPage />}
+      {page === "diagnostics" && <DiagnosticsPage />}
     </Layout>
   );
 }

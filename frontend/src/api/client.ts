@@ -1455,3 +1455,93 @@ function readableProviderError(code: string) {
   return messages[code] ?? "request failed";
 }
 
+// ---- System diagnostics (global problem search) ----
+
+export type DiagnosticsErrorBucket = {
+  kind: string;
+  count: number;
+  sample_draft_ids: number[];
+};
+export type DiagnosticsStaleJob = {
+  job_id: number;
+  draft_id: number;
+  status: string;
+  created_at: string | null;
+  age_seconds: number | null;
+};
+export type DiagnosticsFailure = {
+  job_id: number;
+  draft_id: number;
+  draft_title: string;
+  status: string;
+  errors: string[];
+  created_at: string | null;
+  item_id: string;
+};
+export type DiagnosticsSummary = {
+  days: number;
+  totals: Record<string, number>;
+  top_errors: DiagnosticsErrorBucket[];
+  stale_jobs: DiagnosticsStaleJob[];
+  recent_failures: DiagnosticsFailure[];
+};
+export type DiagnosticJobRecord = {
+  job_id: number;
+  draft_id: number;
+  draft_title: string;
+  status: string;
+  errors: string[];
+  item_id: string;
+  permalink: string;
+  created_at: string | null;
+  completed_at: string | null;
+  started_at: string | null;
+};
+export type DiagnosticsErrorList = {
+  total: number;
+  limit: number;
+  offset: number;
+  items: DiagnosticJobRecord[];
+};
+export type DiagnosticsSearchResults = {
+  drafts: { id: number; title: string; status: string; target_site_id: string; target_category_id: string }[];
+  publish_jobs: { job_id: number; draft_id: number; status: string; errors: string[]; item_id: string; created_at: string | null }[];
+  audit_events: { id: number; action: string; entity_type: string; entity_id: string; actor_id: string; created_at: string | null }[];
+  stores: { id: number; display_name: string; seller_id: string; site_id: string; oauth_status: string }[];
+};
+
+export async function getDiagnosticsSummary(days = 7): Promise<DiagnosticsSummary> {
+  const response = await fetch(`${API_BASE}/api/system/diagnostics/summary?days=${days}`);
+  if (!response.ok) throw await httpError(response);
+  return response.json() as Promise<DiagnosticsSummary>;
+}
+
+export async function listDiagnosticErrors(opts: {
+  status?: string;
+  days?: number;
+  q?: string;
+  draftId?: number;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<DiagnosticsErrorList> {
+  const params = new URLSearchParams();
+  if (opts.status) params.set("status", opts.status);
+  params.set("days", String(opts.days ?? 7));
+  if (opts.q) params.set("q", opts.q);
+  if (opts.draftId) params.set("draft_id", String(opts.draftId));
+  params.set("limit", String(opts.limit ?? 50));
+  params.set("offset", String(opts.offset ?? 0));
+  const response = await fetch(`${API_BASE}/api/system/diagnostics/errors?${params.toString()}`);
+  if (!response.ok) throw await httpError(response);
+  return response.json() as Promise<DiagnosticsErrorList>;
+}
+
+export async function searchDiagnostics(q: string, limit = 20): Promise<DiagnosticsSearchResults> {
+  const response = await fetch(
+    `${API_BASE}/api/system/diagnostics/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+  );
+  if (!response.ok) throw await httpError(response);
+  const data = (await response.json()) as { results: DiagnosticsSearchResults };
+  return data.results;
+}
+

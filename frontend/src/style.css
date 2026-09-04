@@ -2054,3 +2054,28 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .listing-search-result { color:#667085; font-size:11px; margin:4px 0 6px; }
 @media (max-width: 1280px) { .wf-listing-layout { grid-template-columns:220px minmax(0, 1fr); } .wf-editor-main { margin-right:0; } .wf-similar-search { display:none; } }
 @media (max-width: 760px) { .wf-listing-layout { display:block; } .wf-listing-rail { display:none; } .wf-header, .wf-action-bar { align-items:stretch; flex-direction:column; } .wf-action-bar > span { max-width:none; } .wf-action-bar > div { flex-wrap:wrap; } .wf-form-row, .wf-category-line, .wf-sku-row { grid-template-columns:1fr; } .wf-sites { gap:6px; } .wf-editor-main { display:block; } .wf-section { margin-bottom:12px; } }
+
+
+/* ---- System diagnostics page ---- */
+.small { font-size: 12px; }
+.diag-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.diag-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin: 14px 0; }
+.diag-card { border: 1px solid var(--border, #e2e8f0); border-radius: 10px; padding: 10px 12px; background: var(--surface, #fff); }
+.diag-card strong { display: block; font-size: 12px; color: #697586; margin-bottom: 4px; }
+.diag-card .num { font-size: 24px; font-weight: 700; }
+.diag-card .num-warn { font-size: 24px; font-weight: 700; color: #dc2626; }
+.diag-top-errors { list-style: none; padding: 0; margin: 8px 0 16px; display: flex; flex-direction: column; gap: 6px; }
+.diag-top-errors li { display: flex; align-items: baseline; gap: 10px; border-left: 3px solid #f59e0b; background: #fffbeb; padding: 8px 10px; border-radius: 6px; }
+.diag-err-kind { font-weight: 600; }
+.diag-err-count { color: #dc2626; font-weight: 700; white-space: nowrap; }
+.diag-search { display: flex; gap: 8px; margin: 8px 0 12px; }
+.diag-search input[type="search"] { flex: 1; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; }
+.diag-search-results { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; margin-bottom: 18px; }
+.diag-search-results h4 { margin: 10px 0 4px; font-size: 13px; color: #475569; }
+.diag-search-results ul { margin: 0; padding-left: 18px; }
+.diag-search-results li { font-size: 13px; margin: 2px 0; }
+.diag-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0 18px; }
+.diag-table th, .diag-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+.diag-table th { background: #f8fafc; font-weight: 600; color: #475569; }
+.diag-error-list { margin: 0; padding-left: 16px; }
+.diag-error-list li { font-size: 12px; color: #b91c1c; margin: 2px 0; }
