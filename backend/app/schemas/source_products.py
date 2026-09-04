@@ -85,3 +85,6 @@ class SourceVariantDraftCreate(BaseModel):
 
 class SourceVariantCollectionCreate(BaseModel):
     target_site_id: str = "MLM"
+    # Optional whitelist of variant ASINs to enqueue. Empty = all non-selected
+    # variants (backward compatible).
+    variant_asins: list[str] = []

@@ -696,8 +696,11 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .source-variant-heading small { color: #697586; }
 .source-variant-heading .icon-text-button { min-height: 28px; padding: 4px 7px; font-size: 11px; }
 .source-variant-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 150px; overflow-y: auto; margin-top: 5px; }
-.source-variant-list > span { border: 1px solid #d7dee8; display: grid; gap: 1px; min-width: 0; max-width: 100%; padding: 5px 7px; font-size: 11px; }
+.variant-select-all { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #1f2933; cursor: pointer; white-space: nowrap; }
+.variant-select-all input { accent-color: #ea580c; margin: 0; }
+.source-variant-list > span { border: 1px solid #d7dee8; display: grid; gap: 1px; min-width: 0; max-width: 100%; padding: 5px 7px 5px 22px; position: relative; font-size: 11px; }
 .source-variant-list > span.selected { border-color: #ea580c; box-shadow: inset 2px 0 #ea580c; }
+.variant-pick { position: absolute; left: 6px; top: 7px; margin: 0; accent-color: #ea580c; }
 .source-variant-list strong { min-width: 0; font-size: 11px; white-space: normal; overflow-wrap: anywhere; }
 .source-variant-list small { color: #697586; }
 .source-unavailable { margin: 4px 0 0; color: #a33a20; overflow-wrap: anywhere; }

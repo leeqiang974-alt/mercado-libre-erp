@@ -1140,7 +1140,16 @@ def create_source_variant_collection_jobs(
             or asin == selected_source_asin
         )
     selected_asins = {asin for asin, selected in selected_by_asin.items() if selected}
-    variant_asins = [asin for asin, selected in selected_by_asin.items() if not selected]
+    requested_asins = [asin.strip().upper() for asin in (payload.variant_asins or [])]
+    if requested_asins:
+        requested_set = set(requested_asins)
+        variant_asins = [
+            asin
+            for asin, selected in selected_by_asin.items()
+            if not selected and asin in requested_set
+        ]
+    else:
+        variant_asins = [asin for asin, selected in selected_by_asin.items() if not selected]
     if len(variant_asins) > 100:
         raise HTTPException(status_code=422, detail="source_variant_batch_limit_exceeded")
     variant_urls = [

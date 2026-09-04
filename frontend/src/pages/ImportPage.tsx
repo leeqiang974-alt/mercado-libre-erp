@@ -193,6 +193,7 @@ export function ImportPage({
   const [variantDraftIds, setVariantDraftIds] = useState<Record<string, number>>({});
   const [knownVariantJobs, setKnownVariantJobs] = useState<Record<number, CollectionJobRecord>>({});
   const [variantBatchResults, setVariantBatchResults] = useState<Record<string, SourceVariantCollectionBatchResult>>({});
+  const [selectedVariantAsins, setSelectedVariantAsins] = useState<Record<string, string[]>>({});
   const collectionRequestEpoch = useRef(0);
   const knownVariantJobsRef = useRef<Record<number, CollectionJobRecord>>({});
 
@@ -473,6 +474,7 @@ export function ImportPage({
   async function collectMissingSourceVariants(
     sourceProductId: number,
     variantTargetSiteId: string,
+    variantAsins?: string[],
   ) {
     const key = `${sourceProductId}:${variantTargetSiteId}`;
     setBusyAction(`collect-variant-batch-${key}`);
@@ -481,15 +483,42 @@ export function ImportPage({
       const result = await createSourceVariantCollectionJobs(
         sourceProductId,
         variantTargetSiteId,
+        variantAsins,
       );
       setVariantBatchResults((current) => ({ ...current, [key]: result }));
       rememberVariantJobs(result.jobs);
+      setSelectedVariantAsins((current) => ({ ...current, [key]: [] }));
       await refreshCollectionJobs(false);
     } catch (variantError) {
       setError(variantError instanceof Error ? variantError.message : "Failed to collect variants");
     } finally {
       setBusyAction("");
     }
+  }
+
+  function toggleVariantSelection(
+    sourceProductId: number,
+    variantTargetSiteId: string,
+    asin: string,
+    checked: boolean,
+  ) {
+    const key = `${sourceProductId}:${variantTargetSiteId}`;
+    setSelectedVariantAsins((current) => {
+      const selected = new Set(current[key] ?? []);
+      if (checked) selected.add(asin);
+      else selected.delete(asin);
+      return { ...current, [key]: [...selected] };
+    });
+  }
+
+  function toggleAllVariantSelection(
+    sourceProductId: number,
+    variantTargetSiteId: string,
+    asins: string[],
+    checked: boolean,
+  ) {
+    const key = `${sourceProductId}:${variantTargetSiteId}`;
+    setSelectedVariantAsins((current) => ({ ...current, [key]: checked ? asins : [] }));
   }
 
   const isBusy = Boolean(busyAction);
@@ -784,6 +813,20 @@ export function ImportPage({
                 ? `${job.source_product.id}:${job.target_site_id}`
                 : "";
               const variantBatchResult = variantBatchResults[variantBatchKey];
+              const selectedForBatch = new Set(selectedVariantAsins[variantBatchKey] ?? []);
+              const selectableVariants = sourceVariants.filter(
+                (variant) => !variant.selected && !findVariantCollectionJob(
+                  displayedCollectionJobs,
+                  job.source_url,
+                  variant.asin,
+                  job.target_site_id,
+                ),
+              );
+              const allSelectableChecked = selectableVariants.length > 0
+                && selectableVariants.every((variant) => selectedForBatch.has(variant.asin));
+              const selectedCount = sourceVariants.filter(
+                (variant) => selectedForBatch.has(variant.asin),
+              ).length;
               return (
                 <article className={`collection-job ${job.status}`} key={job.id}>
                   <div className={`collection-job-state ${job.status}`}>
@@ -859,12 +902,27 @@ export function ImportPage({
                                   <strong>变体</strong>
                                   <small>{missingVariantCount} 个待采集</small>
                                 </span>
+                                <label className="variant-select-all">
+                                  <input
+                                    type="checkbox"
+                                    checked={allSelectableChecked}
+                                    disabled={isBusy || selectableVariants.length === 0}
+                                    onChange={(event) => void toggleAllVariantSelection(
+                                      job.source_product!.id,
+                                      job.target_site_id,
+                                      selectableVariants.map((variant) => variant.asin),
+                                      event.target.checked,
+                                    )}
+                                  />
+                                  全选
+                                </label>
                                 <button
                                   className="icon-text-button"
-                                  disabled={isBusy || missingVariantCount === 0}
+                                  disabled={isBusy || (selectedCount === 0 && missingVariantCount === 0)}
                                   onClick={() => void collectMissingSourceVariants(
                                     job.source_product!.id,
                                     job.target_site_id,
+                                    selectedCount > 0 ? [...selectedForBatch] : undefined,
                                   )}
                                 >
                                   {busyAction === `collect-variant-batch-${variantBatchKey}` ? (
@@ -872,11 +930,13 @@ export function ImportPage({
                                   ) : (
                                     <ListPlus size={14} />
                                   )}
-                                  {variantBatchResult
-                                      ? `${variantBatchResult.created_count} 个已加入 · ${variantBatchResult.reused_count} 个已有`
-                                      : missingVariantCount > 0
-                                        ? `采集其余 ${missingVariantCount} 个`
-                                        : "所有变体已加入队列"}
+                                  {selectedCount > 0
+                                      ? `生成所选 ${selectedCount} 个草稿`
+                                      : variantBatchResult
+                                          ? `${variantBatchResult.created_count} 个已加入 · ${variantBatchResult.reused_count} 个已有`
+                                          : missingVariantCount > 0
+                                              ? `采集其余 ${missingVariantCount} 个`
+                                              : "所有变体已加入队列"}
                                 </button>
                               </div>
                               <div className="source-variant-list">
@@ -890,6 +950,21 @@ export function ImportPage({
                                   const variantKey = `${job.source_product!.id}:${variant.asin}:${job.target_site_id}`;
                                   return (
                                   <span className={variant.selected ? "selected" : ""} key={variant.asin}>
+                                    {!variant.selected && !variantJob && (
+                                      <input
+                                        type="checkbox"
+                                        className="variant-pick"
+                                        checked={selectedForBatch.has(variant.asin)}
+                                        disabled={isBusy}
+                                        onChange={(event) => toggleVariantSelection(
+                                          job.source_product!.id,
+                                          job.target_site_id,
+                                          variant.asin,
+                                          event.target.checked,
+                                        )}
+                                        aria-label={`选择 ${Object.values(variant.attributes).join(" · ") || variant.asin}`}
+                                      />
+                                    )}
                                     <strong>{Object.values(variant.attributes).join(" · ") || variant.asin}</strong>
                                     <small>{variant.asin}</small>
                                     {!variant.selected && (

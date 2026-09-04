@@ -283,6 +283,58 @@ def test_source_variant_batch_creates_missing_and_reuses_existing_jobs():
         assert db.query(CollectionJob).count() == 2
 
 
+def test_source_variant_batch_honors_variant_asins_subset():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        source = SourceProduct(
+            source_url="https://www.amazon.com.mx/dp/B000TEST01",
+            asin="B000TEST01",
+            raw_status=SourceProductStatus.COLLECTED,
+            variants_json=[
+                {"asin": "B000TEST01", "selected": True},
+                {"asin": "B000TEST02", "selected": False},
+                {"asin": "B000TEST03", "selected": False},
+                {"asin": "B000TEST04", "selected": False},
+            ],
+        )
+        db.add(source)
+        db.commit()
+        source_id = source.id
+
+    # Only the requested non-selected variant is enqueued; unknown and selected
+    # ASINs in the request are ignored.
+    response = client.post(
+        f"/api/imports/source-products/{source_id}/variants/collection-jobs",
+        json={
+            "target_site_id": "MLM",
+            "variant_asins": ["B000TEST03", "b000test99", "B000TEST01"],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["created_count"] == 1
+    assert body["reused_count"] == 0
+    assert [job["source_url"] for job in body["jobs"]] == [
+        "https://amazon.com.mx/dp/B000TEST03",
+    ]
+    with testing_session() as db:
+        assert db.query(CollectionJob).count() == 1
+
+    # An empty variant_asins list keeps the legacy "all non-selected" behaviour.
+    full = client.post(
+        f"/api/imports/source-products/{source_id}/variants/collection-jobs",
+        json={"target_site_id": "MLB", "variant_asins": []},
+    )
+    assert full.status_code == 200
+    assert full.json()["created_count"] == 3
+    assert {job["source_url"] for job in full.json()["jobs"]} == {
+        "https://amazon.com.mx/dp/B000TEST02",
+        "https://amazon.com.mx/dp/B000TEST03",
+        "https://amazon.com.mx/dp/B000TEST04",
+    }
+
+
 def test_collection_job_status_lookup_returns_requested_jobs_and_limits_batch():
     client, testing_session = make_client()
     with testing_session() as db:

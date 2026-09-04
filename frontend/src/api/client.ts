@@ -800,13 +800,17 @@ export type SourceVariantCollectionBatchResult = {
 export async function createSourceVariantCollectionJobs(
   sourceProductId: number,
   targetSiteId: string,
+  variantAsins?: string[],
 ) {
   const response = await fetch(
     `${API_BASE}/api/imports/source-products/${sourceProductId}/variants/collection-jobs`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target_site_id: targetSiteId }),
+      body: JSON.stringify({
+        target_site_id: targetSiteId,
+        variant_asins: variantAsins ?? [],
+      }),
     },
   );
   if (!response.ok) throw await httpError(response);
