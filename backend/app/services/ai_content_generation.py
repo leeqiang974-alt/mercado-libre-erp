@@ -195,7 +195,10 @@ def _validate_generated(value: dict[str, object], source_brand: str = "") -> Gen
         raise ValueError("title must be 1-60 characters")
     if any(ord(char) > 127 for char in title):
         raise ValueError("title must be English")
-    if any(term in title.lower() for term in PROHIBITED_TERMS):
+    if any(
+        re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", title.lower())
+        for term in PROHIBITED_TERMS
+    ):
         raise ValueError("title contains a prohibited marketing term")
     if source_brand.strip() and source_brand.casefold() in title.casefold():
         raise ValueError("title contains the source brand")
@@ -203,7 +206,10 @@ def _validate_generated(value: dict[str, object], source_brand: str = "") -> Gen
         raise ValueError("description must be English")
     if source_brand.strip() and source_brand.casefold() in description.casefold():
         raise ValueError("description contains the source brand")
-    if any(term in description.lower() for term in PROHIBITED_TERMS):
+    if any(
+        re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", description.lower())
+        for term in PROHIBITED_TERMS
+    ):
         raise ValueError("description contains a prohibited marketing term")
     if re.search(r"<[^>]+>|https?://|www\.", description, flags=re.IGNORECASE):
         raise ValueError("description must not contain HTML or URLs")

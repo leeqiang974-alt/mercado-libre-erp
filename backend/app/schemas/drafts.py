@@ -1,3 +1,5 @@
+import re
+
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
@@ -59,7 +61,10 @@ class ProductDraftContentUpdate(BaseModel):
         if any(ord(char) > 127 for char in normalized):
             raise ValueError("title must be in English")
         lowered = normalized.lower()
-        if any(term in lowered for term in MARKETING_TERMS):
+        if any(
+            re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", lowered)
+            for term in MARKETING_TERMS
+        ):
             raise ValueError("title contains a prohibited marketing term")
         return normalized
 
