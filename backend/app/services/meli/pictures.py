@@ -1,5 +1,7 @@
 """Materialize external source pictures into Mercado Libre picture IDs."""
 
+import asyncio
+import re
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
 
@@ -12,9 +14,75 @@ from app.services.meli.client import MercadoLibreClient
 MAX_PICTURE_BYTES = 10 * 1024 * 1024
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/jpg", "image/png"}
 
+# Transient failures (timeouts, connection errors, 408/429/5xx) are retried a
+# few times with backoff before a job is marked failed. Deterministic 4xx
+# rejections (bad image, forbidden source, ...) fail immediately.
+MAX_DOWNLOAD_ATTEMPTS = 3
+MAX_UPLOAD_ATTEMPTS = 3
+
 
 class PictureUploadError(ValueError):
     """A deterministic media problem; safe to correct and retry."""
+
+
+def _retryable_http(status: int) -> bool:
+    return status in (408, 429) or 500 <= status <= 599
+
+
+async def _backoff_delay(attempt: int) -> None:
+    await asyncio.sleep(min(0.5 * (2 ** (attempt - 1)), 4.0))
+
+
+async def _download_with_retry(source: str) -> httpx.Response:
+    """Download a source image, retrying transient network/server failures."""
+    for attempt in range(1, MAX_DOWNLOAD_ATTEMPTS + 1):
+        try:
+            async with httpx.AsyncClient(timeout=40, follow_redirects=True) as downloader:
+                response = await downloader.get(source)
+            response.raise_for_status()
+            return response
+        except httpx.HTTPStatusError as exc:
+            if _retryable_http(exc.response.status_code) and attempt < MAX_DOWNLOAD_ATTEMPTS:
+                await _backoff_delay(attempt)
+                continue
+            raise
+        except httpx.HTTPError as exc:
+            if attempt < MAX_DOWNLOAD_ATTEMPTS:
+                await _backoff_delay(attempt)
+                continue
+            raise
+    raise httpx.TransportError(f"download retries exhausted: {source}")
+
+
+async def _upload_with_retry(
+    client: MercadoLibreClient,
+    *,
+    content: bytes,
+    filename: str,
+    content_type: str,
+) -> dict | list:
+    """Upload a normalized image to Mercado Libre, retrying transient failures.
+
+    A lost response after the server actually stored the picture would create a
+    second (orphan) picture id on retry; that is harmless and preferable to a
+    job failing because of a transient 5xx/timeout.
+    """
+    for attempt in range(1, MAX_UPLOAD_ATTEMPTS + 1):
+        try:
+            return await client.upload_picture(
+                content=content, filename=filename, content_type=content_type
+            )
+        except httpx.HTTPStatusError as exc:
+            if _retryable_http(exc.response.status_code) and attempt < MAX_UPLOAD_ATTEMPTS:
+                await _backoff_delay(attempt)
+                continue
+            raise
+        except httpx.HTTPError as exc:
+            if attempt < MAX_UPLOAD_ATTEMPTS:
+                await _backoff_delay(attempt)
+                continue
+            raise
+    raise httpx.TransportError("upload retries exhausted")
 
 
 async def materialize_global_picture_sources(
@@ -41,9 +109,7 @@ async def materialize_global_picture_sources(
     ids_by_source: dict[str, str] = {}
     for source in dict.fromkeys(sources):
         try:
-            async with httpx.AsyncClient(timeout=40, follow_redirects=True) as downloader:
-                response = await downloader.get(source)
-            response.raise_for_status()
+            response = await _download_with_retry(source)
             content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
             if content_type not in ALLOWED_CONTENT_TYPES:
                 raise PictureUploadError(f"图片格式不支持（{content_type or '未知格式'}）")
@@ -58,8 +124,8 @@ async def materialize_global_picture_sources(
             source_name = PurePosixPath(urlparse(source).path).name or "listing-image.jpg"
             source_stem = PurePosixPath(source_name).stem or "listing-image"
             filename = f"{source_stem}.jpg" if normalized_type == "image/jpeg" else source_name
-            uploaded = await client.upload_picture(
-                content=image_data, filename=filename, content_type=normalized_type
+            uploaded = await _upload_with_retry(
+                client, content=image_data, filename=filename, content_type=normalized_type
             )
             picture_id = str(uploaded.get("id", "")).strip() if isinstance(uploaded, dict) else ""
             if not picture_id:
@@ -91,10 +157,15 @@ async def materialize_global_picture_sources(
 
 
 def _upload_error_detail(response: httpx.Response) -> str:
-    """Keep a concise Mercado Libre error reason without persisting raw bodies."""
+    """Keep a concise Mercado Libre / edge error reason without persisting raw bodies."""
     try:
         payload = response.json()
     except ValueError:
+        # Non-JSON body (e.g. an OSS/edge error page): keep a short readable hint.
+        text = (response.text or "").strip()
+        match = re.search(r"<Message>([^<]+)</Message>", text)
+        if match:
+            return f"：{match.group(1).strip()[:160]}"
         return ""
     if not isinstance(payload, dict):
         return ""
