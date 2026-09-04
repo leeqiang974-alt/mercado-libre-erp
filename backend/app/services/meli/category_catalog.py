@@ -69,7 +69,7 @@ async def complete_category_catalog_translations(
                     unresolved.add(original)
         payload["nodes"] = nodes
         payload["translation_version"] = 5
-        payload["translated_by"] = "deepseek+local"
+        payload["translated_by"] = "agnes+local"
         payload["translation_complete"] = not unresolved
         payload["translation_unresolved_count"] = len(unresolved)
         payload["updated_at"] = datetime.now(UTC).isoformat()
@@ -265,7 +265,7 @@ async def sync_category_catalog(
         "site": site,
         "complete": not queue,
         "translation_version": 4,
-        "translated_by": "deepseek+local" if api_key else "local_fallback",
+        "translated_by": "agnes+local" if api_key else "local_fallback",
         "updated_at": datetime.now(UTC).isoformat(),
         "nodes": nodes,
     }

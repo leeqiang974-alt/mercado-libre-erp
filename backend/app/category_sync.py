@@ -29,9 +29,9 @@ async def run(store_id: int) -> None:
             db,
             create_meli_client(token),
             "CBT",
-            settings.deepseek_api_key,
-            settings.deepseek_base_url,
-            settings.deepseek_model,
+            settings.agnes_api_key,
+            settings.agnes_base_url,
+            settings.agnes_model,
         )
         print({
             "site": "CBT",

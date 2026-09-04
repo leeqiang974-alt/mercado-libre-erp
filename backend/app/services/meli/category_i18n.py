@@ -11,6 +11,11 @@ import asyncio
 import httpx
 
 
+def _normalize_name(value: object) -> str:
+    """Lowercase and collapse whitespace for AI key matching."""
+    return " ".join(str(value or "").lower().split())
+
+
 def has_chinese(value: object) -> bool:
     return any("\u4e00" <= char <= "\u9fff" for char in str(value or ""))
 
@@ -248,9 +253,14 @@ async def translate_category_names_with_ai(
             cleaned = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", str(raw).strip(), flags=re.IGNORECASE)
             parsed = json.loads(cleaned)
             if isinstance(parsed, dict):
+                # The provider may drift key casing/whitespace. Match normalized
+                # keys so a translation never silently drops and leaves English.
                 for key, value in parsed.items():
-                    if key in result and isinstance(value, str) and has_chinese(value):
-                        result[key] = " ".join(value.split()).strip()
+                    if not (isinstance(value, str) and has_chinese(value)):
+                        continue
+                    norm = _normalize_name(key)
+                    for target in [k for k in result if _normalize_name(k) == norm]:
+                        result[target] = " ".join(value.split()).strip()
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError):
         pass
     return result

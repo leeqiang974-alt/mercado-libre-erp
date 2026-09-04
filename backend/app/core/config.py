@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com/v1"
     deepseek_model: str = "deepseek-v4-flash"
+    agnes_api_key: str = ""
+    agnes_base_url: str = "https://apihub.agnes-ai.com/v1"
+    agnes_model: str = "agnes-2.5-flash"
     content_generation_provider: str = "deepseek"
     ai_content_generation_timeout_seconds: int = 90
     alibaba_1688_app_key: str = ""

@@ -299,7 +299,7 @@ async def get_cbt_category_predictions(
         })
     names = [str(item.get("category_name") or item.get("domain_name") or "") for item in predictions]
     names += [str(item.get("parent_path") or "") for item in predictions]
-    translations = await translate_category_names_with_ai(names, settings.deepseek_api_key, settings.deepseek_base_url, settings.deepseek_model)
+    translations = await translate_category_names_with_ai(names, settings.agnes_api_key, settings.agnes_base_url, settings.agnes_model)
     for item in predictions:
         item["category_name_zh"] = translations.get(str(item.get("category_name") or item.get("domain_name") or ""), item.get("category_name_zh", ""))
         item["domain_name_zh"] = translations.get(str(item.get("domain_name") or ""), item.get("domain_name_zh", ""))
@@ -327,7 +327,7 @@ async def sync_cbt_category_cache(
             raise HTTPException(status_code=409, detail="Store access token is unavailable.")
         payload = await sync_category_catalog(
             db, create_meli_client(access_token), "CBT",
-            settings.deepseek_api_key, settings.deepseek_base_url, settings.deepseek_model,
+            settings.agnes_api_key, settings.agnes_base_url, settings.agnes_model,
         )
         return {
             "store_id": store.id,
@@ -377,11 +377,11 @@ async def get_cbt_category_tree(
             if not isinstance(detail, dict):
                 raise ValueError("invalid_category_response")
             translated = await translate_category_payload_names(
-                detail, settings.deepseek_api_key, settings.deepseek_base_url, settings.deepseek_model
+                detail, settings.agnes_api_key, settings.agnes_base_url, settings.agnes_model
             )
             translated_children = await translate_category_payload_names(
                 {"children": detail.get("children_categories", [])},
-                settings.deepseek_api_key, settings.deepseek_base_url, settings.deepseek_model,
+                settings.agnes_api_key, settings.agnes_base_url, settings.agnes_model,
             )
             payload = {
                 "category": translated,
@@ -404,7 +404,7 @@ async def get_cbt_category_tree(
             for child in roots if isinstance(child, dict)
         ],
         "translation_version": 3,
-    }, settings.deepseek_api_key, settings.deepseek_base_url, settings.deepseek_model)
+    }, settings.agnes_api_key, settings.agnes_base_url, settings.agnes_model)
     upsert_cached_metadata(db, cache_key, {**payload, "site_id": "CBT", "translation_version": 3})
     return {**payload, "store_id": store.id, "source": "mercado_libre_api"}
 
