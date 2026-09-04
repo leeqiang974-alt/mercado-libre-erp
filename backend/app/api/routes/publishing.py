@@ -1,4 +1,5 @@
 import asyncio
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
@@ -50,7 +51,10 @@ from app.services.meli.publisher import (
     validate_publish_request,
     validate_store_delivery,
 )
-from app.services.meli.payload_builder import build_cbt_global_item_payload
+from app.services.meli.payload_builder import (
+    build_cbt_global_item_payload,
+    build_cbt_user_product_payload,
+)
 from app.services.meli.listing_type_validation import validate_store_category_listing_type
 from app.services.meli.shipping import find_non_full_shipping_selection
 from app.services.meli.token_vault import resolve_fresh_store_access_token
@@ -460,7 +464,7 @@ async def execute_cbt_publish_from_draft(
         "sites_to_sell": config.sites_to_sell_json or [],
     }
     try:
-        payload = build_cbt_global_item_payload(
+        traditional_payload = build_cbt_global_item_payload(
             ProductDraftCreate(
                 title=draft.title,
                 description=draft.description,
@@ -477,14 +481,38 @@ async def execute_cbt_publish_from_draft(
     except ValueError as exc:
         return PublishExecutionResult(status="blocked", errors=[str(exc)])
 
+    # Build the User Products (UP Siteless) variant of the same draft so the
+    # publish worker can pick the correct model at execution time from the
+    # seller's current tags. A strict build failure is recorded (not fatal) so
+    # a traditional publish still works; UP accounts get a clear error instead.
+    user_product_payload = None
+    user_product_build_error = None
+    try:
+        user_product_payload = build_cbt_user_product_payload(
+            ProductDraftCreate(
+                title=draft.title,
+                description=draft.description,
+                brand=draft.brand,
+                target_site_id="CBT",
+                target_category_id=config.category_id,
+                price=config.price_usd,
+                currency="USD",
+                stock=config.available_quantity,
+                image_urls=draft.image_urls_json or [],
+            ),
+            CbtListingConfigUpsert.model_validate(raw_config),
+        )
+    except ValueError as exc:
+        user_product_build_error = str(exc)
+
     idempotency_key = hashlib.sha256(
         json.dumps(
             {
-                "model": "traditional_global",
+                "model": "cbt_global_auto",
                 "draft_id": draft.id,
                 "draft_version": draft.content_version,
                 "store_id": store.id,
-                "payload": payload,
+                "payload": traditional_payload,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -555,11 +583,13 @@ async def execute_cbt_publish_from_draft(
         status=PublishJobStatus.PENDING,
         started_at=None,
         request_summary_json={
-            "publication_model": "traditional_global",
+            "publication_model": "auto",
             "draft_version": draft.content_version,
             "category_id": config.category_id,
-            "marketplaces": [offer["site_id"] for offer in payload["sites_to_sell"]],
-            "payload": payload,
+            "marketplaces": [offer["site_id"] for offer in traditional_payload["sites_to_sell"]],
+            "payload": traditional_payload,
+            "user_product_payload": user_product_payload,
+            "user_product_build_error": user_product_build_error,
         },
     )
     db.add(job)
@@ -589,11 +619,12 @@ async def execute_cbt_global_publish_job(
     caller so the worker and any other caller stay consistent.
     """
     summary = job.request_summary_json or {}
-    payload = summary.get("payload")
+    traditional_payload = summary.get("payload")
+    user_product_payload = summary.get("user_product_payload")
     store = db.get(Store, job.store_id)
     draft = db.get(ProductDraft, job.product_draft_id)
     config = get_cbt_listing_config(db, job.product_draft_id)
-    if payload is None or store is None or draft is None:
+    if traditional_payload is None or store is None or draft is None:
         return PublishExecutionResult(
             status="failed", errors=["cbt_publish_job_payload_missing"]
         )
@@ -611,94 +642,155 @@ async def execute_cbt_global_publish_job(
             user = await client.get("/users/me")
             user_data = user if isinstance(user, dict) else {}
             tags = user_data.get("tags", [])
-            if (
-                str(user_data.get("site_id", "")).upper() != "CBT"
-                or "user_products_seller" in tags
-            ):
+            if str(user_data.get("site_id", "")).upper() != "CBT":
                 result = PublishExecutionResult(
                     status="blocked", errors=["traditional_cbt_seller_required"]
                 )
             else:
-                payload = await materialize_global_picture_sources(client, payload)
-                response = await client.post("/global/items", payload)
-                response_data = response if isinstance(response, (dict, list)) else {}
-                item_id, permalink_or_keys = _global_response_item_identity(response_data)
-                classic_fallbacks = _classic_fallback_offers(response_data, payload) if item_id else []
-                if classic_fallbacks:
-                    try:
-                        retry_response = await client.post(
-                            f"/global/items/{item_id}", {"sites_to_sell": classic_fallbacks}
-                        )
-                    except httpx.HTTPStatusError as exc:
-                        retry_response = {
-                            "site_items": [
-                                {
-                                    "site_id": offer["site_id"],
-                                    "logistic_type": "remote",
-                                    "error": {
-                                        "error": "classic_fallback_failed",
-                                        "message": _meli_global_publish_error(exc),
-                                    },
-                                }
-                                for offer in classic_fallbacks
-                            ]
-                        }
-                    response_data = _merge_global_site_items(response_data, retry_response)
-                    if _record_classic_fallback(config, classic_fallbacks):
-                        create_audit_event(
-                            db=db,
-                            actor_type="system",
-                            actor_id="cbt_listing_type_fallback",
-                            action="cbt_global_publish.premium_downgraded_to_classic",
-                            entity_type="product_draft",
-                            entity_id=str(job.product_draft_id),
-                            after={
-                                "parent_item_id": item_id,
-                                "sites": [offer["site_id"] for offer in classic_fallbacks],
-                                "from_listing_type_id": "gold_pro",
-                                "to_listing_type_id": "gold_special",
-                            },
-                            commit=False,
-                        )
-                permalink = (
-                    permalink_or_keys
-                    if item_id
-                    else str(response_data.get("permalink", "")).strip()
-                    if isinstance(response_data, dict)
-                    else ""
+                is_up_seller = "user_product_seller" in tags
+                publication_model = (
+                    os.environ.get("CBT_PUBLICATION_MODEL", "auto").strip().lower()
                 )
-                response_details = _global_response_details(response_data)
-                if classic_fallbacks:
-                    response_details["listing_type_fallbacks"] = [
-                        {"site_id": offer["site_id"], "from": "gold_pro", "to": "gold_special"}
-                        for offer in classic_fallbacks
-                    ]
-                result = (
-                    PublishExecutionResult(
-                        status="published",
-                        item_id=item_id,
-                        permalink=permalink,
-                        response_details=response_details,
-                    )
-                    if item_id
-                    else PublishExecutionResult(
-                        status="failed",
-                        permalink=permalink,
-                        response_details=_global_response_details(response_data),
-                        errors=_global_response_site_errors(response_data),
-                    )
-                    if _global_response_site_errors(response_data)
-                    else PublishExecutionResult(
-                        status="blocked",
-                        permalink=permalink,
-                        response_details=_global_response_details(response_data),
-                        errors=[
-                            "global_publish_outcome_unknown_manual_reconciliation_required",
-                            "meli_publish_response_missing_item_id",
-                            f"meli_global_response_keys:{permalink_or_keys or 'non_object'}",
-                        ],
-                    )
+                if publication_model not in {"auto", "traditional", "user_product"}:
+                    publication_model = "auto"
+                use_up_model = (
+                    publication_model == "user_product"
+                    or (publication_model == "auto" and is_up_seller)
                 )
+                if use_up_model:
+                    if not user_product_payload:
+                        build_error = summary.get("user_product_build_error")
+                        result = PublishExecutionResult(
+                            status="failed",
+                            errors=[
+                                "cbt_user_product_payload_unavailable:"
+                                + (str(build_error) if build_error else "missing_user_product_payload")
+                            ],
+                        )
+                    else:
+                        up_payload = await materialize_global_picture_sources(
+                            client, user_product_payload
+                        )
+                        up_response = await client.post("/global/items", up_payload)
+                        up_data = up_response if isinstance(up_response, (dict, list)) else {}
+                        up_item_id, up_permalink_or_keys = _global_response_item_identity(up_data)
+                        up_permalink = (
+                            up_permalink_or_keys
+                            if up_item_id
+                            else str(up_data.get("permalink", "")).strip()
+                            if isinstance(up_data, dict)
+                            else ""
+                        )
+                        up_details = _global_response_details(up_data)
+                        up_details["publication_model"] = "user_product"
+                        if up_item_id:
+                            result = PublishExecutionResult(
+                                status="published",
+                                item_id=up_item_id,
+                                permalink=up_permalink,
+                                response_details=up_details,
+                            )
+                        elif _global_response_site_errors(up_data):
+                            result = PublishExecutionResult(
+                                status="failed",
+                                permalink=up_permalink,
+                                response_details=up_details,
+                                errors=_global_response_site_errors(up_data),
+                            )
+                        else:
+                            result = PublishExecutionResult(
+                                status="blocked",
+                                permalink=up_permalink,
+                                response_details=up_details,
+                                errors=[
+                                    "global_publish_outcome_unknown_manual_reconciliation_required",
+                                    "meli_publish_response_missing_item_id",
+                                    f"meli_global_response_keys:{up_permalink_or_keys or 'non_object'}",
+                                ],
+                            )
+                else:
+                    payload = traditional_payload
+                    payload = await materialize_global_picture_sources(client, payload)
+                    response = await client.post("/global/items", payload)
+                    response_data = response if isinstance(response, (dict, list)) else {}
+                    item_id, permalink_or_keys = _global_response_item_identity(response_data)
+                    classic_fallbacks = _classic_fallback_offers(response_data, payload) if item_id else []
+                    if classic_fallbacks:
+                        try:
+                            retry_response = await client.post(
+                                f"/global/items/{item_id}", {"sites_to_sell": classic_fallbacks}
+                            )
+                        except httpx.HTTPStatusError as exc:
+                            retry_response = {
+                                "site_items": [
+                                    {
+                                        "site_id": offer["site_id"],
+                                        "logistic_type": "remote",
+                                        "error": {
+                                            "error": "classic_fallback_failed",
+                                            "message": _meli_global_publish_error(exc),
+                                        },
+                                    }
+                                    for offer in classic_fallbacks
+                                ]
+                            }
+                        response_data = _merge_global_site_items(response_data, retry_response)
+                        if _record_classic_fallback(config, classic_fallbacks):
+                            create_audit_event(
+                                db=db,
+                                actor_type="system",
+                                actor_id="cbt_listing_type_fallback",
+                                action="cbt_global_publish.premium_downgraded_to_classic",
+                                entity_type="product_draft",
+                                entity_id=str(job.product_draft_id),
+                                after={
+                                    "parent_item_id": item_id,
+                                    "sites": [offer["site_id"] for offer in classic_fallbacks],
+                                    "from_listing_type_id": "gold_pro",
+                                    "to_listing_type_id": "gold_special",
+                                },
+                                commit=False,
+                            )
+                    permalink = (
+                        permalink_or_keys
+                        if item_id
+                        else str(response_data.get("permalink", "")).strip()
+                        if isinstance(response_data, dict)
+                        else ""
+                    )
+                    response_details = _global_response_details(response_data)
+                    response_details["publication_model"] = "traditional"
+                    if classic_fallbacks:
+                        response_details["listing_type_fallbacks"] = [
+                            {"site_id": offer["site_id"], "from": "gold_pro", "to": "gold_special"}
+                            for offer in classic_fallbacks
+                        ]
+                    result = (
+                        PublishExecutionResult(
+                            status="published",
+                            item_id=item_id,
+                            permalink=permalink,
+                            response_details=response_details,
+                        )
+                        if item_id
+                        else PublishExecutionResult(
+                            status="failed",
+                            permalink=permalink,
+                            response_details=_global_response_details(response_data),
+                            errors=_global_response_site_errors(response_data),
+                        )
+                        if _global_response_site_errors(response_data)
+                        else PublishExecutionResult(
+                            status="blocked",
+                            permalink=permalink,
+                            response_details=_global_response_details(response_data),
+                            errors=[
+                                "global_publish_outcome_unknown_manual_reconciliation_required",
+                                "meli_publish_response_missing_item_id",
+                                f"meli_global_response_keys:{permalink_or_keys or 'non_object'}",
+                            ],
+                        )
+                    )
     except PictureUploadError as exc:
         result = PublishExecutionResult(status="failed", errors=[f"图片上传失败：{exc}"])
     except httpx.HTTPStatusError as exc:

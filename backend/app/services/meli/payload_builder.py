@@ -221,3 +221,70 @@ def build_cbt_global_item_payload(
         "sale_terms": [term.model_dump(exclude_none=True) for term in config.sale_terms],
         "sites_to_sell": sites_to_sell,
     }
+
+
+def build_cbt_user_product_payload(
+    draft: ProductDraftCreate,
+    config: CbtListingConfigUpsert,
+) -> dict:
+    """Build a User Products (UP Siteless) /global/items request body.
+
+    Accounts carrying the ``user_product_seller`` tag must publish through the
+    User Products model: Mercado Libre derives each marketplace title from
+    ``family_name`` + variation attributes, so a root ``title`` and the
+    traditional ``variations`` array must NOT be sent (a 400 otherwise).
+    Pictures are uploaded first by materialize_global_picture_sources and sent
+    as IDs here, matching the UP Siteless requirement.
+    """
+    if not config.category_id.startswith("CBT"):
+        raise ValueError("Global Selling category ID must start with CBT.")
+    if not config.family_name.strip():
+        raise ValueError("family_name is required for a User Products listing.")
+    if not config.description.strip():
+        raise ValueError("Description is required.")
+    if config.price_usd <= 0:
+        raise ValueError("USD price must be greater than zero.")
+    if config.available_quantity < 1:
+        raise ValueError("Available quantity must be at least one.")
+    if not config.sites_to_sell:
+        raise ValueError("At least one Remote marketplace is required.")
+
+    attributes = _normalize_cbt_attributes(
+        [attribute.model_dump(exclude_none=True) for attribute in config.attributes]
+    )
+    attribute_ids = {str(attribute.get("id", "")).upper() for attribute in attributes}
+    if "ITEM_CONDITION" not in attribute_ids:
+        raise ValueError("Verified ITEM_CONDITION attribute is required.")
+    missing_shipping = CBT_REQUIRED_SHIPPING_ATTRIBUTES - attribute_ids
+    if missing_shipping:
+        raise ValueError(
+            "CBT package attributes are required: " + ", ".join(sorted(missing_shipping))
+        )
+    if "SELLER_SKU" not in attribute_ids:
+        raise ValueError("SELLER_SKU attribute is required.")
+
+    default_pictures = list(draft.image_urls or [])
+    if not default_pictures:
+        raise ValueError("At least one picture is required.")
+    if len(default_pictures) > MAX_PRODUCT_PICTURES:
+        raise ValueError("A Mercado Libre Global Selling listing can contain at most 12 pictures.")
+
+    # UP Siteless sends per-marketplace sales conditions (logistic_type) only;
+    # price/quantity live at the UP root via global_net_proceeds.
+    sites_to_sell = [
+        {"site_id": offer.site_id, "logistic_type": "remote"}
+        for offer in config.sites_to_sell
+    ]
+
+    return {
+        "family_name": config.family_name,
+        "category_id": config.category_id,
+        "currency_id": "USD",
+        "global_net_proceeds": config.price_usd,
+        "available_quantity": config.available_quantity,
+        "description": {"plain_text": config.description},
+        "pictures": [{"source": url} for url in default_pictures],
+        "attributes": attributes,
+        "sale_terms": [term.model_dump(exclude_none=True) for term in config.sale_terms],
+        "sites_to_sell": sites_to_sell,
+    }

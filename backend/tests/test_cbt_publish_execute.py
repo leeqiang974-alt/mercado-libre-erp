@@ -239,7 +239,7 @@ def test_cbt_execute_queues_global_item_and_replays_idempotently(monkeypatch):
     try:
         job = db.query(PublishJob).filter(PublishJob.id == 1).one()
         summary = job.request_summary_json or {}
-        assert summary["publication_model"] == "traditional_global"
+        assert summary["publication_model"] == "auto"
         assert summary["payload"]["sites_to_sell"][0]["pictures"] == [
             {"source": "https://example.com/source.jpg"}
         ]
@@ -338,3 +338,119 @@ def test_cbt_global_publish_job_executes_queued_payload(monkeypatch):
     finally:
         generator.close()
 
+
+def test_cbt_global_publish_job_uses_user_product_model_for_up_seller(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    class FakeUpClient:
+        def __init__(self, access_token: str):
+            assert access_token == "access-token"
+
+        async def get(self, path: str):
+            assert path == "/users/me"
+            return {
+                "id": 2942677449,
+                "site_id": "CBT",
+                "tags": ["user_product_seller", "normal"],
+            }
+
+        async def post(self, path: str, payload: dict):
+            calls.append((path, payload))
+            return {"id": "CBT9000001", "permalink": "https://www.mercadolibre.com/cbt/CBT9000001"}
+
+    async def fake_token(**kwargs):
+        return "access-token"
+
+    async def keep_test_picture_sources(_client, payload):
+        return payload
+
+    monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing, "MercadoLibreClient", FakeUpClient)
+    monkeypatch.setattr(publishing, "resolve_fresh_store_access_token", fake_token)
+    monkeypatch.setattr(publishing, "materialize_global_picture_sources", keep_test_picture_sources)
+    client = make_client()
+
+    generator = app.dependency_overrides[get_db]()
+    db = next(generator)
+    try:
+        queued = client.post(
+            "/api/publishing/cbt/execute-from-draft",
+            json={"product_draft_id": 1, "acknowledge_publish": True},
+        )
+        assert queued.json()["status"] == "pending"
+        job = db.query(PublishJob).filter(PublishJob.id == queued.json()["job_id"]).one()
+        assert job.request_summary_json.get("publication_model") == "auto"
+        assert job.request_summary_json.get("user_product_payload")
+
+        result = asyncio.run(
+            publishing.execute_cbt_global_publish_job(
+                db=db, job=job, token_encryption_key="test-secret"
+            )
+        )
+
+        assert result.status == "published"
+        assert result.item_id == "CBT9000001"
+        assert len(calls) == 1
+        assert calls[0][0] == "/global/items"
+        up_payload = calls[0][1]
+        assert "title" not in up_payload
+        assert "variations" not in up_payload
+        assert up_payload["family_name"] == "Silicone mold family"
+        assert up_payload["global_net_proceeds"] == 9.99
+        assert up_payload["sites_to_sell"] == [{"site_id": "MLM", "logistic_type": "remote"}]
+    finally:
+        generator.close()
+
+
+def test_cbt_global_publish_job_forced_traditional_ignores_up_tag(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    class FakeUpTaggedClient:
+        def __init__(self, access_token: str):
+            assert access_token == "access-token"
+
+        async def get(self, path: str):
+            return {"id": 2942677449, "site_id": "CBT", "tags": ["user_product_seller"]}
+
+        async def post(self, path: str, payload: dict):
+            calls.append((path, payload))
+            return {"id": "CBT8000001", "permalink": "https://www.mercadolibre.com/cbt/CBT8000001"}
+
+    async def fake_token(**kwargs):
+        return "access-token"
+
+    async def keep_test_picture_sources(_client, payload):
+        return payload
+
+    monkeypatch.setenv("CBT_PUBLICATION_MODEL", "traditional")
+    monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
+    monkeypatch.setattr(publishing.settings, "token_encryption_key", "test-secret")
+    monkeypatch.setattr(publishing, "MercadoLibreClient", FakeUpTaggedClient)
+    monkeypatch.setattr(publishing, "resolve_fresh_store_access_token", fake_token)
+    monkeypatch.setattr(publishing, "materialize_global_picture_sources", keep_test_picture_sources)
+    client = make_client()
+
+    generator = app.dependency_overrides[get_db]()
+    db = next(generator)
+    try:
+        queued = client.post(
+            "/api/publishing/cbt/execute-from-draft",
+            json={"product_draft_id": 1, "acknowledge_publish": True},
+        )
+        job = db.query(PublishJob).filter(PublishJob.id == queued.json()["job_id"]).one()
+        result = asyncio.run(
+            publishing.execute_cbt_global_publish_job(
+                db=db, job=job, token_encryption_key="test-secret"
+            )
+        )
+        assert result.status == "published"
+        assert len(calls) == 1
+        assert calls[0][0] == "/global/items"
+        # Traditional model keeps title + per-marketplace pictures.
+        assert calls[0][1]["title"] == "Reusable Silicone Mold"
+        assert calls[0][1]["sites_to_sell"][0]["pictures"] == [
+            {"source": "https://example.com/source.jpg"}
+        ]
+    finally:
+        generator.close()
