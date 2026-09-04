@@ -15,7 +15,7 @@ from app.main import app
 from app.models.cbt_listing_config import CbtListingConfig
 from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.product_draft import ProductDraft
-from app.models.publish_job import PublishJob
+from app.models.publish_job import PublishJob, PublishJobStatus
 from app.models.product_draft_approval import ProductDraftApproval
 from app.models.registry import import_all_models
 from app.models.review_result import ReviewDecision, ReviewResult
@@ -452,5 +452,211 @@ def test_cbt_global_publish_job_forced_traditional_ignores_up_tag(monkeypatch):
         assert calls[0][1]["sites_to_sell"][0]["pictures"] == [
             {"source": "https://example.com/source.jpg"}
         ]
+    finally:
+        generator.close()
+
+
+def test_cbt_family_drafts_lists_same_family_siblings(monkeypatch):
+    client = make_client()
+    generator = app.dependency_overrides[get_db]()
+    db = next(generator)
+    try:
+        sibling = ProductDraft(
+            title="Silicone Mold Blue",
+            description="Blue variant.",
+            target_site_id="CBT",
+            target_category_id="CBT432923",
+            price=10.99,
+            currency="USD",
+            stock=8,
+            image_urls_json=["https://example.com/blue.jpg"],
+            source_variant_asin="B000TESTBLU",
+            source_variant_attributes_json={"COLOR": "Blue"},
+            content_version=1,
+        )
+        db.add(sibling)
+        db.flush()
+        db.add(
+            CbtListingConfig(
+                product_draft_id=sibling.id,
+                store_id=1,
+                category_id="CBT432923",
+                family_name="Silicone mold family",
+                global_title="Silicone Mold Blue",
+                description=sibling.description,
+                price_usd=10.99,
+                available_quantity=8,
+                attributes_json=[
+                    {"id": "ITEM_CONDITION", "value_name": "New"},
+                    {"id": "SELLER_SKU", "value_name": "SKU-BLU"},
+                    {"id": "COLOR", "value_name": "Blue"},
+                    {"id": "PACKAGE_HEIGHT", "value_name": "5 cm"},
+                    {"id": "PACKAGE_LENGTH", "value_name": "10 cm"},
+                    {"id": "PACKAGE_WIDTH", "value_name": "8 cm"},
+                    {"id": "PACKAGE_WEIGHT", "value_name": "100 g"},
+                ],
+                sale_terms_json=[],
+                sites_to_sell_json=[
+                    {
+                        "site_id": "MLM",
+                        "title": "Molde azul",
+                        "listing_type_id": "gold_special",
+                        "logistic_type": "remote",
+                    }
+                ],
+                draft_content_version=1,
+            )
+        )
+        db.commit()
+        sibling_id = sibling.id
+
+        family = client.get(f"/api/publishing/cbt/family-drafts/1")
+        assert family.status_code == 200
+        body = family.json()
+        assert body["family_name"] == "Silicone mold family"
+        ids = [item["product_draft_id"] for item in body["drafts"]]
+        assert 1 in ids and sibling_id in ids
+        blue = next(item for item in body["drafts"] if item["product_draft_id"] == sibling_id)
+        assert blue["variant_attributes"]["COLOR"] == "Blue"
+    finally:
+        generator.close()
+
+
+def test_cbt_family_publish_queues_job_per_draft(monkeypatch):
+    monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
+    client = make_client()
+    generator = app.dependency_overrides[get_db]()
+    db = next(generator)
+    try:
+        sibling = ProductDraft(
+            title="Silicone Mold Blue",
+            description="Blue variant.",
+            target_site_id="CBT",
+            target_category_id="CBT432923",
+            price=10.99,
+            currency="USD",
+            stock=8,
+            image_urls_json=["https://example.com/blue.jpg"],
+            content_version=1,
+        )
+        db.add(sibling)
+        db.flush()
+        db.add(
+            CbtListingConfig(
+                product_draft_id=sibling.id,
+                store_id=1,
+                category_id="CBT432923",
+                family_name="Silicone mold family",
+                global_title="Silicone Mold Blue",
+                description=sibling.description,
+                price_usd=10.99,
+                available_quantity=8,
+                attributes_json=[
+                    {"id": "ITEM_CONDITION", "value_name": "New"},
+                    {"id": "SELLER_SKU", "value_name": "SKU-BLU"},
+                    {"id": "COLOR", "value_name": "Blue"},
+                    {"id": "PACKAGE_HEIGHT", "value_name": "5 cm"},
+                    {"id": "PACKAGE_LENGTH", "value_name": "10 cm"},
+                    {"id": "PACKAGE_WIDTH", "value_name": "8 cm"},
+                    {"id": "PACKAGE_WEIGHT", "value_name": "100 g"},
+                ],
+                sale_terms_json=[],
+                sites_to_sell_json=[
+                    {
+                        "site_id": "MLM",
+                        "title": "Molde azul",
+                        "listing_type_id": "gold_special",
+                        "logistic_type": "remote",
+                    }
+                ],
+                draft_content_version=1,
+            )
+        )
+        db.commit()
+        sibling_id = sibling.id
+
+        result = client.post(
+            "/api/publishing/cbt/execute-from-drafts",
+            json={"product_draft_ids": [1, sibling_id], "acknowledge_publish": True},
+        )
+        assert result.status_code == 200
+        body = result.json()
+        assert body["status"] == "queued"
+        assert body["family_name"] == "Silicone mold family"
+        assert body["queued_count"] == 2
+        assert len(body["jobs"]) == 2
+        assert body["errors"] == []
+        job_ids = [job["job_id"] for job in body["jobs"]]
+        assert len(set(job_ids)) == 2
+        for job in body["jobs"]:
+            row = db.query(PublishJob).filter(PublishJob.id == job["job_id"]).one()
+            assert row.status == PublishJobStatus.PENDING
+            assert row.request_summary_json.get("user_product_payload")
+            assert row.request_summary_json.get("payload")
+    finally:
+        generator.close()
+
+
+def test_cbt_family_publish_rejects_mismatched_family_names(monkeypatch):
+    monkeypatch.setattr(publishing.settings, "allow_live_publish", True)
+    client = make_client()
+    generator = app.dependency_overrides[get_db]()
+    db = next(generator)
+    try:
+        sibling = ProductDraft(
+            title="Other Product",
+            description="Different family.",
+            target_site_id="CBT",
+            target_category_id="CBT432923",
+            price=5.0,
+            currency="USD",
+            stock=3,
+            image_urls_json=["https://example.com/other.jpg"],
+            content_version=1,
+        )
+        db.add(sibling)
+        db.flush()
+        db.add(
+            CbtListingConfig(
+                product_draft_id=sibling.id,
+                store_id=1,
+                category_id="CBT432923",
+                family_name="A completely different family",
+                global_title="Other Product",
+                description=sibling.description,
+                price_usd=5.0,
+                available_quantity=3,
+                attributes_json=[
+                    {"id": "ITEM_CONDITION", "value_name": "New"},
+                    {"id": "SELLER_SKU", "value_name": "SKU-OTH"},
+                    {"id": "PACKAGE_HEIGHT", "value_name": "5 cm"},
+                    {"id": "PACKAGE_LENGTH", "value_name": "10 cm"},
+                    {"id": "PACKAGE_WIDTH", "value_name": "8 cm"},
+                    {"id": "PACKAGE_WEIGHT", "value_name": "100 g"},
+                ],
+                sale_terms_json=[],
+                sites_to_sell_json=[
+                    {
+                        "site_id": "MLM",
+                        "title": "Otro",
+                        "listing_type_id": "gold_special",
+                        "logistic_type": "remote",
+                    }
+                ],
+                draft_content_version=1,
+            )
+        )
+        db.commit()
+        sibling_id = sibling.id
+
+        result = client.post(
+            "/api/publishing/cbt/execute-from-drafts",
+            json={"product_draft_ids": [1, sibling_id], "acknowledge_publish": True},
+        )
+        assert result.status_code == 200
+        body = result.json()
+        assert body["status"] == "failed"
+        assert body["errors"][0] == "cbt_family_name_mismatch"
+        assert db.query(PublishJob).filter(PublishJob.status == PublishJobStatus.PENDING).count() == 0
     finally:
         generator.close()

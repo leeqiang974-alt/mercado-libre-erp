@@ -1308,6 +1308,38 @@ export async function executeCbtPublishFromDraft(productDraftId: number) {
   return response.json() as Promise<PublishExecutionResult>;
 }
 
+export type CbtFamilyDraft = {
+  product_draft_id: number;
+  title: string;
+  publication_status: string;
+  variant_attributes: Record<string, string>;
+  price: number | null;
+};
+
+export async function listCbtFamilyDrafts(productDraftId: number) {
+  const response = await fetch(`${API_BASE}/api/publishing/cbt/family-drafts/${productDraftId}`);
+  if (!response.ok) throw await httpError(response);
+  return response.json() as Promise<{ family_name: string; drafts: CbtFamilyDraft[] }>;
+}
+
+export type CbtFamilyPublishResult = {
+  status: string;
+  family_name: string;
+  queued_count: number;
+  jobs: { product_draft_id: number; job_id: number; status: string }[];
+  errors: string[];
+};
+
+export async function executeCbtFamilyPublish(productDraftIds: number[]) {
+  const response = await fetch(`${API_BASE}/api/publishing/cbt/execute-from-drafts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ product_draft_ids: productDraftIds, acknowledge_publish: true }),
+  });
+  if (!response.ok) throw await httpError(response);
+  return response.json() as Promise<CbtFamilyPublishResult>;
+}
+
 export async function approveDraft(productDraftId: number, approvedBy = "operator", note = "") {
   const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/approval`, {
     method: "POST",

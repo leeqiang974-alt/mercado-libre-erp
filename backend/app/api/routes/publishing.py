@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.publish_job import PublishJob, PublishJobStatus
+from app.models.cbt_listing_config import CbtListingConfig
 from app.models.product_draft import ProductDraft
 from app.models.store import Store
 from app.schemas.drafts import ProductDraftCreate
@@ -604,6 +605,243 @@ async def execute_cbt_publish_from_draft(
     db.refresh(job)
 
     return PublishExecutionResult(status="pending", job_id=job.id)
+
+
+def _draft_latest_publish_status(db: Session, draft_ids: list[int]) -> dict[int, str]:
+    """Map product draft id to the status of its most recent publish job."""
+    if not draft_ids:
+        return {}
+    rows = (
+        db.query(PublishJob.product_draft_id, PublishJob.status)
+        .filter(PublishJob.product_draft_id.in_(draft_ids))
+        .order_by(PublishJob.id.desc())
+        .all()
+    )
+    result: dict[int, str] = {}
+    for draft_id, status in rows:
+        result.setdefault(draft_id, str(status))
+    return result
+
+
+def _queue_cbt_global_draft_job(
+    db: Session,
+    draft_id: int,
+) -> tuple[PublishJob | None, str | None]:
+    """Queue a CBT Global Selling publish job for one draft (worker path).
+
+    Used by the family merge endpoint. Mirrors the core checks of
+    execute_cbt_publish_from_draft and snapshots both the traditional and the
+    User Products payload so the worker can pick the right model at execution
+    time. An existing PENDING/VALIDATING job for the same draft is reused.
+    """
+    draft = db.query(ProductDraft).filter(ProductDraft.id == draft_id).one_or_none()
+    if draft is None:
+        return None, "product_draft_not_found"
+    config = get_cbt_listing_config(db, draft_id)
+    if config is None:
+        return None, "cbt_listing_config_required"
+    store = db.get(Store, config.store_id)
+    if (
+        store is None
+        or store.site_id.strip().upper() != "CBT"
+        or store.oauth_status != "connected"
+    ):
+        return None, "connected_cbt_store_required"
+    if config.draft_content_version != draft.content_version:
+        return None, "cbt_listing_config_stale_save_again_required"
+    resolved_attributes, attribute_errors = resolve_cbt_attribute_value_ids(
+        db, config.category_id, config.attributes_json or []
+    )
+    if attribute_errors:
+        return None, attribute_errors[0]
+    raw_config = {
+        "store_id": config.store_id,
+        "category_id": config.category_id,
+        "family_name": config.family_name,
+        "global_title": config.global_title,
+        "description": config.description,
+        "price_usd": config.price_usd,
+        "available_quantity": config.available_quantity,
+        "attributes": resolved_attributes,
+        "sale_terms": config.sale_terms_json or [],
+        "sites_to_sell": config.sites_to_sell_json or [],
+    }
+    draft_create = ProductDraftCreate(
+        title=draft.title,
+        description=draft.description,
+        brand=draft.brand,
+        target_site_id="CBT",
+        target_category_id=config.category_id,
+        price=config.price_usd,
+        currency="USD",
+        stock=config.available_quantity,
+        image_urls=draft.image_urls_json or [],
+    )
+    config_model = CbtListingConfigUpsert.model_validate(raw_config)
+    try:
+        payload = build_cbt_global_item_payload(draft_create, config_model)
+        user_product_payload = build_cbt_user_product_payload(draft_create, config_model)
+    except ValueError as exc:
+        return None, str(exc)
+    existing = (
+        db.query(PublishJob)
+        .filter(
+            PublishJob.product_draft_id == draft.id,
+            PublishJob.status.in_([PublishJobStatus.PENDING, PublishJobStatus.VALIDATING]),
+        )
+        .order_by(PublishJob.id.desc())
+        .first()
+    )
+    if existing is not None:
+        return existing, None
+    job = PublishJob(
+        product_draft_id=draft.id,
+        store_id=store.id,
+        requested_by="operator",
+        idempotency_key=hashlib.sha256(
+            json.dumps(
+                {
+                    "model": "cbt_family_batch",
+                    "draft_id": draft.id,
+                    "payload": payload,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest(),
+        status=PublishJobStatus.PENDING,
+        started_at=None,
+        request_summary_json={
+            "publication_model": "auto",
+            "draft_version": draft.content_version,
+            "category_id": config.category_id,
+            "marketplaces": [offer["site_id"] for offer in payload["sites_to_sell"]],
+            "payload": payload,
+            "user_product_payload": user_product_payload,
+            "user_product_build_error": None,
+        },
+    )
+    db.add(job)
+    db.flush()
+    return job, None
+
+
+@router.get("/cbt/family-drafts/{draft_id}")
+def list_cbt_family_drafts(
+    draft_id: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return sibling drafts sharing the same family_name and store."""
+    config = get_cbt_listing_config(db, draft_id)
+    if config is None:
+        raise HTTPException(status_code=404, detail="CBT listing config not found.")
+    rows = (
+        db.query(CbtListingConfig, ProductDraft)
+        .join(ProductDraft, ProductDraft.id == CbtListingConfig.product_draft_id)
+        .filter(
+            CbtListingConfig.family_name == config.family_name,
+            CbtListingConfig.store_id == config.store_id,
+        )
+        .order_by(ProductDraft.id.asc())
+        .all()
+    )
+    latest_status = _draft_latest_publish_status(
+        db, [draft.id for _, draft in rows]
+    )
+    return {
+        "family_name": config.family_name,
+        "drafts": [
+            {
+                "product_draft_id": draft.id,
+                "title": draft.title,
+                "publication_status": latest_status.get(draft.id, "draft"),
+                "variant_attributes": draft.source_variant_attributes_json or {},
+                "price": draft.price,
+            }
+            for row, draft in rows
+        ],
+    }
+
+
+class CbtFamilyPublishRequest(BaseModel):
+    product_draft_ids: list[int]
+    acknowledge_publish: bool = False
+
+
+@router.post("/cbt/execute-from-drafts")
+async def execute_cbt_family_publish(
+    request: CbtFamilyPublishRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Queue one publish job per draft; same family_name groups into one UP family.
+
+    Under the User Products model all variations sharing the same family_name
+    are grouped by Mercado Libre into a single product family (same
+    siteless_family_id), so each job's UP can carry its own price/COLOR while
+    the marketplace shows them as variants of one listing.
+    """
+    if not request.acknowledge_publish:
+        return {"status": "blocked", "errors": ["publish_acknowledgement_required"]}
+    if not settings.allow_live_publish:
+        return {"status": "blocked", "errors": ["live_publish_disabled"]}
+    if not request.product_draft_ids:
+        return {"status": "blocked", "errors": ["cbt_family_publish_no_drafts"]}
+    if len(request.product_draft_ids) > 30:
+        return {"status": "blocked", "errors": ["cbt_family_publish_too_many_drafts"]}
+
+    configs: list[tuple[int, CbtListingConfig]] = []
+    for draft_id in request.product_draft_ids:
+        config = get_cbt_listing_config(db, draft_id)
+        if config is None:
+            return {
+                "status": "failed",
+                "errors": [f"cbt_listing_config_required:draft_{draft_id}"],
+            }
+        configs.append((draft_id, config))
+
+    stores = {config.store_id for _, config in configs}
+    if len(stores) != 1:
+        return {"status": "failed", "errors": ["cbt_family_mixed_stores"]}
+    store = db.get(Store, next(iter(stores)))
+    if (
+        store is None
+        or store.site_id.strip().upper() != "CBT"
+        or store.oauth_status != "connected"
+    ):
+        return {"status": "blocked", "errors": ["connected_cbt_store_required"]}
+
+    family_names = {config.family_name.strip() for _, config in configs}
+    if len(family_names) != 1:
+        return {
+            "status": "failed",
+            "errors": [
+                "cbt_family_name_mismatch",
+                "sibling_drafts_must_share_one_family_name",
+            ],
+        }
+
+    jobs: list[dict] = []
+    errors: list[str] = []
+    for draft_id, _ in configs:
+        job, error = _queue_cbt_global_draft_job(db, draft_id)
+        if job is None:
+            errors.append(f"draft_{draft_id}:{error}")
+            continue
+        jobs.append(
+            {
+                "product_draft_id": draft_id,
+                "job_id": job.id,
+                "status": "pending",
+            }
+        )
+    db.commit()
+    return {
+        "status": "queued",
+        "family_name": next(iter(family_names)),
+        "queued_count": len(jobs),
+        "jobs": jobs,
+        "errors": errors,
+    }
 
 
 async def execute_cbt_global_publish_job(

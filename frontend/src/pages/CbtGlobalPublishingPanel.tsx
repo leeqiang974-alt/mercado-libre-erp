@@ -25,6 +25,8 @@ import {
   getDraft,
   getDraftPricing,
   executeCbtPublishFromDraft,
+  executeCbtFamilyPublish,
+  listCbtFamilyDrafts,
   generateDraftContent,
   getSystemReadiness,
   deleteDraft,
@@ -40,6 +42,8 @@ import {
   searchAlibaba1688SimilarOffers,
   type Alibaba1688SimilarResult,
   type AmazonSourceVariant,
+  type CbtFamilyDraft,
+  type CbtFamilyPublishResult,
   type CbtListingConfig,
   type CbtMarketplace,
   type CbtPublishingProfile,
@@ -331,6 +335,10 @@ export function CbtGlobalPublishingPanel({
   const [saved, setSaved] = useState<CbtListingConfig | null>(null);
   const [preview, setPreview] = useState<{ allowed: boolean; errors: string[]; payload: Record<string, unknown> | null } | null>(null);
   const [execution, setExecution] = useState<PublishExecutionResult | null>(null);
+  const [familyDrafts, setFamilyDrafts] = useState<CbtFamilyDraft[]>([]);
+  const [showFamilyPicker, setShowFamilyPicker] = useState(false);
+  const [selectedFamilyDraftIds, setSelectedFamilyDraftIds] = useState<Set<number>>(new Set());
+  const [familyPublishResult, setFamilyPublishResult] = useState<CbtFamilyPublishResult | null>(null);
   const [readiness, setReadiness] = useState<SystemReadiness | null>(null);
   const [pricing, setPricing] = useState<DraftPricing | null>(null);
   const [busy, setBusy] = useState("");
@@ -1168,6 +1176,49 @@ export function CbtGlobalPublishingPanel({
     finally { setBusy(""); }
   }
 
+  async function openFamilyPicker() {
+    if (busy) return;
+    if (!saved) { setStatus("请先保存当前发布配置，再合并发布变体。"); return; }
+    setBusy("family");
+    setStatus("正在读取同产品族草稿…");
+    try {
+      const result = await listCbtFamilyDrafts(draftId);
+      setFamilyDrafts(result.drafts);
+      setSelectedFamilyDraftIds(new Set(result.drafts.map((item) => item.product_draft_id)));
+      setFamilyPublishResult(null);
+      setShowFamilyPicker(true);
+      setStatus("");
+    } catch (error) { setStatus(error instanceof Error ? error.message : "读取产品族草稿失败。"); }
+    finally { setBusy(""); }
+  }
+
+  function toggleFamilyDraft(draftIdToToggle: number) {
+    setSelectedFamilyDraftIds((current) => {
+      const next = new Set(current);
+      if (next.has(draftIdToToggle)) next.delete(draftIdToToggle);
+      else next.add(draftIdToToggle);
+      return next;
+    });
+  }
+
+  async function confirmFamilyPublish() {
+    const ids = [...selectedFamilyDraftIds];
+    if (ids.length === 0 || busy) return;
+    if (!window.confirm(`确认将 ${ids.length} 个同产品族草稿提交真实刊登吗？提交后将在美客多创建商品并合并展示为同一产品的变体。`)) return;
+    setBusy("family"); setStatus("正在提交产品族发布任务…");
+    try {
+      const result = await executeCbtFamilyPublish(ids);
+      setFamilyPublishResult(result);
+      if (result.status === "queued") {
+        setStatus(`已提交 ${result.queued_count} 个产品族变体发布任务（同族 ${result.family_name}），美客多将合并展示；请稍候查看发布任务。`);
+      } else if (result.errors?.length) {
+        setStatus(`产品族发布未全部提交：${result.errors.join("；")}`);
+      }
+      setShowFamilyPicker(false);
+    } catch (error) { setStatus(error instanceof Error ? error.message : "产品族发布请求失败。"); }
+    finally { setBusy(""); }
+  }
+
   return <section className="workspace wf-listing-editor">
     <header className="wf-header">
       <div><p className="eyebrow">GLOBAL SELLING · CBT</p><h2>编辑产品 / 跨境上架</h2><p>按“店铺和类目 → 商品资料 → 图片 → 描述 → SKU → 销售配置”一次完成，不再分散到多个页面。</p></div>
@@ -1269,7 +1320,31 @@ export function CbtGlobalPublishingPanel({
         </div>
       </div>
     </div>}
-    <footer className="wf-action-bar"><span role="status" aria-live="polite">{status || (saved ? "配置已保存" : "请先完成必填内容")}</span><div><button className="secondary-button" onClick={onBackToEditing}>取消</button><button disabled={busy === "save"} onClick={saveConfig}><Save size={16} /> 保存</button><button className="secondary-button" disabled={busy === "preview"} onClick={previewPayload}><ListChecks size={16} /> 预检</button><button disabled={!preview?.allowed || !readiness?.mercado_libre.live_publish_enabled || busy === "execute"} onClick={executePublish} aria-busy={busy === "execute"}>{busy === "execute" ? <RefreshCw className="spin" size={16} /> : <Globe2 size={16} />} {busy === "execute" ? "正在提交…" : "立即发布"}</button></div></footer>
+    <footer className="wf-action-bar"><span role="status" aria-live="polite">{status || (saved ? "配置已保存" : "请先完成必填内容")}</span><div><button className="secondary-button" onClick={onBackToEditing}>取消</button><button disabled={busy === "save"} onClick={saveConfig}><Save size={16} /> 保存</button><button className="secondary-button" disabled={busy === "preview"} onClick={previewPayload}><ListChecks size={16} /> 预检</button><button disabled={!preview?.allowed || !readiness?.mercado_libre.live_publish_enabled || busy === "execute"} onClick={executePublish} aria-busy={busy === "execute"}>{busy === "execute" ? <RefreshCw className="spin" size={16} /> : <Globe2 size={16} />} {busy === "execute" ? "正在提交…" : "立即发布"}</button><button className="secondary-button" disabled={!saved || busy === "family"} onClick={() => void openFamilyPicker()} title="把相同 Parent SKU（产品族）的多个变体草稿一次性提交发布，美客多会把它们合并展示为同一产品的变体">{busy === "family" ? <RefreshCw className="spin" size={16} /> : <ListChecks size={16} />} 合并发布变体</button></div></footer>
+
+      {showFamilyPicker && (
+        <div className="wf-family-overlay" role="dialog" aria-modal="true">
+          <div className="wf-family-panel">
+            <h3>合并发布变体（产品族 {familyName || "未命名"}）</h3>
+            <p className="section-note">勾选要合并的变体草稿；它们共享 Parent SKU（产品族名称），每个变体用自己的图片与属性独立上架，在美客多合并展示为同一产品的颜色/规格变体。</p>
+            {familyDrafts.length === 0 ? (
+              <p>没有找到同产品族的其他草稿。先为其他变体草稿配置相同的 Parent SKU 并保存。</p>
+            ) : (
+              <>
+                <label className="wf-family-all"><input type="checkbox" checked={selectedFamilyDraftIds.size === familyDrafts.length} onChange={() => setSelectedFamilyDraftIds(selectedFamilyDraftIds.size === familyDrafts.length ? new Set() : new Set(familyDrafts.map((item) => item.product_draft_id)))} /> 全选（{familyDrafts.length} 个）</label>
+                <ul className="wf-family-list">{familyDrafts.map((item) => (
+                  <li key={item.product_draft_id}>
+                    <label><input type="checkbox" checked={selectedFamilyDraftIds.has(item.product_draft_id)} onChange={() => toggleFamilyDraft(item.product_draft_id)} /><span><strong>#{item.product_draft_id} {item.title}</strong><small>{Object.entries(item.variant_attributes || {}).map(([key, value]) => `${key}: ${value}`).join(" · ") || "无变体属性"}{item.price ? ` · $${item.price}` : ""}</small></span><em>{item.publication_status === "published" ? "已发布" : item.publication_status === "pending" || item.publication_status === "validating" ? "发布中" : "未发布"}</em></label>
+                  </li>
+                ))}</ul>
+                {familyPublishResult && <p className="wf-family-result" role="status">已提交 {familyPublishResult.queued_count} 个：{familyPublishResult.jobs.map((job) => `#${job.product_draft_id}→任务${job.job_id}`).join("、")}{familyPublishResult.errors?.length ? `；未提交：${familyPublishResult.errors.join("；")}` : ""}</p>}
+                <div className="wf-family-actions"><button className="secondary-button" onClick={() => setShowFamilyPicker(false)}>取消</button><button disabled={selectedFamilyDraftIds.size === 0 || busy === "family"} onClick={() => void confirmFamilyPublish()}>{busy === "family" ? <RefreshCw className="spin" size={16} /> : <Globe2 size={16} />} {busy === "family" ? "正在提交…" : "确认合并发布"}</button></div>
+              </>
+            )}
+            {familyDrafts.length === 0 && <button className="secondary-button" onClick={() => setShowFamilyPicker(false)}>关闭</button>}
+          </div>
+        </div>
+      )}
   </section>;
 }
 
