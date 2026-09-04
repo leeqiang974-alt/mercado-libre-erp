@@ -565,7 +565,9 @@ export function CbtGlobalPublishingPanel({
       setListingRail(remaining);
       setStatus(`已删除商品 #${item.id}。`);
       if (item.id === draftId) {
-        const next = remaining.find((candidate) => candidate.publication_status !== "published");
+        // 删除的是当前编辑中的草稿：从待上架库列表里挑相邻草稿继续编辑，
+        // 而不是全局跳回第一个待上架草稿/上架库，避免“删除后跳回首页”的困惑。
+        const next = pendingListingRail.find((candidate) => candidate.id !== item.id);
         if (next && onSelectDraft) onSelectDraft(next);
         else onBackToEditing();
       }
