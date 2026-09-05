@@ -1,0 +1,180 @@
+services:
+  backend_image:
+    image: mvp-skeleton-backend:latest
+    build:
+      context: ./backend
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
+    command: ["true"]
+    restart: "no"
+
+  migrate:
+    image: mvp-skeleton-backend:latest
+    environment:
+      DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
+    depends_on:
+      backend_image:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    command: python -m alembic upgrade head
+    restart: "no"
+    volumes:
+      - ./backend/app:/app/app:ro
+      - ./backend/alembic:/app/alembic:ro
+      - ./backend/alembic.ini:/app/alembic.ini:ro
+
+  backend:
+    image: mvp-skeleton-backend:latest
+    init: true
+    entrypoint: []
+    environment:
+      DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
+      MELI_CLIENT_ID: ${MELI_CLIENT_ID:-}
+      MELI_CLIENT_SECRET: ${MELI_CLIENT_SECRET:-}
+      MELI_REDIRECT_URI: ${MELI_REDIRECT_URI:-http://localhost:8000/api/stores/meli/callback}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-4-6}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      NVIDIA_MODEL: ${NVIDIA_MODEL:-meta/llama-3.1-70b-instruct}
+      VOLCENGINE_API_KEY: ${VOLCENGINE_API_KEY:-}
+      VOLCENGINE_BASE_URL: ${VOLCENGINE_BASE_URL:-https://ark.cn-beijing.volces.com/api/coding/v3}
+      VOLCENGINE_MODEL: ${VOLCENGINE_MODEL:-doubao-seed-2.1-turbo}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
+      AI_CONTENT_GENERATION_TIMEOUT_SECONDS: ${AI_CONTENT_GENERATION_TIMEOUT_SECONDS:-90}
+      ALIBABA_1688_APP_KEY: ${ALIBABA_1688_APP_KEY:-}
+      ALIBABA_1688_APP_SECRET: ${ALIBABA_1688_APP_SECRET:-}
+      ALIBABA_1688_REDIRECT_URI: ${ALIBABA_1688_REDIRECT_URI:-https://ml-erp.woxq.cn/api/integrations/1688/callback}
+      ALLOW_LIVE_PUBLISH: ${ALLOW_LIVE_PUBLISH:-false}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
+      AMAZON_BROWSER_PROFILE_DIR: /data/amazon-browser/backend
+      AMAZON_BROWSER_HEADLESS: ${AMAZON_BROWSER_HEADLESS:-false}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./backend/app:/app/app:ro
+      - ./backend/alembic:/app/alembic:ro
+      - ./backend/alembic.ini:/app/alembic.ini:ro
+      - ./data/amazon-browser:/data/amazon-browser
+    command: >-
+      sh -c 'if command -v xvfb-run >/dev/null 2>&1; then
+      exec xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24 -nolisten tcp"
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2;
+      else exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2; fi'
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  collection_worker:
+    image: mvp-skeleton-backend:latest
+    init: true
+    environment:
+      DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
+      AMAZON_BROWSER_PROFILE_DIR: /data/amazon-browser/worker
+      # The worker has no interactive display. Keep headed browsing for the
+      # operator-facing API, but run background collection headlessly.
+      AMAZON_BROWSER_HEADLESS: ${AMAZON_BROWSER_HEADLESS:-true}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app:ro
+      - ./data/amazon-browser:/data/amazon-browser
+    command: ["python", "-m", "app.worker", "--queue", "collection", "--loop", "--interval", "8", "--limit", "1"]
+    restart: unless-stopped
+
+  publish_worker:
+    image: mvp-skeleton-backend:latest
+    init: true
+    environment:
+      DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
+      MELI_CLIENT_ID: ${MELI_CLIENT_ID:-}
+      MELI_CLIENT_SECRET: ${MELI_CLIENT_SECRET:-}
+      MELI_REDIRECT_URI: ${MELI_REDIRECT_URI:-http://localhost:8000/api/stores/meli/callback}
+      ALLOW_LIVE_PUBLISH: ${ALLOW_LIVE_PUBLISH:-false}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app:ro
+    command: python -m app.worker --queue publish --loop --interval 30 --limit 10
+    restart: unless-stopped
+
+  review_worker:
+    image: mvp-skeleton-backend:latest
+    init: true
+    environment:
+      DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-4-6}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      NVIDIA_MODEL: ${NVIDIA_MODEL:-meta/llama-3.1-70b-instruct}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app:ro
+    command: python -m app.worker --queue review --loop --interval 30 --limit 5
+    restart: unless-stopped
+
+  frontend:
+    image: ${PYTHON_RUNTIME_IMAGE:-python:3.12-slim}
+    init: true
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5173:80"
+    volumes:
+      - ./frontend/dist:/site:ro
+    command: python -m http.server 80 --directory /site
+    restart: unless-stopped
+
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16}
+    environment:
+      POSTGRES_USER: meli
+      POSTGRES_PASSWORD: meli
+      POSTGRES_DB: amazon_meli
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meli -d amazon_meli"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: ${REDIS_IMAGE:-redis:7}
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped

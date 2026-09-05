@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     default_site_id: str = "MLM"
     allow_live_publish: bool = False
     token_encryption_key: str = "local-dev-token-key-change-me"
-    api_request_timeout_seconds: int = 20
+    api_request_timeout_seconds: int = 45
     job_stale_after_seconds: int = 900
     job_execution_timeout_seconds: int = 840
     listing_type_cache_ttl_seconds: int = 900

@@ -63,8 +63,8 @@ def create_oauth_client(db: Session) -> MercadoLibreOAuthClient:
     )
 
 
-def create_meli_client(access_token: str) -> MercadoLibreClient:
-    return MercadoLibreClient(access_token=access_token)
+def create_meli_client(access_token: str, timeout: float = 30) -> MercadoLibreClient:
+    return MercadoLibreClient(access_token=access_token, timeout=timeout)
 
 
 @router.get("/meli/authorization-url")
@@ -278,12 +278,23 @@ async def get_cbt_category_predictions(
         )
         if not access_token:
             raise HTTPException(status_code=409, detail="Store access token is unavailable.")
-        data = await create_meli_client(access_token).get(
+        data = await create_meli_client(access_token, timeout=10).get(
             f"/marketplace/domain_discovery/search?q={quote(query, safe='')}"
         )
     except HTTPException:
         raise
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, asyncio.TimeoutError) as exc:
+        # MercadoLibre domain-discovery is slow or unreachable. Fall back to the
+        # local category catalog so the editor never shows a bare 504.
+        fallback = search_category_catalog(catalog or {}, original_query)
+        if fallback:
+            return {
+                "store_id": store.id,
+                "query": original_query,
+                "query_en": query,
+                "source": "category_catalog_fallback",
+                "predictions": fallback,
+            }
         raise HTTPException(status_code=502, detail="CBT category prediction is unavailable.") from exc
     if not isinstance(data, list):
         raise HTTPException(status_code=502, detail="CBT category prediction returned an invalid response.")
