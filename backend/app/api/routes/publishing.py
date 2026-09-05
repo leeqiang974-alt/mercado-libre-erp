@@ -1516,6 +1516,34 @@ async def retry_publish_job(job_id: int, db: Session = Depends(get_db)) -> Publi
             detail="Publish outcome is unknown; reconcile the store before another attempt.",
         )
 
+    _retry_summary = job.request_summary_json or {}
+    _retry_pub_model = _retry_summary.get("publication_model")
+    _retry_draft = db.get(ProductDraft, job.product_draft_id)
+    _retry_is_cbt_global = bool(
+        _retry_draft
+        and _retry_draft.target_site_id
+        and _retry_draft.target_site_id.strip().upper() == "CBT"
+        and _retry_pub_model in {"traditional_global", "auto"}
+    )
+    if _retry_is_cbt_global:
+        previous_status = job.status
+        job.status = PublishJobStatus.VALIDATING
+        job.started_at = datetime.now(UTC)
+        job.completed_at = None
+        db.commit()
+        db.refresh(job)
+        create_audit_event(
+            db=db, actor_type="operator", actor_id="operator",
+            action="publish.retry_requested", entity_type="publish_job",
+            entity_id=str(job.id),
+            before={"status": previous_status.value if hasattr(previous_status, "value") else str(previous_status),
+                    "product_draft_id": job.product_draft_id, "store_id": job.store_id},
+            after={"retry_model": "cbt_global", "product_draft_id": job.product_draft_id},
+        )
+        return await execute_cbt_global_publish_job(
+            db=db, job=job,
+            token_encryption_key=get_settings().token_encryption_key,
+        )
     draft, listing_choice = build_configured_draft(db, job.product_draft_id)
     review = get_publish_review(
         db,
