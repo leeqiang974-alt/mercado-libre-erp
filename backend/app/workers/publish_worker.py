@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models.publish_job import PublishJob, PublishJobStatus
+from app.models.product_draft import ProductDraft
 from app.models.store import Store
 from app.schemas.publishing import PublishExecutionResult
 from app.services.audit_events import create_audit_event
@@ -108,7 +109,14 @@ async def run_pending_publish_job(
     db.refresh(job)
 
     try:
-        if (job.request_summary_json or {}).get("publication_model") == "traditional_global":
+        _pub_model = (job.request_summary_json or {}).get("publication_model")
+        _draft_for_model = db.get(ProductDraft, job.product_draft_id)
+        _is_cbt_draft = bool(
+            _draft_for_model
+            and _draft_for_model.target_site_id
+            and _draft_for_model.target_site_id.strip().upper() == "CBT"
+        )
+        if _pub_model == "traditional_global" or (_pub_model == "auto" and _is_cbt_draft):
             result = await execute_cbt_global_publish_job(
                 db=db,
                 job=job,
