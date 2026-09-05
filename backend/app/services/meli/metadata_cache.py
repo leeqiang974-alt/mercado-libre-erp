@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+import hashlib
 
 from sqlalchemy.orm import Session
 
@@ -22,7 +23,12 @@ def category_details_key(category_id: str) -> str:
 
 
 def category_predictions_key(site_id: str, query: str) -> str:
-    return f"category_predictions:{site_id.strip().upper()}:{' '.join(query.split()).casefold()}"
+    normalized = " ".join(str(query or "").split()).casefold()
+    prefix = f"category_predictions:{site_id.strip().upper()}:"
+    # cache_key column is varchar(160); long Amazon titles would overflow it.
+    if len(normalized) > 80:
+        return prefix + "h:" + hashlib.md5(normalized.encode("utf-8")).hexdigest()
+    return prefix + normalized
 
 
 def category_tree_key(site_id: str, category_id: str = "") -> str:

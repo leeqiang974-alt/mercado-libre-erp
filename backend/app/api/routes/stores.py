@@ -237,7 +237,7 @@ async def get_cbt_publishing_profile(
 @router.get("/{store_id}/cbt/category-predictions")
 async def get_cbt_category_predictions(
     store_id: int,
-    q: str = Query(..., min_length=1, max_length=180),
+    q: str = Query(..., min_length=1, max_length=300),
     mode: str = Query(default="smart"),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
