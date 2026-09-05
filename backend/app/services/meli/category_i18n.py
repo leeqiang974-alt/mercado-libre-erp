@@ -58,6 +58,33 @@ PHRASE_TRANSLATIONS = {
     "Kitchen": "厨房",
     "Cooking": "烹饪",
     "Home": "家居",
+    # Serving / tableware / houseware (CBT global categories).
+    "Trays": "托盘",
+    "Tray": "托盘",
+    "Bandejas": "托盘",
+    "Serving Trays": "上菜托盘",
+    "Serving Tray": "上菜托盘",
+    "Appetizer Serving Trays": "开胃菜托盘",
+    "Appetizer servers": "开胃菜上菜架",
+    "Serving and home trays": "上菜与家用托盘",
+    "Containers": "容器",
+    "Container": "容器",
+    "Furniture and Garden": "家具与园艺",
+    "Housewares": "家居用品",
+    "Dinnerware & Serving Items": "餐具与上菜用品",
+    "Dinnerware and Serving Items": "餐具与上菜用品",
+    "Industries and Offices": "工业与办公",
+    "Gastronomy & Accommodation": "餐饮与住宿",
+    "Gastronomy and Accommodation": "餐饮与住宿",
+    "Restaurant Accessories": "餐厅配件",
+    "Souvenirs, Favours and Parties": "纪念品、派对用品与节庆",
+    "Souvenirs, Favors and Parties": "纪念品、派对用品与节庆",
+    "Disposable Party Tableware": "一次性派对餐具",
+    "Storage & Organization": "收纳与整理",
+    "Storage and Organization": "收纳与整理",
+    "Home Decoration": "家居装饰",
+    "Home, Furniture and Garden": "家居、家具与园艺",
+
     "Bakeware": "烘焙用具",
     # Stable CBT labels that the provider has repeatedly omitted or timed out
     # on.  Keep them as exact display-only mappings; the official English
@@ -244,7 +271,7 @@ async def translate_category_names_with_ai(
     ]
     if not pending or not api_key:
         return result
-    prompt = "Translate each Mercado Libre category name into concise Simplified Chinese. Return JSON object only, preserving every key exactly.\n" + json.dumps(pending, ensure_ascii=False)
+    prompt = ("你是电商分类翻译专家。将下面每个 Mercado Libre 分类名称翻译成简洁的简体中文。\n""硬性规则：\n""1. 必须翻译成中文，不得保留任何英文/西班牙文/葡萄牙文单词，即使是专业术语、缩写、行业词或品牌通用词也要翻译。\n""2. 餐具、厨具、家居、餐饮、派对类词汇用中文电商常用说法。\n""3. 返回 JSON 对象，key 保持原文完全不变，value 只能是中文翻译。\n""示例：{\"Trays\": \"托盘\", \"Furniture and Garden\": \"家具与园艺\", \"Housewares\": \"家居用品\", \"Bandejas\": \"托盘\"}\n""待翻译：\n" + json.dumps(pending, ensure_ascii=False))
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(base_url.rstrip("/") + "/chat/completions", headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"}, json={"model": model, "temperature": 0, "messages": [{"role": "user", "content": prompt}]})
