@@ -12,7 +12,7 @@ import {
   AlertCircle,
   ChevronRight,
 } from "lucide-react";
-import { getErpOverview, type ErpOverview } from "../api/erpClient";
+import { getErpOverview, type ErpOverview, type StoreStat } from "../api/erpClient";
 
 export function DashboardPage({ onNavigate }: { onNavigate: (page: string) => void }) {
   const [overview, setOverview] = useState<ErpOverview | null>(null);
@@ -111,6 +111,35 @@ export function DashboardPage({ onNavigate }: { onNavigate: (page: string) => vo
             <div className="empty-tip">
               <AlertCircle size={16} />
               <span>暂无订单数据，订单同步功能待 Marketplace API 权限开通后启用</span>
+            </div>
+          )}
+          {overview?.store_stats && overview.store_stats.length > 0 && (
+            <div className="store-stats-section">
+              <h4>分店铺数据</h4>
+              <table className="data-table store-stats-table">
+                <thead>
+                  <tr>
+                    <th>店铺</th>
+                    <th>站点</th>
+                    <th>商品数</th>
+                    <th>销量</th>
+                    <th>销售额</th>
+                    <th>状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {overview.store_stats.map((s: StoreStat) => (
+                    <tr key={s.store_id}>
+                      <td>{s.display_name || s.seller_id}</td>
+                      <td>{s.site_id}</td>
+                      <td>{s.item_count}</td>
+                      <td>{s.total_orders}</td>
+                      <td>${Number(s.total_sales || 0).toFixed(2)}</td>
+                      <td>{s.load_error ? <span className="badge badge-error">获取失败</span> : <span className="badge badge-ok">正常</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </section>

@@ -13,6 +13,19 @@ export async function getErpOverview(): Promise<ErpOverview> {
   return get<ErpOverview>("/api/erp/overview");
 }
 
+export interface StoreStat {
+  store_id: number;
+  site_id: string;
+  seller_id: string;
+  display_name: string;
+  total_orders: number;
+  today_orders: number;
+  pending_shipment: number;
+  total_sales: string;
+  item_count: number;
+  load_error: boolean;
+}
+
 export interface ErpOverview {
   total_orders: number;
   today_orders: number;
@@ -28,6 +41,8 @@ export interface ErpOverview {
   total_drafts: number;
   pending_publish: number;
   published_count: number;
+  // 分店铺数据
+  store_stats?: StoreStat[];
 }
 
 // ============ 订单 ============

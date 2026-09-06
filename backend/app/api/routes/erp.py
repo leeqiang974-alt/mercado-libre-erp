@@ -51,7 +51,19 @@ def _create_oauth_client(db: Session) -> MercadoLibreOAuthClient:
 
 async def _fetch_store_order_stats(store: Store, db: Session) -> dict:
     """Fetch real sales stats from Mercado Libre items (CBT stores do not support /orders/search API)."""
-    result = {"total_orders": 0, "today_orders": 0, "pending_shipment": 0, "total_sales": Decimal("0")}
+    base = {
+        "store_id": store.id,
+        "site_id": store.site_id,
+        "seller_id": store.seller_id,
+        "display_name": store.display_name,
+        "total_orders": 0,
+        "today_orders": 0,
+        "pending_shipment": 0,
+        "total_sales": "0.00",
+        "item_count": 0,
+        "load_error": False,
+    }
+    result = {**base, "total_sales": Decimal("0")}
     try:
         access_token = await resolve_fresh_store_access_token(
             db=db,
@@ -60,12 +72,13 @@ async def _fetch_store_order_stats(store: Store, db: Session) -> dict:
             oauth_client=_create_oauth_client(db),
         )
         if not access_token:
-            return result
+            return base
         client = MercadoLibreClient(access_token=access_token, timeout=30)
         seller_id = store.seller_id
 
         # Get all item IDs for this seller
         item_ids: list[str] = []
+        total_items = 0
         offset = 0
         while True:
             r = await client.get(f"/users/{seller_id}/items/search?limit=50&offset={offset}")
@@ -76,32 +89,54 @@ async def _fetch_store_order_stats(store: Store, db: Session) -> dict:
                 break
             item_ids.extend(str(x) for x in batch)
             paging = r.get("paging") or {}
-            total = int(paging.get("total", 0))
+            total_items = int(paging.get("total", 0))
             offset += 50
-            if offset >= total or len(item_ids) >= 200:
+            if offset >= total_items or len(item_ids) >= 500:
                 break
 
-        # Fetch item details to get sold_quantity and price, sum up
-        async def _item_sales(item_id: str) -> tuple[int, Decimal]:
+        result["item_count"] = total_items or len(item_ids)
+
+        # Fetch item details in batches (20 per request, up to 5 concurrent) to sum sold_quantity * price
+        total_sold = 0
+        total_revenue = Decimal("0")
+        sem = asyncio.Semaphore(5)
+
+        async def _fetch_batch(batch_ids: list[str]) -> tuple[int, Decimal]:
+            sold_batch = 0
+            revenue_batch = Decimal("0")
             try:
-                item = await client.get(f"/items/{item_id}")
-                if isinstance(item, dict):
-                    sold = int(item.get("sold_quantity") or 0)
-                    price = item.get("price") or 0
-                    return sold, Decimal(str(price)) * sold
+                async with sem:
+                    r = await client.get(f"/items?ids={','.join(batch_ids)}")
+                if isinstance(r, list):
+                    for entry in r:
+                        if not isinstance(entry, dict) or entry.get("code") != 200:
+                            continue
+                        item = entry.get("body") or {}
+                        if not isinstance(item, dict):
+                            continue
+                        sold = int(item.get("sold_quantity") or 0)
+                        price = item.get("price") or 0
+                        if sold > 0:
+                            sold_batch += sold
+                            try:
+                                revenue_batch += Decimal(str(price)) * sold
+                            except Exception:
+                                pass
             except Exception:
                 pass
-            return 0, Decimal("0")
+            return sold_batch, revenue_batch
 
-        if item_ids:
-            sales_results = await asyncio.gather(*(_item_sales(iid) for iid in item_ids))
-            total_sold = 0
-            for sold, revenue in sales_results:
+        batches = [item_ids[i : i + 20] for i in range(0, len(item_ids), 20)]
+        if batches:
+            batch_results = await asyncio.gather(*(_fetch_batch(b) for b in batches))
+            for sold, revenue in batch_results:
                 total_sold += sold
-                result["total_sales"] += revenue
-            result["total_orders"] = total_sold  # Use total sold quantity as order proxy
+                total_revenue += revenue
+
+        result["total_orders"] = total_sold  # Use total sold quantity as order proxy
+        result["total_sales"] = str(total_revenue)
     except Exception:
-        pass
+        return {**base, "load_error": True}
     return result
 
 
@@ -114,15 +149,16 @@ async def erp_overview(db: Session = Depends(get_db)):
     today_orders = 0
     pending_orders = 0
     total_sales = Decimal("0")
+    store_stats: list[dict] = []
     if connected_stores:
         store_stats = await asyncio.gather(
             *(_fetch_store_order_stats(store, db) for store in connected_stores)
         )
         for s in store_stats:
-            total_orders += s["total_orders"]
-            today_orders += s["today_orders"]
-            pending_orders += s["pending_shipment"]
-            total_sales += s["total_sales"]
+            total_orders += int(s["total_orders"])
+            today_orders += int(s["today_orders"])
+            pending_orders += int(s["pending_shipment"])
+            total_sales += Decimal(str(s["total_sales"]))
     today_sales = Decimal("0")  # 今日销售额暂不统计（避免额外API调用）
 
     # 库存
@@ -158,6 +194,8 @@ async def erp_overview(db: Session = Depends(get_db)):
         "total_drafts": total_drafts,
         "pending_publish": pending_publish,
         "published_count": published_count,
+        # 分店铺数据
+        "store_stats": store_stats,
     }
 
 
