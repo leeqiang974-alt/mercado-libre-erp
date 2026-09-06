@@ -658,6 +658,117 @@ async def get_store_item_price_reference(
     }
 
 
+class StoreItemPriceUpdate(BaseModel):
+    price: float = Field(..., gt=0, description="New price. For CBT UP items this is global_net_proceeds (seller net proceeds in USD); for regular items this is the listing price.")
+
+
+@router.put("/{store_id}/items/{item_id}/price")
+async def update_store_item_price(
+    store_id: int,
+    item_id: str,
+    payload: StoreItemPriceUpdate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Update the price of a published Mercado Libre item in place.
+
+    For CBT User Products (UP / siteless) sellers, updates
+    ``global_net_proceeds`` via ``PUT /global/user-products/{up_id}``.
+    The UP ID is derived from the item's ``user_product_id`` field
+    (CBT prefix stripped). For regular marketplace items, updates
+    ``price`` via ``PUT /items/{id}``.
+
+    This is an incremental update — the item ID, permalink, sales and
+    reviews are preserved; no republish is required.
+
+    Note: MercadoLibre may take several minutes to recalculate and sync
+    the final buyer-facing price across all marketplaces after a
+    global_net_proceeds change.
+    """
+    store = db.get(Store, store_id)
+    if store is None:
+        raise HTTPException(status_code=404, detail="Store not found.")
+    if store.oauth_status != "connected":
+        raise HTTPException(status_code=409, detail="Store is not connected.")
+
+    normalized_item_id = item_id.strip().upper()
+    is_cbt = normalized_item_id.startswith("CBT")
+
+    try:
+        access_token = await resolve_fresh_store_access_token(
+            db=db,
+            store=store,
+            encryption_key=settings.token_encryption_key,
+            oauth_client=create_oauth_client(db),
+        )
+        if not access_token:
+            raise HTTPException(status_code=409, detail="Store access token is unavailable.")
+        client = create_meli_client(access_token)
+
+        update_method = ""
+        up_id = ""
+
+        if is_cbt:
+            # Fetch item to get user_product_id
+            item_detail = await client.get(f"/items/{normalized_item_id}")
+            if not isinstance(item_detail, dict):
+                raise ValueError("invalid_item_detail")
+            raw_up_id = str(item_detail.get("user_product_id") or "")
+            if not raw_up_id:
+                raise HTTPException(status_code=409, detail="This CBT item does not have a user_product_id; price update is not supported.")
+            # Strip CBT prefix: CBTU5085485869 -> U5085485869
+            up_id = raw_up_id.upper()
+            if up_id.startswith("CBT"):
+                up_id = up_id[3:]
+
+            # Update global_net_proceeds on the Global UP
+            up_result = await client.put(
+                f"/global/user-products/{up_id}",
+                {"global_net_proceeds": payload.price},
+            )
+            if isinstance(up_result, dict) and up_result.get("errors"):
+                raise HTTPException(status_code=502, detail=f"Mercado Libre UP update error: {up_result['errors']}")
+            update_method = "cbt_up_global_net_proceeds"
+
+            # Re-fetch item for response
+            updated = await client.get(f"/items/{normalized_item_id}")
+        else:
+            updated = await client.put(
+                f"/items/{normalized_item_id}",
+                {"price": payload.price},
+            )
+            update_method = "marketplace_price"
+
+        if not isinstance(updated, dict):
+            raise ValueError("invalid_update_response")
+
+        return {
+            "store_id": store.id,
+            "item_id": str(updated.get("id") or normalized_item_id),
+            "price": updated.get("price"),
+            "currency_id": str(updated.get("currency_id") or ""),
+            "user_product_id": raw_up_id if is_cbt else None,
+            "status": str(updated.get("status") or ""),
+            "update_method": update_method,
+            "last_updated": str(updated.get("last_updated") or ""),
+            "note": "Price submitted to MercadoLibre. Final buyer-facing price may take several minutes to recalculate and sync across marketplaces." if is_cbt else None,
+        }
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as exc:
+        detail = "Mercado Libre rejected the price update."
+        try:
+            body = exc.response.json()
+            if isinstance(body, dict) and body.get("message"):
+                detail = str(body["message"])
+            elif isinstance(body, dict) and isinstance(body.get("cause"), list) and body["cause"]:
+                detail = str(body["cause"][0].get("message", detail))
+        except Exception:
+            pass
+        raise HTTPException(status_code=502, detail=detail) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="Mercado Libre price update is unavailable.") from exc
+
+
 @router.get("/{store_id}/categories/{category_id}/listing-types")
 async def get_store_category_listing_types(
     store_id: int,

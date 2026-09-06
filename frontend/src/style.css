@@ -2100,3 +2100,16 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .wf-family-result{font-size:12.5px;color:#0f766e;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:8px 10px}
 .wf-family-actions{display:flex;justify-content:flex-end;gap:8px;padding-top:10px;border-top:1px solid #f1f5f9}
 .wf-family-actions button{min-width:96px}
+
+/* ---- Price edit modal (StoreProductsPage) ---- */
+.modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;z-index:1200;padding:24px}
+.modal-card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 20px 40px rgba(15,23,42,.18);max-width:440px;width:100%;padding:22px 24px}
+.modal-card h3{margin:0 0 4px;font-size:17px}
+.modal-subtitle{margin:0 0 14px;font-size:12.5px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.modal-field{margin-bottom:14px}
+.modal-field label{display:block;font-size:12.5px;font-weight:600;color:#475569;margin-bottom:4px}
+.modal-field strong{font-size:18px;color:#0f172a}
+.modal-field input{width:100%;padding:9px 11px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;box-sizing:border-box}
+.modal-field small{display:block;margin-top:4px;font-size:11.5px;color:#64748b}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;padding-top:14px;border-top:1px solid #f1f5f9}
+.modal-actions button{min-width:88px}

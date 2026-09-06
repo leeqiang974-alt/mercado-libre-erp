@@ -1113,6 +1113,30 @@ export async function getStoreItemPriceReference(storeId: number, itemId: string
   return response.json() as Promise<StoreItemPriceReference>;
 }
 
+export type StoreItemPriceUpdateResult = {
+  store_id: number;
+  item_id: string;
+  price?: number | null;
+  currency_id: string;
+  global_net_proceeds?: number | null;
+  status: string;
+  update_method: string;
+  last_updated: string;
+};
+
+export async function updateStoreItemPrice(storeId: number, itemId: string, price: number) {
+  const response = await fetch(
+    `${API_BASE}/api/stores/${storeId}/items/${encodeURIComponent(itemId)}/price`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ price }),
+    },
+  );
+  if (!response.ok) throw await httpError(response);
+  return response.json() as Promise<StoreItemPriceUpdateResult>;
+}
+
 export async function getCbtMarketplaceListingTypes(storeId: number, categoryId: string) {
   const response = await fetch(`${API_BASE}/api/stores/${storeId}/cbt/categories/${encodeURIComponent(categoryId)}/marketplace-listing-types`);
   if (!response.ok) throw await httpError(response);
