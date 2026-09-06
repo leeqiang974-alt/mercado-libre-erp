@@ -17,6 +17,7 @@ import { FinancePage } from "./pages/FinancePage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { MessagesPage } from "./pages/MessagesPage";
 import { StoreProductsPage } from "./pages/StoreProductsPage";
+import { BulkSelectionPage } from "./pages/BulkSelectionPage";
 
 const HASH_PAGE_ALIASES: Record<string, string> = {
   // Keep the previous product-list URL working, but send operators to the
@@ -27,6 +28,7 @@ const HASH_PAGE_ALIASES: Record<string, string> = {
   products: "products",
   "store-products": "products",
   "collection-tasks": "collection-tasks",
+  "bulk-selection": "bulk-selection",
   stores: "stores",
   publishing: "publishing",
   diagnostics: "diagnostics",
@@ -181,6 +183,7 @@ export function App() {
         />
       )}
       {page === "products" && <StoreProductsPage onOpenListingLibrary={() => changePage("drafts")} />}
+      {page === "bulk-selection" && <BulkSelectionPage />}
       {page === "publishing" && (
         <PublishingPage
           draft={draft}
