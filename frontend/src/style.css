@@ -2113,3 +2113,11 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .modal-field small{display:block;margin-top:4px;font-size:11.5px;color:#64748b}
 .modal-actions{display:flex;justify-content:flex-end;gap:8px;padding-top:14px;border-top:1px solid #f1f5f9}
 .modal-actions button{min-width:88px}
+
+/* ---- Store products table layout fix ---- */
+.store-products-table{table-layout:fixed;width:100%}
+.store-products-table th,.store-products-table td{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:top}
+.store-products-table .store-product-title{white-space:normal}
+.store-products-table .store-product-title strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.store-products-table .store-product-actions{white-space:nowrap}
+.store-products-table .pending-income{color:#b45309;font-size:11.5px}

@@ -1061,6 +1061,7 @@ export type StoreItem = {
   status?: string;
   category_id?: string;
   price?: number;
+  net_proceeds?: number;
   currency_id?: string;
   available_quantity?: number;
   sold_quantity?: number;

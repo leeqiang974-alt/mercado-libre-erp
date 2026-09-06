@@ -5,6 +5,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from fastapi.responses import RedirectResponse
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -519,6 +520,25 @@ async def list_store_items(
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(status_code=502, detail="Mercado Libre store item list is unavailable.") from exc
 
+    # Batch lookup net_proceeds from publish_jobs -> cbt_listing_configs
+    net_proceeds_map: dict[str, float] = {}
+    if item_ids:
+        placeholders = ",".join(f":id{i}" for i in range(len(item_ids)))
+        params = {f"id{i}": item_ids[i] for i in range(len(item_ids))}
+        rows = db.execute(
+            text(f"""
+                SELECT DISTINCT ON (pj.meli_item_id) pj.meli_item_id, clc.price_usd
+                FROM publish_jobs pj
+                JOIN cbt_listing_configs clc ON clc.product_draft_id = pj.product_draft_id
+                WHERE pj.meli_item_id IN ({placeholders})
+                ORDER BY pj.meli_item_id, pj.id DESC
+            """),
+            params,
+        ).fetchall()
+        for row in rows:
+            if row[0] and row[1] is not None:
+                net_proceeds_map[str(row[0])] = float(row[1])
+
     items: list[dict[str, object]] = []
     for item_id, detail in zip(item_ids, details, strict=True):
         if not isinstance(detail, dict):
@@ -536,6 +556,7 @@ async def list_store_items(
             "category_id": str(detail.get("category_id") or ""),
             "price": detail.get("price"),
             "currency_id": str(detail.get("currency_id") or ""),
+            "net_proceeds": net_proceeds_map.get(str(detail.get("id") or item_id)),
             "available_quantity": detail.get("available_quantity"),
             "sold_quantity": detail.get("sold_quantity"),
             "listing_type_id": str(detail.get("listing_type_id") or ""),
