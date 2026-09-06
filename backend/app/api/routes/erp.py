@@ -1,9 +1,15 @@
-from datetime import datetime, timedelta
+import asyncio
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+import httpx
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, desc
 from sqlalchemy.orm import Session
+
+from app.services.meli.client import MercadoLibreClient
+from app.services.meli.oauth import MercadoLibreOAuthClient
+from app.services.meli.token_vault import resolve_fresh_store_access_token
 
 from app.core.config import get_settings
 from app.db.session import get_db
@@ -35,22 +41,89 @@ def _utc_iso(value: datetime | None) -> str | None:
 
 # ============ 统计概览 ============
 
+def _create_oauth_client(db: Session) -> MercadoLibreOAuthClient:
+    return MercadoLibreOAuthClient(
+        client_id=settings.meli_client_id,
+        client_secret=settings.meli_client_secret,
+        redirect_uri=settings.meli_redirect_uri,
+    )
+
+
+async def _fetch_store_order_stats(store: Store, db: Session) -> dict:
+    """Fetch real sales stats from Mercado Libre items (CBT stores do not support /orders/search API)."""
+    result = {"total_orders": 0, "today_orders": 0, "pending_shipment": 0, "total_sales": Decimal("0")}
+    try:
+        access_token = await resolve_fresh_store_access_token(
+            db=db,
+            store=store,
+            encryption_key=settings.token_encryption_key,
+            oauth_client=_create_oauth_client(db),
+        )
+        if not access_token:
+            return result
+        client = MercadoLibreClient(access_token=access_token, timeout=30)
+        seller_id = store.seller_id
+
+        # Get all item IDs for this seller
+        item_ids: list[str] = []
+        offset = 0
+        while True:
+            r = await client.get(f"/users/{seller_id}/items/search?limit=50&offset={offset}")
+            if not isinstance(r, dict) or not isinstance(r.get("results"), list):
+                break
+            batch = r["results"]
+            if not batch:
+                break
+            item_ids.extend(str(x) for x in batch)
+            paging = r.get("paging") or {}
+            total = int(paging.get("total", 0))
+            offset += 50
+            if offset >= total or len(item_ids) >= 200:
+                break
+
+        # Fetch item details to get sold_quantity and price, sum up
+        async def _item_sales(item_id: str) -> tuple[int, Decimal]:
+            try:
+                item = await client.get(f"/items/{item_id}")
+                if isinstance(item, dict):
+                    sold = int(item.get("sold_quantity") or 0)
+                    price = item.get("price") or 0
+                    return sold, Decimal(str(price)) * sold
+            except Exception:
+                pass
+            return 0, Decimal("0")
+
+        if item_ids:
+            sales_results = await asyncio.gather(*(_item_sales(iid) for iid in item_ids))
+            total_sold = 0
+            for sold, revenue in sales_results:
+                total_sold += sold
+                result["total_sales"] += revenue
+            result["total_orders"] = total_sold  # Use total sold quantity as order proxy
+    except Exception:
+        pass
+    return result
+
+
 @router.get("/overview")
-def erp_overview(db: Session = Depends(get_db)):
+async def erp_overview(db: Session = Depends(get_db)):
     """ERP 首页统计概览"""
-    # 订单数
-    today = datetime.utcnow().date()
-    today_start = datetime.combine(today, datetime.min.time())
-
-    total_orders = db.query(func.count(Order.id)).scalar() or 0
-    today_orders = db.query(func.count(Order.id)).filter(Order.order_date >= today_start).scalar() or 0
-    pending_orders = db.query(func.count(Order.id)).filter(Order.status == "paid").scalar() or 0
-
-    # 销售金额
-    total_sales = db.query(func.coalesce(func.sum(Order.total_amount), Decimal("0"))).scalar()
-    today_sales = db.query(func.coalesce(func.sum(Order.total_amount), Decimal("0"))).filter(
-        Order.order_date >= today_start
-    ).scalar()
+    # 订单数 - 从美客多真实API获取
+    connected_stores = db.query(Store).filter(Store.oauth_status == "connected").all()
+    total_orders = 0
+    today_orders = 0
+    pending_orders = 0
+    total_sales = Decimal("0")
+    if connected_stores:
+        store_stats = await asyncio.gather(
+            *(_fetch_store_order_stats(store, db) for store in connected_stores)
+        )
+        for s in store_stats:
+            total_orders += s["total_orders"]
+            today_orders += s["today_orders"]
+            pending_orders += s["pending_shipment"]
+            total_sales += s["total_sales"]
+    today_sales = Decimal("0")  # 今日销售额暂不统计（避免额外API调用）
 
     # 库存
     total_skus = db.query(func.count(Inventory.id)).scalar() or 0
