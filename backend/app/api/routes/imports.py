@@ -932,10 +932,17 @@ def capture_source_product_from_extension(
             if isinstance(variant, dict)
             else {}
         )
+        # 标题/描述一并按变体页真实数据覆盖（父页可能是 2pcs、变体页是 6pcs，
+        # 用父页数据生成标题描述会错）。标题仅做存储层 60 字符截断，最终正式
+        # 标题由 AI 基于本变体页数据生成（严格 60 字符内，含空格与标点）。
         update_draft_content(
             db,
             draft.id,
             expected_content_version=draft.content_version,
+            title=(source.title[:60].rstrip() + "...")
+            if source.title and len(source.title) > 60
+            else source.title,
+            description=source.description,
             image_urls_json=images,
             video_urls_json=video_urls,
             source_variant_attributes_json=variant_attributes,
