@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   confirmDraftCategory,
+  createSourceVariantCollectionJob,
   createSourceVariantDraft,
   getCategoryAttributes,
   getCategoryDetails,
@@ -27,6 +28,7 @@ import {
   executeCbtPublishFromDraft,
   executeCbtFamilyPublish,
   listCbtFamilyDrafts,
+  listCollectionJobStatuses,
   generateDraftContent,
   getSystemReadiness,
   deleteDraft,
@@ -997,15 +999,28 @@ export function CbtGlobalPublishingPanel({
   async function editSourceVariant(variant: AmazonSourceVariant) {
     if (!draft.source_product_id || variant.asin === draft.source_variant_asin || variantDraftBusy) return;
     setVariantDraftBusy(variant.asin);
-    setStatus(`正在打开 ${variant.asin} 的独立草稿...`);
+    setStatus(`正在采集 ${variant.asin} 变体页真实数据...`);
     try {
+      // 先自动提交该变体页采集任务，拿到真实图/标题/属性后再建草稿；
+      // 采集失败或超时时回退用父页快照数据，避免用户漏点“采”导致素材不真实。
+      const job = await createSourceVariantCollectionJob(
+        draft.source_product_id, variant.asin, draft.target_site_id || "CBT",
+      );
+      const active = new Set(["pending", "running"]);
+      const deadline = Date.now() + 35_000;
+      let jobState = job;
+      while (active.has(jobState.status) && Date.now() < deadline) {
+        await new Promise((resolve) => window.setTimeout(resolve, 5_000));
+        const states = await listCollectionJobStatuses([jobState.id]);
+        if (states[0]) jobState = states[0];
+      }
       const updated = await createSourceVariantDraft(draft.source_product_id, variant.asin, draft.target_site_id || "CBT");
       setListingRail((current) => uniqueDrafts([...current.filter((item) => item.id !== updated.id), updated]));
       onDraftChange(updated);
       onSelectDraft?.(updated);
-      setStatus(variant.image_urls.length > 0
-        ? `已打开 ${variant.asin} 的独立草稿 #${updated.id}。`
-        : `已打开 ${variant.asin} 的独立草稿 #${updated.id}；该变体在父页无独立图，草稿暂用父商品图库，可打开该变体 Amazon 页面补采后重新采集素材。`);
+      setStatus(jobState.status === "completed"
+        ? `已采集变体页真实数据并打开 ${variant.asin} 的草稿 #${updated.id}。`
+        : `变体页采集${jobState.status === "failed" ? "失败" : "超时未完成"}，草稿 #${updated.id} 暂用父页数据，可稍后在草稿里点“采”补全。`);
     } catch (error) {
       setStatus(readableVariantDraftError(error));
     } finally {

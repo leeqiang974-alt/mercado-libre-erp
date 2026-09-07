@@ -74,7 +74,7 @@ async def discover_amazon_products(domain: str, keyword: str, limit: int, page: 
         await _lock_english_cookies(context, search_url)
         page = context.pages[0] if context.pages else await context.new_page()
         try:
-            await page.goto(search_url, wait_until="domcontentloaded", timeout=30_000)
+            await page.goto(search_url, wait_until="domcontentloaded", timeout=45_000)
             try:
                 await page.wait_for_selector(
                     '[data-component-type="s-search-result"][data-asin]', timeout=12_000

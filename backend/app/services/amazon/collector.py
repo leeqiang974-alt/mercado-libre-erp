@@ -238,7 +238,7 @@ async def fetch_amazon_html_with_playwright(url: str) -> AmazonPageFetch:
         await _lock_english_cookies(context, url)
         page = context.pages[0] if context.pages else await context.new_page()
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
             initial_html = await page.content()
             if requires_manual_action(initial_html):
                 return AmazonPageFetch(

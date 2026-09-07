@@ -1121,6 +1121,15 @@ def create_source_variant_collection_job(
     _lock_collection_site(db, target_site_id)
     existing = _existing_collection_jobs(db, target_site_id, {variant_url}).get(variant_url)
     if existing is not None:
+        if existing.status == CollectionJobStatus.FAILED:
+            # 上次变体页采集失败：重置为 pending 重新入队，让本次“编辑此变体”能再试一次拿到真实数据
+            existing.status = CollectionJobStatus.PENDING
+            existing.started_at = None
+            existing.completed_at = None
+            existing.next_attempt_at = None
+            existing.message = ""
+            db.commit()
+            db.refresh(existing)
         existing_source = (
             db.get(SourceProduct, existing.source_product_id)
             if existing.source_product_id is not None
