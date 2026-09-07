@@ -216,7 +216,23 @@ export function PublishingPage({
       setStatus(
         `已回查 ${result.checked} 个已发布商品：${paused.length} 个被暂停，${failed.length} 个回查失败`
       );
-      await refreshPublishJobs();
+      const now = new Date().toISOString();
+      setJobs((prev) =>
+        prev.map((job) => {
+          const hit = result.results.find((r) => r.job_id === job.id);
+          if (!hit) return job;
+          return {
+            ...job,
+            item_status: {
+              status: hit.status,
+              sub_status: hit.sub_status,
+              title: hit.title,
+              permalink: hit.permalink,
+              checked_at: now,
+            },
+          };
+        })
+      );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "回查美客多状态失败");
     } finally {
@@ -1497,7 +1513,6 @@ function PublishJobHistory({
                         ? `（${job.item_status.sub_status.join(", ")}）`
                         : ""}
                       {job.item_status.title ? ` · 标题：${job.item_status.title}` : ""}
-                      {job.item_status.checked_at ? ` · 回查：${formatJobTime(job.item_status.checked_at)}` : ""}
                     </small>
                   )}
                   {job.errors.length > 0 && <small className="error">{job.errors.map(readablePublishError).join(", ")}</small>}
