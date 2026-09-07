@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -81,6 +82,29 @@ async def mirror_image_to_oss(source_url: str, settings: Settings) -> str:
     return _public_url(settings, object_key)
 
 
+_AMAZON_IMAGE_SIZE_RE = re.compile(r"\._(?:AC_)?(?:SX|SY|UL|US|SL)\d+_")
+_AMAZON_PLAY_IMAGE_HINTS = ("play-button", "PKplay", "grey-pixel")
+
+
+def _upgrade_amazon_image(url: str) -> str:
+    """Amazon 图片 URL 统一升级为高清 1500px 版本，避免美客多拒绝小尺寸图。
+
+    - 带尺寸标记的（._AC_SX569_ / ._AC_US100_ / ._SL1500_ 等）统一替换为 ._AC_SL1500_
+    - 无尺寸标记的原图 URL 追加 ._AC_SL1500_ 标记
+    - 非 Amazon 图（OSS 直链等）原样保留
+    """
+    if "m.media-amazon.com/images/I/" not in url:
+        return url
+    if any(hint in url for hint in _AMAZON_PLAY_IMAGE_HINTS):
+        return url  # 由上层过滤逻辑剔除
+    if _AMAZON_IMAGE_SIZE_RE.search(url):
+        return _AMAZON_IMAGE_SIZE_RE.sub("._AC_SL1500_", url)
+    dot = url.rfind(".")
+    if dot <= 0 or dot == len(url) - 1:
+        return url
+    return url[:dot] + "._AC_SL1500_" + url[dot:]
+
+
 async def mirror_images_to_oss(urls: list[str], settings: Settings) -> list[str]:
     source_urls = list(dict.fromkeys(
         raw_url.strip()
@@ -88,7 +112,10 @@ async def mirror_images_to_oss(urls: list[str], settings: Settings) -> list[str]
         if raw_url.strip()
         and not raw_url.strip().lower().endswith(".gif")
         and "grey-pixel" not in raw_url.lower()
+        and not any(hint in raw_url.lower() for hint in _AMAZON_PLAY_IMAGE_HINTS)
     ))
+    # 高清化后重新去重（不同尺寸标记可能指向同一张图）
+    source_urls = list(dict.fromkeys(_upgrade_amazon_image(url) for url in source_urls))
     # Image mirroring is independent per URL. Run the small listing batch in
     # parallel so the operator request remains inside the API timeout.
     uploaded_urls = await asyncio.gather(
