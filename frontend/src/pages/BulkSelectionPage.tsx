@@ -250,6 +250,18 @@ export function BulkSelectionPage() {
             <Download size={14} /> {creating ? "创建中..." : `批量生成 ${selected.size} 个草稿`}
           </button>
         </div>
+        {selected.size > 0 && (
+          <div className="selected-preview" style={{ marginTop: 10, padding: "10px 12px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, fontSize: 13 }}>
+            <strong>已选 {selected.size} 个产品（生成前请核对）：</strong>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px", marginTop: 6 }}>
+              {products.filter((p) => selected.has(p.id)).map((p) => (
+                <span key={p.id} style={{ color: "#1d4ed8" }}>
+                  {"\u2022"} ${p.source_price ?? "-"} {p.title ? p.title.slice(0, 48) : p.asin || `#${p.id}`}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         {products.length === 0 && !loading ? (
           <div className="empty-tip">
             <AlertCircle size={16} />
