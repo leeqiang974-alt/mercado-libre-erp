@@ -14,6 +14,7 @@ from app.schemas.content_generation import GeneratedListingContent
 from app.services.audit_events import create_audit_event
 from app.services.drafts import sanitize_unbranded_description
 from app.services.integration_credentials import resolve_integration_credentials
+from app.services.llm_provider import get_current_provider
 from app.services.meli.metadata_cache import category_attributes_key, get_cached_metadata
 
 
@@ -62,9 +63,7 @@ async def generate_and_save_draft_content(
     # The selected provider is runtime configuration, while the credential
     # resolver owns only encrypted/fallback secret values.  Do not read a
     # provider selector from ResolvedIntegrationCredentials.
-    provider = settings.content_generation_provider
-    if provider not in {"deepseek", "volcengine", "agnes"}:
-        provider = "deepseek"
+    provider = get_current_provider(db, settings)
     if provider == "deepseek":
         api_key = credentials.deepseek_api_key
     elif provider == "volcengine":

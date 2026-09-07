@@ -17,6 +17,7 @@ from app.api.routes import (
     erp,
     imports,
     integrations,
+    llm,
     metadata,
     publishing,
     reviews,
@@ -66,6 +67,7 @@ app.include_router(alibaba_1688.router)
 app.include_router(erp.router)
 app.include_router(diagnostics.router)
 app.include_router(bulk_selection.router)
+app.include_router(llm.router)
 
 
 @app.middleware("http")

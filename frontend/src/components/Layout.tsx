@@ -19,7 +19,9 @@ import {
   ListPlus,
   Layers,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { getLlmProviders, setLlmProvider, type LlmProviderInfo } from "../api/erpClient";
 
 const menuGroups = [
   {
@@ -85,6 +87,32 @@ export function Layout({
   onPageChange: (page: string) => void;
   children: ReactNode;
 }) {
+  const [llmProviders, setLlmProviders] = useState<LlmProviderInfo[]>([]);
+  const [llmCurrent, setLlmCurrent] = useState("");
+  const [llmSwitching, setLlmSwitching] = useState(false);
+
+  useEffect(() => {
+    getLlmProviders()
+      .then((data) => {
+        setLlmProviders(data.providers);
+        setLlmCurrent(data.current);
+      })
+      .catch(() => {
+        /* 后端不可用时静默降级，不影响导航 */
+      });
+  }, []);
+
+  const onLlmChange = async (provider: string) => {
+    setLlmSwitching(true);
+    try {
+      const result = await setLlmProvider(provider);
+      setLlmCurrent(result.provider);
+    } catch {
+      /* 切换失败保留原选择 */
+    }
+    setLlmSwitching(false);
+  };
+
   return (
     <div className="app">
       <aside className="sidebar">
@@ -109,6 +137,23 @@ export function Layout({
             })}
           </div>
         ))}
+              <div className="sidebar-group sidebar-llm-group">
+          <div className="sidebar-group-title">AI 模型</div>
+          <select
+            className="sidebar-llm-select"
+            value={llmCurrent}
+            disabled={llmSwitching}
+            onChange={(event) => onLlmChange(event.target.value)}
+            title="上架库 AI 内容生成使用的模型"
+          >
+            {llmProviders.length === 0 && <option value="">加载中…</option>}
+            {llmProviders.map((provider) => (
+              <option key={provider.id} value={provider.id}>
+                {provider.name}（{provider.model}）
+              </option>
+            ))}
+          </select>
+        </div>
       </aside>
       <main>{children}</main>
     </div>

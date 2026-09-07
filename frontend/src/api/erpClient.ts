@@ -374,3 +374,33 @@ export const MOVEMENT_TYPE_LABELS: Record<string, string> = {
   adjustment: "调整",
   transfer: "调拨",
 };
+
+
+// ============ LLM 模型选择 ============
+export interface LlmProviderInfo {
+  id: string;
+  name: string;
+  model: string;
+  base_url: string;
+  key_configured: boolean;
+}
+
+async function post<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(`Request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function getLlmProviders(): Promise<{ providers: LlmProviderInfo[]; current: string }> {
+  return get<{ providers: LlmProviderInfo[]; current: string }>("/api/llm/providers");
+}
+
+export async function setLlmProvider(provider: string): Promise<{ provider: string }> {
+  return post<{ provider: string }>("/api/llm/current", { provider });
+}
