@@ -2,7 +2,8 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_, text
+from pydantic import BaseModel
+from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -263,4 +264,69 @@ def create_bulk_campaign(
         "min_price": min_price,
         "max_price": max_price,
         "message": "战役已创建，后台将持续发现并采集商品。价格带筛选结果请在批量选品页查询。",
+    }
+
+
+
+
+class ImportedProduct(BaseModel):
+    asin: str
+    title: str
+    source_price: float | None = None
+    source_currency: str = "USD"
+    image_url: str | None = None
+    product_url: str | None = None
+    brand: str | None = None
+
+
+class ImportRequest(BaseModel):
+    products: list[ImportedProduct]
+    keyword: str = ""
+
+
+@router.post("/import")
+def import_browser_products(req: ImportRequest, db: Session = Depends(get_db)):
+    created, skipped = 0, 0
+    results = []
+    for p in req.products:
+        asin = (p.asin or "").strip().upper()
+        if not asin:
+            skipped += 1
+            results.append({"asin": p.asin, "status": "skipped", "reason": "missing_asin"})
+            continue
+        exists = db.execute(
+            select(SourceProduct.id).where(SourceProduct.asin == asin)
+        ).scalar_one_or_none()
+        if exists is not None:
+            skipped += 1
+            results.append({"asin": asin, "status": "skipped", "reason": "duplicate"})
+            continue
+        try:
+            sp = SourceProduct(
+                source="amazon_page",
+                source_url=(p.product_url or f"https://www.amazon.com/dp/{asin}")[:2048],
+                asin=asin,
+                collection_method="browser_import",
+                title=(p.title or asin)[:2000],
+                brand=p.brand or "",
+                source_price=p.source_price,
+                source_currency=p.source_currency or "USD",
+                description="",
+                image_urls_json=[p.image_url] if p.image_url else [],
+            )
+            db.add(sp)
+            db.flush()
+            created += 1
+            results.append({"asin": asin, "status": "created", "source_product_id": sp.id})
+        except Exception as e:
+            db.rollback()
+            logger.warning("import product %s failed: %s", asin, e)
+            skipped += 1
+            results.append({"asin": asin, "status": "error", "reason": str(e)[:120]})
+    db.commit()
+    return {
+        "created": created,
+        "skipped": skipped,
+        "keyword": req.keyword,
+        "results": results,
     }
