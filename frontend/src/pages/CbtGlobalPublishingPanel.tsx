@@ -1003,7 +1003,9 @@ export function CbtGlobalPublishingPanel({
       setListingRail((current) => uniqueDrafts([...current.filter((item) => item.id !== updated.id), updated]));
       onDraftChange(updated);
       onSelectDraft?.(updated);
-      setStatus(`已打开 ${variant.asin} 的独立草稿 #${updated.id}。`);
+      setStatus(variant.image_urls.length > 0
+        ? `已打开 ${variant.asin} 的独立草稿 #${updated.id}。`
+        : `已打开 ${variant.asin} 的独立草稿 #${updated.id}；该变体在父页无独立图，草稿暂用父商品图库，可打开该变体 Amazon 页面补采后重新采集素材。`);
     } catch (error) {
       setStatus(readableVariantDraftError(error));
     } finally {
@@ -1329,7 +1331,7 @@ export function CbtGlobalPublishingPanel({
               {sourceVariants.map((variant) => <div className={`attribute-suggestion ${variant.selected || variant.asin === draft.source_variant_asin ? "selected" : ""}`} key={variant.asin}>
                 <span className="amazon-variant-source">
                   {variant.image_urls[0] ? <a href={variant.image_urls[0]} target="_blank" rel="noreferrer" title="打开 SKU 图片"><img src={variant.image_urls[0]} alt={`${variant.asin} SKU 图片`} /></a> : <span className="amazon-variant-no-image">无 SKU 图</span>}
-                  <span><small>{variant.asin}</small><strong>{Object.entries(variant.attributes).map(([name, value]) => `${name}: ${value}`).join(" · ") || "未返回规格"}</strong><small>{variant.image_urls.length > 0 ? `${variant.image_urls.length} 张 SKU 图` : "未采集 SKU 图"}</small></span>
+                  <span><small>{variant.asin}</small><strong>{Object.entries(variant.attributes).map(([name, value]) => `${name}: ${value}`).join(" · ") || "未返回规格"}</strong><small>{variant.image_urls.length > 0 ? `${variant.image_urls.length} 张 SKU 图` : "无 SKU 图（草稿暂用父页图）"}</small></span>
                 </span>
                 <span className="amazon-variant-actions">
                   {variant.selected || variant.asin === draft.source_variant_asin
