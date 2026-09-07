@@ -319,6 +319,7 @@ def to_publish_job_read(job: PublishJob) -> PublishJobRead:
         shipping_mode=response_summary.get("shipping_mode", ""),
         shipping_logistic_type=response_summary.get("shipping_logistic_type", ""),
         errors=response_summary.get("errors", []),
+        item_status=response_summary.get("item_status", {}),
         created_at=_utc_datetime(job.created_at),
         started_at=_utc_datetime(job.started_at),
         completed_at=_utc_datetime(job.completed_at),

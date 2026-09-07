@@ -310,6 +310,13 @@ export type PublishJobRecord = {
   shipping_mode: string;
   shipping_logistic_type: string;
   errors: string[];
+  item_status: {
+    checked_at?: string;
+    status?: string;
+    sub_status?: string[];
+    title?: string;
+    permalink?: string;
+  } | null;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
@@ -1242,6 +1249,25 @@ export async function listPublishJobs(limit = 100, offset = 0) {
   const response = await fetch(`${API_BASE}/api/publishing/jobs?${params}`);
   if (!response.ok) throw await httpError(response);
   return response.json() as Promise<PublishJobRecord[]>;
+}
+
+export async function syncPublishJobStatus() {
+  const response = await fetch(`${API_BASE}/api/publishing/jobs/sync-status`);
+  if (!response.ok) throw await httpError(response);
+  return response.json() as Promise<{
+    checked: number;
+    results: Array<{
+      job_id: number;
+      draft_id: number;
+      item_id: string;
+      ok: boolean;
+      status?: string;
+      sub_status?: string[];
+      title?: string;
+      permalink?: string;
+      error?: string;
+    }>;
+  }>;
 }
 
 export async function retryPublishJob(jobId: number) {

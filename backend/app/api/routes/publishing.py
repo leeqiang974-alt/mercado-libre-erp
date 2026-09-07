@@ -1805,6 +1805,81 @@ def cancel_pending_publish_job(
     )
 
 
+@router.get("/jobs/sync-status")
+async def sync_publish_job_status(
+    db: Session = Depends(get_db),
+) -> dict:
+    """回查所有已发布 job 的美客多 item 状态并写回 response_summary_json。
+
+    美客多可能随时暂停 listing（标题/图片不匹配、违规等），ERP 不会自动收到
+    通知；此接口让前端可以一键回查真实状态（active/paused/closed + 当前标题），
+    避免"发布后啥都不知道"。
+    """
+    jobs = db.scalars(
+        select(PublishJob)
+        .where(
+            PublishJob.status == PublishJobStatus.PUBLISHED,
+            PublishJob.meli_item_id != "",
+        )
+        .order_by(PublishJob.id)
+    ).all()
+    if not jobs:
+        return {"checked": 0, "results": []}
+    oauth_client = create_oauth_client(db)
+    encryption_key = os.environ.get("TOKEN_ENCRYPTION_KEY", "")
+    results: list[dict] = []
+    for job in jobs:
+        entry: dict = {
+            "job_id": job.id,
+            "draft_id": job.product_draft_id,
+            "item_id": job.meli_item_id,
+            "ok": False,
+        }
+        store = db.get(Store, job.store_id)
+        if store is None:
+            entry["error"] = "store_missing"
+            results.append(entry)
+            continue
+        try:
+            token = await resolve_fresh_store_access_token(
+                db, store, encryption_key, oauth_client
+            )
+            if not token:
+                entry["error"] = "access_token_missing"
+                results.append(entry)
+                continue
+            client = MercadoLibreClient(access_token=token)
+            item = await client.get(f"/items/{job.meli_item_id}")
+            sub = item.get("sub_status") or []
+            title = item.get("title") or ""
+            status = item.get("status") or ""
+            permalink = item.get("permalink") or ""
+            item_status = {
+                "checked_at": datetime.now(UTC).isoformat(timespec="seconds"),
+                "status": status,
+                "sub_status": sub,
+                "title": title,
+                "permalink": permalink,
+            }
+            summary = dict(job.response_summary_json or {})
+            summary["item_status"] = item_status
+            job.response_summary_json = summary
+            if permalink:
+                job.permalink = permalink
+            entry.update(
+                ok=True,
+                status=status,
+                sub_status=sub,
+                title=title,
+                permalink=permalink,
+            )
+        except Exception as exc:  # noqa: BLE001 - 单个 job 失败不阻断整体回查
+            entry["error"] = f"{type(exc).__name__}: {str(exc)[:200]}"
+        results.append(entry)
+    db.commit()
+    return {"checked": len(jobs), "results": results}
+
+
 @router.post("/jobs/{job_id}/reconcile", response_model=PublishExecutionResult)
 async def reconcile_unknown_publish_job(
     job_id: int,

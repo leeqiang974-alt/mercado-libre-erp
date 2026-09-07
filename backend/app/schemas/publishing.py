@@ -40,6 +40,7 @@ class PublishJobRead(BaseModel):
     shipping_mode: str = ""
     shipping_logistic_type: str = ""
     errors: list[str] = Field(default_factory=list)
+    item_status: dict = Field(default_factory=dict)
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None

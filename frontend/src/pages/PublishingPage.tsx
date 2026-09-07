@@ -34,6 +34,7 @@ import {
   listStores,
   preflightPublishBatch,
   reconcilePublishJob,
+  syncPublishJobStatus,
   previewPublishFromDraft,
   refreshCategoryAttributes,
   refreshListingTypes,
@@ -203,6 +204,25 @@ export function PublishingPage({
       if (showFeedback && publishJobsMountedRef.current) setJobsRefreshing(false);
     }
   }, [jobs.length]);
+
+  const syncMeliItemStatus = useCallback(async () => {
+    setBusy("sync-items");
+    try {
+      const result = await syncPublishJobStatus();
+      const failed = result.results.filter((r) => !r.ok);
+      const paused = result.results.filter(
+        (r) => r.ok && r.status === "paused"
+      );
+      setStatus(
+        `已回查 ${result.checked} 个已发布商品：${paused.length} 个被暂停，${failed.length} 个回查失败`
+      );
+      await refreshPublishJobs();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "回查美客多状态失败");
+    } finally {
+      setBusy("");
+    }
+  }, [refreshPublishJobs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1074,9 +1094,11 @@ export function PublishingPage({
       <PublishJobHistory
         jobs={jobs}
         refreshing={jobsRefreshing}
+        syncing={busy === "sync-items"}
         busy={busy}
         cancelCandidateJobId={cancelCandidateJobId}
         onRefresh={() => void refreshPublishJobs(true)}
+        onSyncStatus={() => void syncMeliItemStatus()}
         onRetry={(jobId) => void retryJob(jobId)}
         onRequestCancel={setCancelCandidateJobId}
         onCancel={(jobId) => void cancelJob(jobId)}
@@ -1407,9 +1429,11 @@ function PublishResponseDetails({ details }: { details: Record<string, unknown> 
 function PublishJobHistory({
   jobs,
   refreshing,
+  syncing,
   busy,
   cancelCandidateJobId,
   onRefresh,
+  onSyncStatus,
   onRetry,
   onRequestCancel,
   onCancel,
@@ -1420,9 +1444,11 @@ function PublishJobHistory({
 }: {
   jobs: PublishJobRecord[];
   refreshing: boolean;
+  syncing: boolean;
   busy: string;
   cancelCandidateJobId: number | null;
   onRefresh: () => void;
+  onSyncStatus: () => void;
   onRetry: (jobId: number) => void;
   onRequestCancel: (jobId: number) => void;
   onCancel: (jobId: number) => void;
@@ -1437,6 +1463,9 @@ function PublishJobHistory({
         <div><h3>发布任务</h3></div>
         <div className="section-heading-actions">
           <span>{jobs.length}</span>
+          <button className="secondary-button" title="回查美客多商品真实状态（active/paused/标题）" disabled={syncing} onClick={onSyncStatus}>
+            <RefreshCw className={syncing ? "spin" : ""} size={15} /> 刷新美客多状态
+          </button>
           <button className="icon-button" title="刷新发布任务" disabled={refreshing} onClick={onRefresh}>
             <RefreshCw className={refreshing ? "spin" : ""} size={17} />
           </button>
@@ -1461,6 +1490,16 @@ function PublishJobHistory({
                   {job.started_at && <small>开始时间：{formatJobTime(job.started_at)}</small>}
                   {job.completed_at && <small>完成时间：{formatJobTime(job.completed_at)}</small>}
                   {job.item_id && <small>商品：{job.item_id}</small>}
+                  {job.item_status && job.item_status.status && (
+                    <small className={job.item_status.status === "paused" ? "error" : ""}>
+                      美客多状态：{job.item_status.status}
+                      {Array.isArray(job.item_status.sub_status) && job.item_status.sub_status.length > 0
+                        ? `（${job.item_status.sub_status.join(", ")}）`
+                        : ""}
+                      {job.item_status.title ? ` · 标题：${job.item_status.title}` : ""}
+                      {job.item_status.checked_at ? ` · 回查：${formatJobTime(job.item_status.checked_at)}` : ""}
+                    </small>
+                  )}
                   {job.errors.length > 0 && <small className="error">{job.errors.map(readablePublishError).join(", ")}</small>}
                 </span>
                 <span className={`state-pill ${stateClass}`}>{job.status}</span>
