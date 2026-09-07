@@ -6,6 +6,22 @@ import re
 
 SUPPORTED_SHIPPING_MODES = {"me2", "me1", "not_specified"}
 MAX_PRODUCT_PICTURES = 12
+# 默认 family_name 是 "xy+草稿id" 代号；UP 模式美客多用 family_name 派生各站点
+# 标题，代号标题（如 "Xy001130"）会被判"标题与图片不匹配"并暂停 listing。
+# 发布时若检测到默认代号，自动改用草稿的 AI 英文标题。
+DEFAULT_FAMILY_CODE_RE = re.compile(r"^xy\d{3,8}$", re.IGNORECASE)
+
+
+def resolve_family_name(draft: ProductDraftCreate, configured: str) -> str:
+    configured = (configured or "").strip()
+    if configured and not DEFAULT_FAMILY_CODE_RE.match(configured):
+        return configured
+    fallback = (draft.title or "").strip()
+    if not fallback:
+        raise ValueError(
+            "family_name 是默认代号且草稿没有英文标题；请先 AI 生成标题或手动填写 family_name。"
+        )
+    return fallback[:60]
 SUPPORTED_NON_FULL_LOGISTIC_TYPES = {
     "drop_off",
     "cross_docking",
@@ -147,7 +163,7 @@ def build_cbt_global_item_payload(
     """
     if not config.category_id.startswith("CBT"):
         raise ValueError("Global Selling category ID must start with CBT.")
-    if not config.family_name.strip():
+    if not resolve_family_name(draft, config.family_name):
         raise ValueError("family_name is required for a traditional CBT seller.")
     if not config.description.strip():
         raise ValueError("Description is required.")
@@ -238,8 +254,7 @@ def build_cbt_user_product_payload(
     """
     if not config.category_id.startswith("CBT"):
         raise ValueError("Global Selling category ID must start with CBT.")
-    if not config.family_name.strip():
-        raise ValueError("family_name is required for a User Products listing.")
+    family_name = resolve_family_name(draft, config.family_name)
     if not config.description.strip():
         raise ValueError("Description is required.")
     if config.price_usd <= 0:
@@ -277,7 +292,7 @@ def build_cbt_user_product_payload(
     ]
 
     return {
-        "family_name": config.family_name,
+        "family_name": family_name,
         "category_id": config.category_id,
         "currency_id": "USD",
         "global_net_proceeds": config.price_usd,
