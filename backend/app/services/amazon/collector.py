@@ -233,6 +233,9 @@ async def fetch_amazon_html_with_playwright(url: str) -> AmazonPageFetch:
             viewport={"width": 1440, "height": 1000},
             extra_http_headers={"Accept-Language": accept_language},
         )
+        # 锁定英文渲染：Amazon 按 lc-main cookie 决定页面语言，仅 Accept-Language 不够。
+        # 大陆 IP 下默认会返回中文标题，采集到的 source 标题必须是英文原版。
+        await _lock_english_cookies(context, url)
         page = context.pages[0] if context.pages else await context.new_page()
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
@@ -341,3 +344,24 @@ async def collect_amazon_page(
         source_snapshot=source_snapshot,
         collection_method=collection_method,
     )
+
+
+async def _lock_english_cookies(context, url: str) -> None:
+    """Set Amazon language/currency cookies before navigation so the page
+    renders in English (en_US / USD) regardless of the caller IP."""
+    from urllib.parse import urlparse as _urlparse
+
+    host = _urlparse(url).hostname or ""
+    root_domain = host[4:] if host.startswith("www.") else host
+    if not root_domain or "amazon" not in root_domain:
+        return
+    try:
+        await context.add_cookies(
+            [
+                {"name": "lc-main", "value": "en_US", "domain": root_domain, "path": "/"},
+                {"name": "i18n-prefs", "value": "USD", "domain": root_domain, "path": "/"},
+            ]
+        )
+    except Exception:
+        # Cookie failure must not block collection; Accept-Language still applies.
+        pass

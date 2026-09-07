@@ -70,6 +70,8 @@ async def discover_amazon_products(domain: str, keyword: str, limit: int, page: 
             viewport={"width": 1440, "height": 1000},
             extra_http_headers={"Accept-Language": accept_language},
         )
+        # 锁定英文渲染：Amazon 按 lc-main cookie 决定页面语言，仅 Accept-Language 不够。
+        await _lock_english_cookies(context, search_url)
         page = context.pages[0] if context.pages else await context.new_page()
         try:
             await page.goto(search_url, wait_until="domcontentloaded", timeout=30_000)
@@ -88,3 +90,24 @@ async def discover_amazon_products(domain: str, keyword: str, limit: int, page: 
             )
         finally:
             await context.close()
+
+
+async def _lock_english_cookies(context, url: str) -> None:
+    """Set Amazon language/currency cookies before navigation so the page
+    renders in English (en_US / USD) regardless of the caller IP."""
+    from urllib.parse import urlparse as _urlparse
+
+    host = _urlparse(url).hostname or ""
+    root_domain = host[4:] if host.startswith("www.") else host
+    if not root_domain or "amazon" not in root_domain:
+        return
+    try:
+        await context.add_cookies(
+            [
+                {"name": "lc-main", "value": "en_US", "domain": root_domain, "path": "/"},
+                {"name": "i18n-prefs", "value": "USD", "domain": root_domain, "path": "/"},
+            ]
+        )
+    except Exception:
+        # Cookie failure must not block collection; Accept-Language still applies.
+        pass
