@@ -16,6 +16,7 @@ from app.models.source_product import SourceProduct
 from app.models.store import Store
 from app.schemas.drafts import ProductDraftCreate
 from app.services.amazon.keyword_campaigns import normalize_keywords
+from app.services.amazon.media import prepare_listing_title
 from app.services.drafts import create_product_draft, normalize_listing_title
 from app.services.meli.client import MercadoLibreClient
 from app.services.meli.oauth import MercadoLibreOAuthClient
@@ -131,7 +132,7 @@ def bulk_create_drafts(
             draft = create_product_draft(
                 db,
                 ProductDraftCreate(
-                    title=normalize_listing_title(sp.title, sp.brand),
+                    title=prepare_listing_title(sp.title, sp.brand) or " ".join((sp.title or "").split())[:60],
                     description=sp.description or "",
                     brand=sp.brand,
                     target_site_id=target_site_id,
