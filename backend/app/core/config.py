@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     agnes_api_key: str = ""
     agnes_base_url: str = "https://apihub.agnes-ai.com/v1"
     agnes_model: str = "agnes-2.5-flash"
-    content_generation_provider: str = "deepseek"
+    content_generation_provider: str = "agnes"
     ai_content_generation_timeout_seconds: int = 90
     alibaba_1688_app_key: str = ""
     alibaba_1688_app_secret: str = ""

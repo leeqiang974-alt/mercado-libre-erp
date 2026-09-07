@@ -63,13 +63,25 @@ async def generate_and_save_draft_content(
     # resolver owns only encrypted/fallback secret values.  Do not read a
     # provider selector from ResolvedIntegrationCredentials.
     provider = settings.content_generation_provider
-    if provider not in {"deepseek", "volcengine"}:
+    if provider not in {"deepseek", "volcengine", "agnes"}:
         provider = "deepseek"
-    api_key = credentials.deepseek_api_key if provider == "deepseek" else credentials.volcengine_api_key
+    if provider == "deepseek":
+        api_key = credentials.deepseek_api_key
+    elif provider == "volcengine":
+        api_key = credentials.volcengine_api_key
+    else:
+        api_key = settings.agnes_api_key
     if not api_key:
         raise HTTPException(status_code=503, detail=f"{provider}_api_key_required")
-    base_url = settings.deepseek_base_url if provider == "deepseek" else settings.volcengine_base_url
-    model = settings.deepseek_model if provider == "deepseek" else settings.volcengine_model
+    if provider == "deepseek":
+        base_url = settings.deepseek_base_url
+        model = settings.deepseek_model
+    elif provider == "volcengine":
+        base_url = settings.volcengine_base_url
+        model = settings.volcengine_model
+    else:
+        base_url = settings.agnes_base_url
+        model = settings.agnes_model
 
     source = db.get(SourceProduct, draft.source_product_id) if draft.source_product_id else None
     draft_evidence_description_length = len(draft.description or "")
