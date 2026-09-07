@@ -164,10 +164,8 @@ def create_or_get_source_variant_draft(
     if variant is None:
         raise LookupError("source_variant_not_found")
 
-    selected_asin, _ = selected_source_variant(snapshot, source.asin)
-    if variant.asin != selected_asin:
-        raise ValueError("variant_page_collection_required")
-
+    # 不再要求先单独采集变体页：parent 快照已含变体的图片与属性，
+    # 直接据此创建独立草稿，后续可再补采更完整素材。
     existing = (
         db.query(ProductDraft)
         .filter(

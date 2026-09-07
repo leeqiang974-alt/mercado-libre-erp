@@ -1093,12 +1093,12 @@ export function CbtGlobalPublishingPanel({
     return errors;
   }
 
-  async function saveConfig() {
+  async function saveConfig(): Promise<boolean> {
     if (!canSave) {
       const errors = marketplaceValidationErrors();
       setPreview({ allowed: false, errors, payload: null });
       setStatus(`暂不能保存：${errors[0] ?? "请完善美客多发布要求"}`);
-      return;
+      return false;
     }
     setBusy("save"); setStatus(""); setPreview(null); setExecution(null);
     try {
@@ -1116,7 +1116,8 @@ export function CbtGlobalPublishingPanel({
       setStatus(removedSmallImages
         ? `跨境刊登配置已保存；已自动剔除 ${removedSmallImages} 张小于 500×500px 的图片，可直接进行官方请求预检。`
         : "跨境刊登配置已保存，可直接进行官方请求预检。");
-    } catch (error) { setStatus(error instanceof Error ? error.message : "保存跨境刊登配置失败"); }
+      return true;
+    } catch (error) { setStatus(error instanceof Error ? error.message : "保存跨境刊登配置失败"); return false; }
     finally { setBusy(""); }
   }
 
@@ -1128,9 +1129,13 @@ export function CbtGlobalPublishingPanel({
       return;
     }
     if (!saved) {
-      setPreview({ allowed: false, errors: ["请先点击保存，系统会保存当前刊登配置后再调用美客多预检。"], payload: null });
-      setStatus("请先保存当前配置。");
-      return;
+      // 流程打通：未保存的修改先自动保存，再调用官方预检
+      const ok = await saveConfig();
+      if (!ok) {
+        setPreview({ allowed: false, errors: ["保存当前刊登配置失败，请根据上方提示修正后重试。"], payload: null });
+        setStatus("配置保存失败，无法预检。");
+        return;
+      }
     }
     setBusy("preview"); setStatus("");
     try {
@@ -1174,6 +1179,31 @@ export function CbtGlobalPublishingPanel({
 
   async function executePublish() {
     if (busy) return;
+    // 流程打通：发布前保证配置已保存
+    if (!saved) {
+      setStatus("正在保存当前配置…");
+      const ok = await saveConfig();
+      if (!ok) { setStatus("配置保存失败，未提交发布。"); return; }
+    }
+    // 保证发布前检查通过（配置变更后 preview 会被置空）
+    if (!preview?.allowed) {
+      setStatus("正在自动完成发布前检查…");
+      setBusy("preview");
+      try {
+        const p = await previewCbtPublishFromDraft(draftId);
+        setPreview(p);
+        if (!p.allowed) {
+          setStatus("发布前检查未通过，请查看下方错误明细。");
+          setBusy("");
+          return;
+        }
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "生成官方请求预检失败");
+        setBusy("");
+        return;
+      }
+    }
+    setBusy("");
     setStatus("正在等待发布确认…");
     if (!window.confirm("确认向 Mercado Libre 提交真实刊登吗？提交后将创建商品。")) {
       setStatus("已取消发布，未向美客多提交请求。");
@@ -1196,7 +1226,11 @@ export function CbtGlobalPublishingPanel({
 
   async function openFamilyPicker() {
     if (busy) return;
-    if (!saved) { setStatus("请先保存当前发布配置，再合并发布变体。"); return; }
+    if (!saved) {
+      setStatus("正在保存当前配置…");
+      const ok = await saveConfig();
+      if (!ok) { setStatus("配置保存失败，无法合并发布变体。"); return; }
+    }
     setBusy("family");
     setStatus("正在读取同产品族草稿…");
     try {
@@ -1338,7 +1372,7 @@ export function CbtGlobalPublishingPanel({
         </div>
       </div>
     </div>}
-    <footer className="wf-action-bar"><span role="status" aria-live="polite">{status || (saved ? "配置已保存" : "请先完成必填内容")}</span><div><button className="secondary-button" onClick={onBackToEditing}>取消</button><button disabled={busy === "save"} onClick={saveConfig}><Save size={16} /> 保存</button><button className="secondary-button" disabled={busy === "preview"} onClick={previewPayload}><ListChecks size={16} /> 预检</button><button disabled={!preview?.allowed || !readiness?.mercado_libre.live_publish_enabled || busy === "execute"} onClick={executePublish} aria-busy={busy === "execute"}>{busy === "execute" ? <RefreshCw className="spin" size={16} /> : <Globe2 size={16} />} {busy === "execute" ? "正在提交…" : "立即发布"}</button><button className="secondary-button" disabled={!saved || busy === "family"} onClick={() => void openFamilyPicker()} title="把相同 Parent SKU（产品族）的多个变体草稿一次性提交发布，美客多会把它们合并展示为同一产品的变体">{busy === "family" ? <RefreshCw className="spin" size={16} /> : <ListChecks size={16} />} 合并发布变体</button></div></footer>
+    <footer className="wf-action-bar"><span role="status" aria-live="polite">{status || (saved ? "配置已保存" : "请先完成必填内容")}</span><div><button className="secondary-button" onClick={onBackToEditing}>取消</button><button disabled={busy === "save"} onClick={saveConfig}><Save size={16} /> 保存</button><button className="secondary-button" disabled={busy === "preview" || busy === "save"} onClick={previewPayload}><ListChecks size={16} /> 预检</button><button disabled={!readiness?.mercado_libre.live_publish_enabled || busy === "execute"} onClick={executePublish} aria-busy={busy === "execute"}>{busy === "execute" ? <RefreshCw className="spin" size={16} /> : <Globe2 size={16} />} {busy === "execute" ? "正在提交…" : "立即发布"}</button><button className="secondary-button" disabled={!saved || busy === "family"} onClick={() => void openFamilyPicker()} title="把相同 Parent SKU（产品族）的多个变体草稿一次性提交发布，美客多会把它们合并展示为同一产品的变体">{busy === "family" ? <RefreshCw className="spin" size={16} /> : <ListChecks size={16} />} 合并发布变体</button></div></footer>
 
       {showFamilyPicker && (
         <div className="wf-family-overlay" role="dialog" aria-modal="true">
