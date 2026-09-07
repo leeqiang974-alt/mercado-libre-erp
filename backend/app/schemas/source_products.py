@@ -88,3 +88,6 @@ class SourceVariantCollectionCreate(BaseModel):
     # Optional whitelist of variant ASINs to enqueue. Empty = all non-selected
     # variants (backward compatible).
     variant_asins: list[str] = []
+    # server = 服务器采集（阿里云 IP 直连 Amazon 易超时）；browser_extension =
+    # 复用本机插件采集（与上架列表“采”按钮同一协议），采集变体页真实数据。
+    collector_kind: str = Field(default="server", pattern="^(server|browser_extension)$")

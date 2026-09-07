@@ -777,13 +777,14 @@ export async function createSourceVariantCollectionJob(
   sourceProductId: number,
   variantAsin: string,
   targetSiteId: string,
+  collectorKind: "server" | "browser_extension" = "server",
 ) {
   const response = await fetch(
     `${API_BASE}/api/imports/source-products/${sourceProductId}/variants/${variantAsin}/collection-job`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target_site_id: targetSiteId }),
+      body: JSON.stringify({ target_site_id: targetSiteId, collector_kind: collectorKind }),
     },
   );
   if (!response.ok) throw await httpError(response);

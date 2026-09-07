@@ -999,28 +999,48 @@ export function CbtGlobalPublishingPanel({
   async function editSourceVariant(variant: AmazonSourceVariant) {
     if (!draft.source_product_id || variant.asin === draft.source_variant_asin || variantDraftBusy) return;
     setVariantDraftBusy(variant.asin);
-    setStatus(`正在采集 ${variant.asin} 变体页真实数据...`);
+    setStatus(`正在通过本机插件采集 ${variant.asin} 变体页真实数据...`);
     try {
-      // 先自动提交该变体页采集任务，拿到真实图/标题/属性后再建草稿；
-      // 采集失败或超时时回退用父页快照数据，避免用户漏点“采”导致素材不真实。
+      // 与上架列表“采”按钮同一协议：创建 browser_extension 采集任务（后端预建
+      // 变体页占位 source+草稿），再 dispatch 事件让本机插件打开变体页采集回报。
       const job = await createSourceVariantCollectionJob(
-        draft.source_product_id, variant.asin, draft.target_site_id || "CBT",
+        draft.source_product_id, variant.asin, draft.target_site_id || "CBT", "browser_extension",
       );
-      const active = new Set(["pending", "running"]);
-      const deadline = Date.now() + 35_000;
-      let jobState = job;
-      while (active.has(jobState.status) && Date.now() < deadline) {
-        await new Promise((resolve) => window.setTimeout(resolve, 5_000));
-        const states = await listCollectionJobStatuses([jobState.id]);
-        if (states[0]) jobState = states[0];
+      if (!job.draft_id || !job.source_product_id) throw new Error("变体草稿预建失败，请稍后重试");
+      const pluginResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        let settled = false;
+        const timer = window.setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          window.removeEventListener("meli-amazon-recollect-result", handler);
+          resolve({ ok: false, error: "本机插件未返回结果" });
+        }, 30_000);
+        function handler(event: Event) {
+          const detail = (event as CustomEvent<{ sourceProductId?: number; ok?: boolean; error?: string }>).detail;
+          if (detail?.sourceProductId !== job.source_product_id) return;
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timer);
+          window.removeEventListener("meli-amazon-recollect-result", handler);
+          resolve({ ok: detail.ok === true, error: detail.error });
+        }
+        window.addEventListener("meli-amazon-recollect-result", handler);
+        window.dispatchEvent(new CustomEvent("meli-amazon-recollect", {
+          detail: { sourceProductId: job.source_product_id, sourceUrl: job.source_url },
+        }));
+      });
+      // 插件刚回报时 DB 写入可能略有延迟，多读几次取最新草稿（预建草稿版本为 1，回报后 +1）
+      let updated = await getDraft(job.draft_id);
+      for (let attempt = 0; attempt < 5 && updated.content_version < 2; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 800));
+        updated = await getDraft(job.draft_id);
       }
-      const updated = await createSourceVariantDraft(draft.source_product_id, variant.asin, draft.target_site_id || "CBT");
       setListingRail((current) => uniqueDrafts([...current.filter((item) => item.id !== updated.id), updated]));
       onDraftChange(updated);
       onSelectDraft?.(updated);
-      setStatus(jobState.status === "completed"
-        ? `已采集变体页真实数据并打开 ${variant.asin} 的草稿 #${updated.id}。`
-        : `变体页采集${jobState.status === "failed" ? "失败" : "超时未完成"}，草稿 #${updated.id} 暂用父页数据，可稍后在草稿里点“采”补全。`);
+      setStatus(pluginResult.ok
+        ? `已通过本机插件采集 ${variant.asin} 变体页真实数据，打开草稿 #${updated.id}。`
+        : `本机插件未响应，草稿 #${updated.id} 暂用父页数据，可在草稿里点“重新采集素材”补全。`);
     } catch (error) {
       setStatus(readableVariantDraftError(error));
     } finally {

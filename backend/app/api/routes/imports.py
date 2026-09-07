@@ -1092,6 +1092,85 @@ def _completed_variant_page_draft(
     )
 
 
+def _prepare_variant_extension_placeholders(
+    db: Session,
+    parent_source: SourceProduct,
+    normalized_asin: str,
+    variant_url: str,
+    target_site_id: str,
+) -> tuple[SourceProduct, ProductDraft]:
+    """为浏览器插件采集变体页预建占位 source 和草稿。
+
+    插件回报（extension-capture）会按 source 更新真实数据，因此草稿必须绑定
+    变体页自己的 source 才能被更新；若草稿尚未建立，先用父快照的该变体数据
+    预建，保证插件未响应时用户也能立刻打开可编辑草稿。
+    """
+    placeholder = (
+        db.query(SourceProduct)
+        .filter(
+            func.upper(SourceProduct.asin) == normalized_asin,
+            SourceProduct.collection_method == "browser_extension",
+            SourceProduct.raw_status == SourceProductStatus.PENDING,
+        )
+        .first()
+    )
+    if placeholder is None:
+        placeholder = SourceProduct(
+            source_url=variant_url,
+            asin=normalized_asin,
+            raw_status=SourceProductStatus.PENDING,
+            collection_method="browser_extension",
+            source="amazon",
+        )
+        db.add(placeholder)
+        db.flush()
+    draft = (
+        db.query(ProductDraft)
+        .filter(
+            ProductDraft.source_product_id == placeholder.id,
+            func.upper(ProductDraft.source_variant_asin) == normalized_asin,
+            ProductDraft.target_site_id == target_site_id,
+        )
+        .first()
+    )
+    if draft is not None:
+        return placeholder, draft
+    source_read = to_source_product_read(parent_source)
+    snapshot = source_read.snapshot
+    if snapshot is None:
+        raise HTTPException(status_code=409, detail="source_snapshot_unavailable")
+    variant = next(
+        (item for item in snapshot.variants if item.asin == normalized_asin),
+        None,
+    )
+    if variant is None:
+        raise HTTPException(status_code=404, detail="source_variant_not_found")
+    draft_snapshot = snapshot.model_dump()
+    draft_snapshot["images"] = merge_listing_images(variant.image_urls, snapshot.images)
+    draft_payload = normalize_amazon_product(draft_snapshot, target_site_id)
+    # 占位草稿先用父页标题，截断到界面/序列化允许的 60 字符；插件回报后会被变体页真实标题覆盖
+    if draft_payload.title and len(draft_payload.title) > 60:
+        draft_payload.title = draft_payload.title[:60].rstrip() + "..."
+    if variant.attributes:
+        variant_lines = "\n".join(
+            f"{name}: {value}" for name, value in variant.attributes.items()
+        )
+        draft_payload.description = "\n\n".join(
+            part
+            for part in [draft_payload.description, f"Amazon variant:\n{variant_lines}"]
+            if part
+        )
+    draft = create_product_draft(
+        db,
+        draft_payload,
+        source_product_id=placeholder.id,
+        source_variant_asin=normalized_asin,
+        source_variant_attributes=variant.attributes,
+        commit=False,
+    )
+    return placeholder, draft
+
+
 @router.post(
     "/source-products/{source_product_id}/variants/{variant_asin}/collection-job",
     response_model=CollectionJobRead,
@@ -1130,12 +1209,34 @@ def create_source_variant_collection_job(
             existing.message = ""
             db.commit()
             db.refresh(existing)
+        if (
+            payload.collector_kind == "browser_extension"
+            and (existing.source_product_id is None or existing.draft_id is None)
+        ):
+            placeholder, draft = _prepare_variant_extension_placeholders(
+                db, source, normalized_asin, variant_url, target_site_id
+            )
+            existing.source_product_id = placeholder.id
+            existing.draft_id = draft.id
+            existing.collector_kind = "browser_extension"
+            db.commit()
+            db.refresh(existing)
         existing_source = (
             db.get(SourceProduct, existing.source_product_id)
             if existing.source_product_id is not None
             else None
         )
         return to_collection_job_read(existing, existing_source)
+    if payload.collector_kind == "browser_extension":
+        placeholder, draft = _prepare_variant_extension_placeholders(
+            db, source, normalized_asin, variant_url, target_site_id
+        )
+        job = create_collection_job(db, variant_url, target_site_id, collector_kind="browser_extension")
+        job.source_product_id = placeholder.id
+        job.draft_id = draft.id
+        db.commit()
+        db.refresh(job)
+        return to_collection_job_read(job)
     job = create_collection_job(db, variant_url, target_site_id)
     return to_collection_job_read(job)
 
