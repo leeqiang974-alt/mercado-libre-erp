@@ -18,6 +18,46 @@ from app.services.llm_provider import get_current_provider
 from app.services.meli.metadata_cache import category_attributes_key, get_cached_metadata
 
 
+
+def _extract_json_object(raw: str) -> str:
+    """宽容提取 JSON：剥代码块标记，取第一个 { 到最后一个 } 之间的内容。"""
+    text = raw.strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text, flags=re.IGNORECASE)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return raw
+    return text[start : end + 1]
+
+
+def _normalize_ascii(value: str) -> str:
+    """规范化英文输出：去重音、弯引号/连字符转 ASCII、删除残留非拉丁字符。"""
+    import unicodedata as _ud
+
+    if not value:
+        return value
+    # 拉丁扩展去重音（é->e, ñ->n 等）
+    text = "".join(
+        ch for ch in _ud.normalize("NFKD", value) if not _ud.combining(ch)
+    )
+    # 排版符号映射
+    text = (
+        text.replace("\u2014", "-")  # em dash
+        .replace("\u2013", "-")  # en dash
+        .replace("\u2018", "'").replace("\u2019", "'")  # curly quotes
+        .replace("\u201c", '"').replace("\u201d", '"')
+        .replace("\u2026", "...")
+        .replace("\u00a0", " ")  # nbsp
+        .replace("\u3000", " ")  # full-width space
+        .replace("\uff0c", ",")  # full-width comma
+        .replace("\u3002", ".")
+    )
+    # 删除残留的非 ASCII（中文等）
+    return "".join(ch for ch in text if ord(ch) <= 127)
+
+
+
 WARRANTY_SENTENCE = "The store provides a 7-day warranty for this product."
 PROHIBITED_TERMS = (
     "best", "top", "hot", "sale", "discount", "free shipping", "limited",
@@ -186,7 +226,7 @@ async def _request_content(
         raw = body["choices"][0]["message"]["content"]
         if not isinstance(raw, str):
             raise TypeError
-        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.IGNORECASE)
+        raw = _extract_json_object(raw)
         parsed = json.loads(raw)
         if not isinstance(parsed, dict):
             raise TypeError
@@ -200,11 +240,11 @@ def _validate_generated(value: dict[str, object], source_brand: str = "") -> Gen
         content = GeneratedListingContent.model_validate(value)
     except ValidationError as exc:
         raise ValueError("title and description are required") from exc
-    title = " ".join(content.title.split())
-    description = content.description.strip()
+    title = _normalize_ascii(" ".join(content.title.split()))
+    description = _normalize_ascii(content.description.strip())
     if len(title) == 0 or len(title) > 60:
         raise ValueError("title must be 1-60 characters")
-    if any(ord(char) > 127 for char in title):
+    if re.search(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0e00-\u0e7f]", title):
         raise ValueError("title must be English")
     if any(
         re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", title.lower())
@@ -213,7 +253,7 @@ def _validate_generated(value: dict[str, object], source_brand: str = "") -> Gen
         raise ValueError("title contains a prohibited marketing term")
     if source_brand.strip() and source_brand.casefold() in title.casefold():
         raise ValueError("title contains the source brand")
-    if any(ord(char) > 127 for char in description):
+    if re.search(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0e00-\u0e7f]", description):
         raise ValueError("description must be English")
     if source_brand.strip() and source_brand.casefold() in description.casefold():
         raise ValueError("description contains the source brand")
@@ -302,7 +342,7 @@ SOURCE BULLETS: {json.dumps(bullets, ensure_ascii=True)}
 SOURCE TECHNICAL DETAILS: {json.dumps(details, ensure_ascii=True)}
 SOURCE MEASUREMENTS: {json.dumps(measurements, ensure_ascii=True)}
 SOURCE VARIANTS: {json.dumps(variants, ensure_ascii=True)}
-CURRENT DRAFT TITLE: {draft.title or "(not captured)"}
+CURRENT DRAFT TITLE: {_normalize_ascii(draft.title or "") or "(not captured)"}
 CURRENT DRAFT DESCRIPTION: {draft_description or "(not captured)"}
 CURRENT DRAFT VARIANT ATTRIBUTES: {json.dumps(draft_variant_attributes, ensure_ascii=True)}
 """
