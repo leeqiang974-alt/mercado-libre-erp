@@ -131,7 +131,19 @@ async def mirror_images_to_oss(urls: list[str], settings: Settings) -> list[str]
         if isinstance(uploaded, Exception):
             raise uploaded
         by_source[source_url] = uploaded
-    mirrored = [by_source[raw_url.strip()] for raw_url in urls if raw_url.strip() in by_source]
+    # 修复：by_source 的 key 是高清化后的 URL（无尺寸标记原图会追加 ._AC_SL1500_ 而变化），
+    # 必须用高清化后的 URL 配对，否则所有原图 URL 都查不到 → 误报"没有符合500×500px要求"。
+    upgraded_by_source = {
+        raw_url.strip(): _upgrade_amazon_image(raw_url.strip())
+        for raw_url in urls
+        if raw_url.strip()
+    }
+    mirrored = [
+        by_source[upgraded_by_source[raw_url.strip()]]
+        for raw_url in urls
+        if raw_url.strip() in upgraded_by_source
+        and upgraded_by_source[raw_url.strip()] in by_source
+    ]
     if not mirrored:
         raise OssMirrorError("没有符合美客多至少 500×500px 要求的图片")
     return mirrored
