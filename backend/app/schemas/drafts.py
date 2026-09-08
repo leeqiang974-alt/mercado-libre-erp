@@ -56,8 +56,10 @@ class ProductDraftContentUpdate(BaseModel):
         normalized = " ".join(value.split())
         if not normalized:
             raise ValueError("title must not be blank")
-        if len(normalized) > 60:
-            raise ValueError("title must be 60 characters or fewer")
+        # 草稿保存阶段允许最多200字符（美客多上架限制60，由预检环节拦截提示，
+        # 避免用户在编辑/等AI重生成时无法保存）
+        if len(normalized) > 200:
+            raise ValueError("title must be 200 characters or fewer")
         if any(ord(char) > 127 for char in normalized):
             raise ValueError("title must be in English")
         lowered = normalized.lower()

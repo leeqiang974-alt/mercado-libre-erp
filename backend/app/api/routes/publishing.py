@@ -1407,7 +1407,13 @@ def _evaluate_publish_batch(
             valid_listing_type_ids=SERVER_LISTING_TYPE_IDS,
             human_approved=human_approved,
         )
+        title_len = len((getattr(draft, "title", None) or "").strip())
+        if title_len > 60:
+            title_blocker = f"标题 {title_len} 字符超过美客多60字符限制，请用AI重新生成或精简后再发布"
+        else:
+            title_blocker = None
         errors = [
+            *([] if title_blocker is None else [title_blocker]),
             *validation.errors,
             *validate_store_category_listing_type(
                 db,
