@@ -2117,8 +2117,10 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 /* ---- Store products table layout fix ---- */
 .store-products-table{table-layout:fixed;width:100%}
 .store-products-table th,.store-products-table td{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:top}
+.store-products-table th:nth-child(1),.store-products-table td:nth-child(1){width:27%}
+.store-products-table th:nth-child(2),.store-products-table td:nth-child(2){width:13%}
 .store-products-table .store-product-title{white-space:normal}
-.store-products-table .store-product-title strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.store-products-table .store-product-title strong{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;line-height:1.35;word-break:break-word}
 .store-products-table .store-product-actions{white-space:nowrap}
 .store-products-table .pending-income{color:#b45309;font-size:11.5px}
 
