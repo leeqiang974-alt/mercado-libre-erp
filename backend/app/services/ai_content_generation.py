@@ -86,15 +86,8 @@ async def generate_and_save_draft_content(
     selected_fields = fields or {"title", "description"}
     if not selected_fields <= {"title", "description"}:
         raise HTTPException(status_code=422, detail="invalid_content_fields")
-    duplicate_fields = _already_generated_fields(db, draft, selected_fields)
-    if duplicate_fields:
-        # A second click must never silently consume another paid request for
-        # an AI field that is still present on the draft.  The operator can
-        # first clear/edit that field and then explicitly generate anew.
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "ai_content_already_generated", "fields": duplicate_fields},
-        )
+    # 2026-09-08 用户明确要求：去掉"已AI生成过"的门禁，允许再次点击生成。
+    # 每次点击都重新调用 AI（含标题超60字符时用更强 prompt 重试），审计记录仍保留用于追溯。
     metadata = get_cached_metadata(db, category_attributes_key(normalized_category))
     if not metadata or metadata.get("verified") is not True:
         raise HTTPException(status_code=409, detail="category_attributes_not_verified")
