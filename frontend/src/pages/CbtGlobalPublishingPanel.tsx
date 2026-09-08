@@ -1310,8 +1310,9 @@ export function CbtGlobalPublishingPanel({
     setStatus("正在同步并保存当前配置…");
     const ok = await saveConfig();
     if (!ok) {
+      // saveConfig 内部已 setStatus 具体缺失项（如"暂不能保存：请填写目标净收益；…"），
+      // 这里不覆盖，让用户直接看到缺什么。
       setPreview({ allowed: false, errors: ["保存当前刊登配置失败，请根据上方提示修正后重试。"], payload: null });
-      setStatus("配置保存失败，无法预检。");
       return;
     }
     setBusy("preview"); setStatus("");
@@ -1360,7 +1361,7 @@ export function CbtGlobalPublishingPanel({
     // 若只按 !saved 判断，已保存过配置后改字段不点保存，发布的就是旧数据）
     setStatus("正在同步并保存当前配置…");
     const ok = await saveConfig();
-    if (!ok) { setStatus("配置保存失败，未提交发布。"); return; }
+    if (!ok) { return; } // saveConfig 内部已提示具体缺失项，不再覆盖
     // 保证发布前检查通过（配置变更后 preview 会被置空）
     if (!preview?.allowed) {
       setStatus("正在自动完成发布前检查…");
