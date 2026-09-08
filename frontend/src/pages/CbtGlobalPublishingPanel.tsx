@@ -621,6 +621,19 @@ export function CbtGlobalPublishingPanel({
         setConfigLoaded(true);
         offersInitializedRef.current = Boolean(config);
         if (!config) {
+          // 无已保存刊登配置的草稿：用草稿自身字段同步刊登表单，避免价格/属性显示空白
+          // 导致"请填写目标净收益/必填属性"的误报（草稿 price 已存在却未显示）。
+          setPriceUsd(
+            persistedDraft.currency === "USD" && persistedDraft.price
+              ? String(persistedDraft.price)
+              : "",
+          );
+          setAttributes({
+            ITEM_CONDITION: "new",
+            SELLER_SKU: defaultSku(draftId),
+            BRAND: "Unbranded",
+            MODEL: defaultSku(draftId),
+          });
           // Category confirmation is persisted on the draft before the full CBT
           // listing form is saved. Restore that confirmed leaf on reload instead
           // of treating it as merely a source-category hint.
@@ -1261,7 +1274,7 @@ export function CbtGlobalPublishingPanel({
     if (!canSave) {
       const errors = marketplaceValidationErrors();
       setPreview({ allowed: false, errors, payload: null });
-      setStatus(`暂不能保存：${errors[0] ?? "请完善美客多发布要求"}`);
+      setStatus(`暂不能保存：${errors.join("；") || "请完善美客多发布要求"}`);
       return false;
     }
     setBusy("save"); setStatus(""); setPreview(null); setExecution(null);
