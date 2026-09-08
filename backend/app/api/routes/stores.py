@@ -554,7 +554,7 @@ async def list_store_items(
             "thumbnail": thumbnail,
             "status": str(detail.get("status") or ""),
             "category_id": str(detail.get("category_id") or ""),
-            "price": detail.get("price"),
+            "price": detail.get("price") if isinstance(detail.get("price"), (int, float)) else None,
             "currency_id": str(detail.get("currency_id") or ""),
             "net_proceeds": net_proceeds_map.get(str(detail.get("id") or item_id)),
             "available_quantity": detail.get("available_quantity"),
