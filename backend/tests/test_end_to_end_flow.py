@@ -141,7 +141,7 @@ async def test_amazon_to_pre_listing_queue_and_worker_flow(monkeypatch):
     )
     assert imported.status_code == 200
     draft_id = imported.json()["id"]
-    assert imported.json()["draft"]["title"] == "TrailPro Stainless Bottle"
+    assert imported.json()["draft"]["title"] == "Stainless Bottle"
 
     priced = client.put(
         f"/api/drafts/{draft_id}/pricing",

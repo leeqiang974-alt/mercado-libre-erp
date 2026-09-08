@@ -46,7 +46,7 @@ async def _download_with_retry(source: str) -> httpx.Response:
                 await _backoff_delay(attempt)
                 continue
             raise
-        except httpx.HTTPError as exc:
+        except httpx.HTTPError:
             if attempt < MAX_DOWNLOAD_ATTEMPTS:
                 await _backoff_delay(attempt)
                 continue
@@ -77,7 +77,7 @@ async def _upload_with_retry(
                 await _backoff_delay(attempt)
                 continue
             raise
-        except httpx.HTTPError as exc:
+        except httpx.HTTPError:
             if attempt < MAX_UPLOAD_ATTEMPTS:
                 await _backoff_delay(attempt)
                 continue

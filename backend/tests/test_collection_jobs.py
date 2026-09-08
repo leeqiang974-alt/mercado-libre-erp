@@ -104,7 +104,7 @@ def test_source_variant_collection_job_preserves_domain_and_reuses_existing_job(
 
     first = client.post(
         f"/api/imports/source-products/{source_id}/variants/B000TEST02/collection-job",
-        json={"target_site_id": "MLB"},
+        json={"target_site_id": "MLB", "collector_kind": "browser_extension"},
     )
     repeated = client.post(
         f"/api/imports/source-products/{source_id}/variants/b000test02/collection-job",
@@ -115,10 +115,12 @@ def test_source_variant_collection_job_preserves_domain_and_reuses_existing_job(
     assert first.json()["source_url"] == "https://amazon.com.mx/dp/B000TEST02"
     assert first.json()["target_site_id"] == "MLB"
     assert first.json()["status"] == "pending"
+    assert first.json()["collector_kind"] == "browser_extension"
     assert repeated.status_code == 200
     assert repeated.json()["id"] == first.json()["id"]
     with testing_session() as db:
         assert db.query(CollectionJob).count() == 1
+        assert db.query(CollectionJob).one().collector_kind == "browser_extension"
 
 
 def test_source_variant_collection_job_rejects_unknown_variant():
@@ -772,16 +774,17 @@ def test_running_collection_job_persists_source_and_draft(monkeypatch):
         "/api/imports/source-products/1/variants/B000TEST02/draft",
         json={"target_site_id": "MLM"},
     )
-    assert variant_draft.status_code == 409
-    assert variant_draft.json()["detail"] == "variant_page_collection_required"
+    assert variant_draft.status_code == 200
+    assert variant_draft.json()["source_variant_asin"] == "B000TEST02"
 
     repeated = client.post(
         "/api/imports/source-products/1/variants/B000TEST02/draft",
         json={"target_site_id": "MLM"},
     )
-    assert repeated.status_code == 409
+    assert repeated.status_code == 200
+    assert repeated.json()["id"] == variant_draft.json()["id"]
     with testing_session() as db:
-        assert db.query(ProductDraft).count() == 1
+        assert db.query(ProductDraft).count() == 2
 
     missing_variant = client.post(
         "/api/imports/source-products/1/variants/B000TEST99/draft",
@@ -1007,7 +1010,8 @@ def test_amazon_extension_claim_and_result_are_idempotent_and_audited():
     assert result.status_code == 200
     assert result.json()["status"] == "completed"
     assert result.json()["quality"]["image_count"] == 1
-    assert result.json()["quality"]["video_count"] == 1
+    # An arbitrary page-wide video URL is not product-gallery evidence.
+    assert result.json()["quality"]["video_count"] == 0
     repeated = client.post(
         f"/api/imports/amazon-extension/jobs/{job_id}/result",
         json={

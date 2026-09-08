@@ -1,28 +1,27 @@
 """Bulk selection: batch product selection, draft creation, and item toggling."""
-from datetime import datetime, timezone
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import or_, select, text
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.session import get_db
-from app.models.collection_job import CollectionJob, CollectionJobStatus
 from app.models.keyword_collection_campaign import KeywordCampaignStatus, KeywordCollectionCampaign
 from app.models.product_draft import ProductDraft
-from app.models.publish_job import PublishJob, PublishJobStatus
 from app.models.source_product import SourceProduct
 from app.models.store import Store
 from app.schemas.drafts import ProductDraftCreate
 from app.services.amazon.keyword_campaigns import normalize_keywords
 from app.services.amazon.media import prepare_listing_title
-from app.services.drafts import create_product_draft, normalize_listing_title
+from app.services.drafts import create_product_draft
 from app.services.meli.client import MercadoLibreClient
 from app.services.meli.oauth import MercadoLibreOAuthClient
 from app.services.meli.token_vault import resolve_fresh_store_access_token
 
 router = APIRouter(prefix="/api/bulk-selection", tags=["bulk-selection"])
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 

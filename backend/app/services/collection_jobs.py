@@ -21,8 +21,22 @@ from app.services.audit_events import create_audit_event
 Collector = Callable[[str, str], Awaitable[CollectionResult]]
 
 
-def create_collection_job(db: Session, source_url: str, target_site_id: str, *, campaign_id: int | None = None, campaign_keyword: str | None = None) -> CollectionJob:
-    return create_collection_jobs(db, [(source_url, target_site_id)], campaign_id=campaign_id, campaign_keyword=campaign_keyword)[0]
+def create_collection_job(
+    db: Session,
+    source_url: str,
+    target_site_id: str,
+    *,
+    campaign_id: int | None = None,
+    campaign_keyword: str | None = None,
+    collector_kind: str = "server",
+) -> CollectionJob:
+    return create_collection_jobs(
+        db,
+        [(source_url, target_site_id)],
+        campaign_id=campaign_id,
+        campaign_keyword=campaign_keyword,
+        collector_kind=collector_kind,
+    )[0]
 
 
 def create_collection_jobs(

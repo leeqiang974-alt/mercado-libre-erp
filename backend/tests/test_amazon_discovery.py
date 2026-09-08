@@ -9,7 +9,7 @@ def test_search_urls_are_converted_to_exact_product_urls():
     '''
     search_url = build_amazon_search_url("www.amazon.com", "silicone mold")
 
-    assert search_url == "https://www.amazon.com/s?k=silicone+mold"
+    assert search_url == "https://www.amazon.com/s?k=silicone+mold&page=1"
     assert extract_amazon_search_product_urls(html, search_url, 20) == [
         "https://amazon.com/dp/B000TEST01",
         "https://amazon.com/dp/B000TEST02",

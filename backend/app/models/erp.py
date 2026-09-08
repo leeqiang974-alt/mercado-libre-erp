@@ -10,7 +10,6 @@ from sqlalchemy import (
     Text,
     ForeignKey,
     Index,
-    Enum,
 )
 from sqlalchemy.orm import relationship
 

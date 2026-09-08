@@ -510,7 +510,7 @@ def test_cbt_family_drafts_lists_same_family_siblings(monkeypatch):
         db.commit()
         sibling_id = sibling.id
 
-        family = client.get(f"/api/publishing/cbt/family-drafts/1")
+        family = client.get("/api/publishing/cbt/family-drafts/1")
         assert family.status_code == 200
         body = family.json()
         assert body["family_name"] == "Silicone mold family"

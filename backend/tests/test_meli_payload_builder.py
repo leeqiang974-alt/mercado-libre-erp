@@ -171,12 +171,12 @@ def test_build_cbt_user_product_payload_requires_seller_sku_and_package():
         )
 
 
-def test_build_cbt_user_product_payload_rejects_empty_family_name():
-    with pytest.raises(ValueError, match="family_name"):
-        build_cbt_user_product_payload(
-            complete_draft(),
-            cbt_up_config().model_copy(update={"family_name": "  "}),
-        )
+def test_build_cbt_user_product_payload_falls_back_from_empty_family_name():
+    payload = build_cbt_user_product_payload(
+        complete_draft(),
+        cbt_up_config().model_copy(update={"family_name": "  "}),
+    )
+    assert payload["family_name"] == complete_draft().title
 
 
 def test_build_item_payload_includes_me2_shipping_fields():

@@ -64,6 +64,8 @@ async def test_worker_runs_pending_collection_jobs_up_to_limit():
         "failed": 0,
         "deferred": 0,
         "recovered": 0,
+        "campaigns": 0,
+        "campaign_queued": 0,
     }
     with testing_session() as db:
         jobs = db.query(CollectionJob).order_by(CollectionJob.id).all()
@@ -102,6 +104,8 @@ async def test_worker_skips_non_pending_collection_jobs():
         "failed": 0,
         "deferred": 0,
         "recovered": 0,
+        "campaigns": 0,
+        "campaign_queued": 0,
     }
 
 
@@ -151,6 +155,8 @@ async def test_worker_skips_job_removed_after_candidate_selection(monkeypatch, l
         "failed": 0,
         "deferred": 0,
         "recovered": 0,
+        "campaigns": 0,
+        "campaign_queued": 0,
     }
 
 

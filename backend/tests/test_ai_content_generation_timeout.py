@@ -92,6 +92,7 @@ async def test_invalid_ai_copy_is_not_automatically_sent_a_second_time(monkeypat
         "resolve_integration_credentials",
         lambda *_args: SimpleNamespace(deepseek_api_key="test", volcengine_api_key=""),
     )
+    monkeypatch.setattr(ai_content_generation, "get_current_provider", lambda *_args: "deepseek")
     monkeypatch.setattr(ai_content_generation, "_request_content", invalid_once)
 
     with pytest.raises(HTTPException) as caught:

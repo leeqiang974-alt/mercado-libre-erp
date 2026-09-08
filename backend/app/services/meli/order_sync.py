@@ -1,4 +1,3 @@
-import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -8,8 +7,6 @@ from app.models.erp import (
     Order,
     OrderItem,
     Shipment,
-    ProfitRecord,
-    DailySalesStat,
 )
 from app.models.store import Store
 from app.services.meli.client import MercadoLibreClient

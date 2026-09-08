@@ -43,10 +43,10 @@ def _req() -> httpx.Request:
     return httpx.Request("GET", "https://example.com/x.jpg")
 
 
-def test_download_retries_transient_then_succeeds():
+def test_download_retries_transient_then_succeeds(monkeypatch):
     async def run():
         downloader = FakeDownloader([500, 200])
-        pics.httpx.AsyncClient = lambda *a, **k: downloader
+        monkeypatch.setattr(pics.httpx, "AsyncClient", lambda *a, **k: downloader)
         response = await pics._download_with_retry("https://example.com/x.jpg")
         assert response.status_code == 200
         assert response.headers["content-type"] == "image/jpeg"
@@ -54,10 +54,10 @@ def test_download_retries_transient_then_succeeds():
     asyncio.run(run())
 
 
-def test_download_does_not_retry_400():
+def test_download_does_not_retry_400(monkeypatch):
     async def run():
         downloader = FakeDownloader([400])
-        pics.httpx.AsyncClient = lambda *a, **k: downloader
+        monkeypatch.setattr(pics.httpx, "AsyncClient", lambda *a, **k: downloader)
         try:
             await pics._download_with_retry("https://example.com/x.jpg")
         except httpx.HTTPStatusError as exc:
@@ -109,7 +109,7 @@ def test_error_detail_extracts_json():
 def test_materialize_retries_transient_download(monkeypatch):
     async def run():
         downloader = FakeDownloader([503, 200])
-        pics.httpx.AsyncClient = lambda *a, **k: downloader
+        monkeypatch.setattr(pics.httpx, "AsyncClient", lambda *a, **k: downloader)
         monkeypatch.setattr(pics, "normalize_listing_image", lambda data, ct: (data, "image/jpeg", (500, 500), (500, 500)))
         uploaded = []
 

@@ -86,8 +86,12 @@ async def generate_and_save_draft_content(
     selected_fields = fields or {"title", "description"}
     if not selected_fields <= {"title", "description"}:
         raise HTTPException(status_code=422, detail="invalid_content_fields")
-    # 2026-09-08 用户明确要求：去掉"已AI生成过"的门禁，允许再次点击生成。
-    # 每次点击都重新调用 AI（含标题超60字符时用更强 prompt 重试），审计记录仍保留用于追溯。
+    already_generated = _already_generated_fields(db, draft, selected_fields)
+    if already_generated:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "ai_content_already_generated", "fields": already_generated},
+        )
     metadata = get_cached_metadata(db, category_attributes_key(normalized_category))
     if not metadata or metadata.get("verified") is not True:
         raise HTTPException(status_code=409, detail="category_attributes_not_verified")
@@ -119,34 +123,21 @@ async def generate_and_save_draft_content(
     draft_evidence_description_length = len(draft.description or "")
     prompt = _build_prompt(draft, source, normalized_category)
     source_brand = str(source.brand or "") if source else ""
-    # 标题超长不直接失败：轮询重试（最多3次），每次追加更强的压缩指令，
-    # 直到标题落在 60 字符（含空格标点）以内。其他校验错误仍立即失败。
-    max_retries = 3
-    content = None
-    for attempt in range(1, max_retries + 1):
-        generated = await _request_content(
-            base_url=base_url,
-            model=model,
-            provider=provider,
-            api_key=api_key,
-            prompt=prompt,
-            timeout_seconds=timeout_seconds,
-        )
-        try:
-            content = _validate_generated(generated, source_brand)
-            break
-        except ValueError as exc:
-            reason = str(exc)
-            if reason != "title must be 1-60 characters" or attempt >= max_retries:
-                raise HTTPException(
-                    status_code=502,
-                    detail={"code": "generated_content_invalid", "reason": reason},
-                ) from exc
-            prompt += (
-                "\n\nCORRECTION: the previous attempt produced a title that is too long. "
-                "Generate a NEW, much shorter title of at most 50 characters counting "
-                "spaces and punctuation. Keep the description unchanged if it was valid."
-            )
+    generated = await _request_content(
+        base_url=base_url,
+        model=model,
+        provider=provider,
+        api_key=api_key,
+        prompt=prompt,
+        timeout_seconds=timeout_seconds,
+    )
+    try:
+        content = _validate_generated(generated, source_brand)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "generated_content_invalid", "reason": str(exc)},
+        ) from exc
     content = GeneratedListingContent(
         title=content.title,
         description=sanitize_unbranded_description(content.description, source_brand),

@@ -274,6 +274,7 @@ def test_publish_batch_preflight_reports_ready_without_queueing(monkeypatch):
         "ready_count": 1,
         "not_ready_count": 0,
         "not_found_count": 1,
+        "publication_model": "unknown",
         "items": [
             {"draft_id": 1, "outcome": "ready", "errors": []},
             {

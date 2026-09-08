@@ -10,6 +10,7 @@ from app.services.meli.client import MercadoLibreClient
 from app.services.meli.category_i18n import (
     has_chinese,
     needs_category_translation_quality_review,
+    translate_category_names_with_ai_batched,
     translate_category_names_with_ai,
     translate_category_text,
 )

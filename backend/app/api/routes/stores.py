@@ -39,7 +39,6 @@ from app.services.meli.category_catalog import (
     sync_category_catalog,
 )
 from app.services.meli.category_i18n import (
-    add_category_translations,
     translate_category_names_with_ai,
     translate_category_payload_names,
     translate_category_query,
