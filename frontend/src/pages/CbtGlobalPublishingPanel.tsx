@@ -1507,10 +1507,10 @@ export function CbtGlobalPublishingPanel({
                   <span><small>{variant.asin}</small><strong>{Object.entries(variant.attributes).map(([name, value]) => `${name}: ${value}`).join(" · ") || "未返回规格"}</strong><small>{variant.image_urls.length > 0 ? `${variant.image_urls.length} 张 SKU 图` : "无 SKU 图（草稿暂用父页图）"}</small></span>
                 </span>
                 <span className="amazon-variant-actions">
-                  {variant.selected || variant.asin === draft.source_variant_asin
+                  {variant.asin === draft.source_variant_asin
                     ? <span className="state-pill ready">本页可编辑</span>
                     : <button type="button" className="tiny-button" disabled={variantDraftBusy !== null} onClick={() => void editSourceVariant(variant)}>{variantDraftBusy === variant.asin ? "打开中..." : "编辑此变体"}</button>}
-                  {!(variant.selected || variant.asin === draft.source_variant_asin) && <button type="button" className="tiny-button" disabled={variantDraftBusy !== null} onClick={() => void editSourceVariant(variant)}>{variantDraftBusy === variant.asin ? "打开中..." : "独立草稿"}</button>}
+                  {variant.asin !== draft.source_variant_asin && <button type="button" className="tiny-button" disabled={variantDraftBusy !== null} onClick={() => void editSourceVariant(variant)}>{variantDraftBusy === variant.asin ? "打开中..." : "独立草稿"}</button>}
                 </span>
               </div>)}
             </div>
