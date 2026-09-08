@@ -13,7 +13,7 @@ MARKETING_TERMS = (
 
 
 class ProductDraftCreate(BaseModel):
-    title: str = Field(default="", max_length=60)
+    title: str = Field(default="", max_length=200)
     description: str = ""
     brand: str = ""
     target_site_id: str = "MLM"
@@ -44,7 +44,7 @@ class ProductDraftRead(ProductDraftCreate):
 
 class ProductDraftContentUpdate(BaseModel):
     expected_content_version: int = Field(ge=1)
-    title: str = Field(min_length=1, max_length=60)
+    title: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=50000)
     brand: str = Field(default=UNBRANDED, max_length=120)
     image_urls: list[str] = Field(default_factory=list, max_length=12)
