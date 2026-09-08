@@ -1510,7 +1510,7 @@ export function CbtGlobalPublishingPanel({
                   {variant.selected || variant.asin === draft.source_variant_asin
                     ? <span className="state-pill ready">本页可编辑</span>
                     : <button type="button" className="tiny-button" disabled={variantDraftBusy !== null} onClick={() => void editSourceVariant(variant)}>{variantDraftBusy === variant.asin ? "打开中..." : "编辑此变体"}</button>}
-                  {!(variant.selected || variant.asin === draft.source_variant_asin) && <span className="state-pill">独立草稿</span>}
+                  {!(variant.selected || variant.asin === draft.source_variant_asin) && <button type="button" className="tiny-button" disabled={variantDraftBusy !== null} onClick={() => void editSourceVariant(variant)}>{variantDraftBusy === variant.asin ? "打开中..." : "独立草稿"}</button>}
                 </span>
               </div>)}
             </div>
