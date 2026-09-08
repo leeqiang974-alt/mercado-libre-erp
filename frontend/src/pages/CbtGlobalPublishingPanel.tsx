@@ -367,6 +367,8 @@ export function CbtGlobalPublishingPanel({
   const offersInitializedRef = useRef(false);
   // Poll handle for async CBT publish execution (worker path).
   const publishPollTimer = useRef<number | null>(null);
+  // 变体草稿自动采集防抖：同一草稿只自动触发一次，避免每次打开都重复请求插件。
+  const autoVariantTriggeredRef = useRef<Record<number, boolean>>({});
   useEffect(() => () => {
     if (publishPollTimer.current !== null) {
       window.clearInterval(publishPollTimer.current);
@@ -662,6 +664,69 @@ export function CbtGlobalPublishingPanel({
         setWarranty(warrantyType === "No warranty" ? "No warranty" : config.sale_terms.find((term) => term.id === "WARRANTY_TIME")?.value_name ?? "7 days");
       })
       .catch((error) => !cancelled && setStatus(error instanceof Error ? error.message : "无法读取跨境刊登配置"));
+    return () => { cancelled = true; };
+  }, [draftId]);
+
+  // 变体草稿自动采集：打开草稿时若绑定的是父链接 source（asin 与变体 ASIN 不一致，
+  // 例如父 2pcs / 变体 10pcs），自动创建变体采集任务并让本机插件采集变体页，
+  // 完成后自动切到变体草稿。失败静默降级，不阻塞编辑，仍可手动点“采”重试。
+  useEffect(() => {
+    if (!draftId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const persisted = await getDraft(draftId);
+        if (cancelled || !persisted.source_variant_asin || !persisted.source_product_id) return;
+        const variantAsin = String(persisted.source_variant_asin).toUpperCase();
+        if (autoVariantTriggeredRef.current[draftId]) return;
+        const source = await getSourceProduct(persisted.source_product_id);
+        if (cancelled) return;
+        if (String(source.asin ?? "").toUpperCase() === variantAsin) return; // 已绑定变体页 source，无需再采
+        autoVariantTriggeredRef.current[draftId] = true;
+        setStatus(`检测到变体草稿仍绑定父链接数据，正在自动采集 ${variantAsin} 变体页真实数据...`);
+        const job = await createSourceVariantCollectionJob(
+          persisted.source_product_id, variantAsin, persisted.target_site_id || "CBT", "browser_extension",
+        );
+        if (cancelled || !job.draft_id || !job.source_product_id) return;
+        const ok = await new Promise<boolean>((resolve) => {
+          let settled = false;
+          const timer = window.setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            window.removeEventListener("meli-amazon-recollect-result", handler);
+            resolve(false);
+          }, 30000);
+          function handler(event: Event) {
+            const detail = (event as CustomEvent<{ sourceProductId?: number; ok?: boolean }>).detail;
+            if (detail?.sourceProductId !== job.source_product_id) return;
+            if (settled) return;
+            settled = true;
+            window.clearTimeout(timer);
+            window.removeEventListener("meli-amazon-recollect-result", handler);
+            resolve(detail.ok === true);
+          }
+          window.addEventListener("meli-amazon-recollect-result", handler);
+          window.dispatchEvent(new CustomEvent("meli-amazon-recollect", {
+            detail: { sourceProductId: job.source_product_id, sourceUrl: job.source_url },
+          }));
+        });
+        if (cancelled) return;
+        let updated = await getDraft(job.draft_id);
+        for (let attempt = 0; attempt < 5 && updated.content_version < 2; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 800));
+          updated = await getDraft(job.draft_id);
+        }
+        if (cancelled) return;
+        setListingRail((current) => uniqueDrafts([...current.filter((row) => row.id !== updated.id), updated]));
+        onDraftChange(updated);
+        if (job.draft_id !== draftId) onSelectDraft?.(updated);
+        setStatus(ok
+          ? `已自动采集 ${variantAsin} 变体页真实数据并切换到草稿 #${updated.id}。`
+          : `本机插件未响应，变体草稿暂用父页数据；可稍后点“采”重试。`);
+      } catch {
+        // 自动采集失败不阻塞编辑：静默降级，用户仍可手动点“采”
+      }
+    })();
     return () => { cancelled = true; };
   }, [draftId]);
 
