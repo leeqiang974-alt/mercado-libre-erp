@@ -1322,10 +1322,37 @@ def publish_preflight_batch(
     draft_ids = list(dict.fromkeys(payload.draft_ids))
     item_by_draft_id, _ = _evaluate_publish_batch(db, draft_ids)
     items = [item_by_draft_id[draft_id] for draft_id in draft_ids]
+    publication_model = "unknown"
+    if draft_ids:
+        store_id = db.execute(
+            text(
+                """
+                SELECT clc.store_id FROM cbt_listing_configs clc
+                WHERE clc.product_draft_id = :d LIMIT 1
+                """
+            ),
+            {"d": draft_ids[0]},
+        ).scalar()
+        if store_id:
+            row = db.execute(
+                text(
+                    """
+                    SELECT response_summary_json->'response_details'->>'publication_model' AS m
+                    FROM publish_jobs
+                    WHERE store_id = :s
+                      AND response_summary_json->'response_details'->>'publication_model' IS NOT NULL
+                    ORDER BY id DESC LIMIT 1
+                    """
+                ),
+                {"s": store_id},
+            ).first()
+            if row and row[0]:
+                publication_model = str(row[0])
     return PublishBatchPreflightResult(
         ready_count=sum(item.outcome == "ready" for item in items),
         not_ready_count=sum(item.outcome == "not_ready" for item in items),
         not_found_count=sum(item.outcome == "not_found" for item in items),
+        publication_model=publication_model,
         items=items,
     )
 

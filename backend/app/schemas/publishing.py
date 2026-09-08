@@ -65,6 +65,7 @@ class PublishBatchPreflightResult(BaseModel):
     ready_count: int
     not_ready_count: int
     not_found_count: int
+    publication_model: str = "unknown"
     items: list[PublishBatchPreflightItem]
 
 

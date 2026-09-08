@@ -340,6 +340,7 @@ export type PublishBatchPreflightResult = {
   ready_count: number;
   not_ready_count: number;
   not_found_count: number;
+  publication_model: string;
   items: {
     draft_id: number;
     outcome: "ready" | "not_ready" | "not_found";

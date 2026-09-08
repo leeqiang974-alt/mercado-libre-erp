@@ -108,6 +108,19 @@ function readablePublishError(value: string) {
   if (value.includes("meli_metadata_unavailable")) {
     return "美客多分类属性数据暂时不可用。";
   }
+  if (value.includes("User products currently only support 1 item")) {
+    return "该账号为 UP 模式：每个商品仅支持 1 个 listing。此商品可能已在美客多上架，请勿重复发布；要改价/改属性请到商品管理操作。";
+  }
+  if (value.includes("listing.conflict") || value.includes("This listing already exists")) {
+    return "该商品已存在：同一商品在美客多已有上架记录（UP 模式每商品仅 1 个 listing）。请勿重复发布，改价/编辑请用商品管理。";
+  }
+  if (value.startsWith("meli_global_publish_failed")) {
+    const detail = value.includes("|") ? value.split("|").slice(1).join("|").trim() : "";
+    return detail ? `美客多发布被拒：${detail}` : "美客多发布被拒，请查看任务卡片中的原始报错。";
+  }
+  if (value.startsWith("cbt_user_product_payload_unavailable")) {
+    return "UP 模式发布数据构建失败，请重新保存草稿后重试。";
+  }
   return value;
 }
 
@@ -941,7 +954,13 @@ export function PublishingPage({
       const result = await preflightPublishBatch(draftIds);
       if (batchPreflightEpochRef.current !== requestEpoch) return;
       setBatchPreflightResult(result);
-      setStatus(`${result.ready_count} of ${result.items.length} selected drafts are ready`);
+      const modelHint =
+        result.publication_model === "user_product"
+          ? "（该店铺为 UP 模式：发布走 User Products 流程，每个商品仅支持 1 个 listing，重复发布会报错；改价/编辑请用商品管理）"
+          : result.publication_model === "traditional"
+            ? "（该店铺为传统 CBT 模式，按常规流程发布）"
+            : "";
+      setStatus(`${result.ready_count} of ${result.items.length} selected drafts are ready${modelHint}`);
     } catch (error) {
       if (batchPreflightEpochRef.current !== requestEpoch) return;
       setBatchPreflightResult(null);
