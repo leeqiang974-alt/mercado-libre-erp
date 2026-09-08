@@ -666,8 +666,11 @@ export function CbtGlobalPublishingPanel({
           })
           .catch(() => !cancelled && setCategoryLeafVerified(false));
         setFamilyName(config.family_name || defaultSku(draftId));
-        setGlobalTitle(normalizeCbtTitle(config.global_title));
-        setDescription(sanitizeCbtDescription(config.description));
+        // config 的 global_title/description 可能为空（草稿已保存但刊登配置未存标题/描述）。
+        // 此时回退到草稿本身的值，避免用空串覆盖掉已有标题/描述，导致输入框空白、
+        // 点 AI 又提示“已生成过”。
+        setGlobalTitle(normalizeCbtTitle(config.global_title || persistedDraft.title || ""));
+        setDescription(sanitizeCbtDescription(config.description || persistedDraft.description || ""));
         // A saved procurement/domestic-shipping/profit formula is the source
         // of truth for the Remote Net Proceeds amount. Fall back to a legacy
         // manually saved amount only while no formula exists.
