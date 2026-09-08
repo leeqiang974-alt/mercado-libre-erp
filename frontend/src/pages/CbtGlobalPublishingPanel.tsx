@@ -1305,14 +1305,14 @@ export function CbtGlobalPublishingPanel({
       setStatus("预检只检查美客多发布要求；请先补齐上方提示项。");
       return;
     }
-    if (!saved) {
-      // 流程打通：未保存的修改先自动保存，再调用官方预检
-      const ok = await saveConfig();
-      if (!ok) {
-        setPreview({ allowed: false, errors: ["保存当前刊登配置失败，请根据上方提示修正后重试。"], payload: null });
-        setStatus("配置保存失败，无法预检。");
-        return;
-      }
+    // 预检前无条件同步页面当前内容到数据库（不仅限于从未保存过的草稿）：
+    // 已保存过配置后改标题/价格/属性而未点保存时，预检也必须用页面当前值。
+    setStatus("正在同步并保存当前配置…");
+    const ok = await saveConfig();
+    if (!ok) {
+      setPreview({ allowed: false, errors: ["保存当前刊登配置失败，请根据上方提示修正后重试。"], payload: null });
+      setStatus("配置保存失败，无法预检。");
+      return;
     }
     setBusy("preview"); setStatus("");
     try {
@@ -1356,12 +1356,11 @@ export function CbtGlobalPublishingPanel({
 
   async function executePublish() {
     if (busy) return;
-    // 流程打通：发布前保证配置已保存
-    if (!saved) {
-      setStatus("正在保存当前配置…");
-      const ok = await saveConfig();
-      if (!ok) { setStatus("配置保存失败，未提交发布。"); return; }
-    }
+    // 发布前无条件同步页面当前内容（发布 worker 从数据库读取数据构造请求，
+    // 若只按 !saved 判断，已保存过配置后改字段不点保存，发布的就是旧数据）
+    setStatus("正在同步并保存当前配置…");
+    const ok = await saveConfig();
+    if (!ok) { setStatus("配置保存失败，未提交发布。"); return; }
     // 保证发布前检查通过（配置变更后 preview 会被置空）
     if (!preview?.allowed) {
       setStatus("正在自动完成发布前检查…");
@@ -1403,11 +1402,10 @@ export function CbtGlobalPublishingPanel({
 
   async function openFamilyPicker() {
     if (busy) return;
-    if (!saved) {
-      setStatus("正在保存当前配置…");
-      const ok = await saveConfig();
-      if (!ok) { setStatus("配置保存失败，无法合并发布变体。"); return; }
-    }
+    // 合并变体前同样同步页面当前内容
+    setStatus("正在同步并保存当前配置…");
+    const ok = await saveConfig();
+    if (!ok) { setStatus("配置保存失败，无法合并发布变体。"); return; }
     setBusy("family");
     setStatus("正在读取同产品族草稿…");
     try {
