@@ -558,10 +558,16 @@ def _extract_variants(
     script_color_by_asin: dict[str, str] | None = None,
 ) -> list[dict]:
     variants: dict[str, dict] = {}
+    # Amazon 多维变体（如 Color × Size）：dimensionValuesDisplayData[asin] 值数组
+    # 的顺序对应页面维度显示顺序（DOM 中 Color 选择器先出现则 color 先），
+    # 与 variationValues 的 JSON key 顺序（size 先）并不总是一致。必须用
+    # 页面组的出现顺序对齐，不能 zip 猜序。
+    dimension_order: list[str] = []
     for group in soup.select("[id^='variation_'][id$='_name']"):
         attribute = _variant_label(str(group.get("id", "")))
         if not attribute:
             continue
+        dimension_order.append(attribute)
         for option in group.select("[data-asin]"):
             asin = str(option.get("data-asin", "")).strip().upper()
             if not re.fullmatch(r"[A-Z0-9]{10}", asin):
@@ -588,6 +594,10 @@ def _extract_variants(
             continue
         variation_values = _json_object_after_key(text, "variationValues")
         attributes = [_variant_label(f"variation_{name}") for name in variation_values]
+        if len(attributes) == len(dimension_order) and attributes != dimension_order:
+            # 页面组顺序与 variationValues key 顺序不一致：以页面显示顺序为准，
+            # 保证 value 数组（页面顺序）与维度名一一对应。
+            attributes = dimension_order
         for asin, values in display_data.items():
             normalized_asin = str(asin).strip().upper()
             if not re.fullmatch(r"[A-Z0-9]{10}", normalized_asin):
