@@ -125,25 +125,35 @@ async def generate_and_save_draft_content(
     source = db.get(SourceProduct, draft.source_product_id) if draft.source_product_id else None
     draft_evidence_description_length = len(draft.description or "")
     prompt = _build_prompt(draft, source, normalized_category)
-    generated = await _request_content(
-        base_url=base_url,
-        model=model,
-        provider=provider,
-        api_key=api_key,
-        prompt=prompt,
-        timeout_seconds=timeout_seconds,
-    )
     source_brand = str(source.brand or "") if source else ""
-    try:
-        content = _validate_generated(generated, source_brand)
-    except ValueError as exc:
-        # Do not auto-correct with a second paid model call.  The failed
-        # attempt is audited by the route and the operator decides whether to
-        # retry after reviewing the source evidence.
-        raise HTTPException(
-            status_code=502,
-            detail={"code": "generated_content_invalid", "reason": str(exc)},
-        ) from exc
+    # 标题超长不直接失败：轮询重试（最多3次），每次追加更强的压缩指令，
+    # 直到标题落在 60 字符（含空格标点）以内。其他校验错误仍立即失败。
+    max_retries = 3
+    content = None
+    for attempt in range(1, max_retries + 1):
+        generated = await _request_content(
+            base_url=base_url,
+            model=model,
+            provider=provider,
+            api_key=api_key,
+            prompt=prompt,
+            timeout_seconds=timeout_seconds,
+        )
+        try:
+            content = _validate_generated(generated, source_brand)
+            break
+        except ValueError as exc:
+            reason = str(exc)
+            if reason != "title must be 1-60 characters" or attempt >= max_retries:
+                raise HTTPException(
+                    status_code=502,
+                    detail={"code": "generated_content_invalid", "reason": reason},
+                ) from exc
+            prompt += (
+                "\n\nCORRECTION: the previous attempt produced a title that is too long. "
+                "Generate a NEW, much shorter title of at most 50 characters counting "
+                "spaces and punctuation. Keep the description unchanged if it was valid."
+            )
     content = GeneratedListingContent(
         title=content.title,
         description=sanitize_unbranded_description(content.description, source_brand),
@@ -328,7 +338,7 @@ def _build_prompt(draft: ProductDraft, source: SourceProduct | None, category_id
     return f"""Create English Mercado Libre listing content for confirmed category {category_id}.
 Rules:
 - JSON object only with keys title, description, brand.
-- title must be 60 characters or fewer, factual, and contain no brand or marketing language.
+- title must be at most 50 characters counting spaces and punctuation (keep it short and precise; full detail belongs in the description), factual, and contain no brand or marketing language.
 - brand must be exactly Unbranded.
 - description must be a complete, useful listing description, not a one-sentence summary. Use this exact plain-text structure: an overview paragraph; a `Key details:` section with factual bullet lines; a `Suitable uses:` paragraph; then the warranty sentence as the final line. Preserve every supported fact from the source and existing draft. It must be 80-260 English words, use plain ASCII punctuation, and contain line breaks; do not pad sparse evidence with guesses.
 - description must be factual and based only on the source data or existing draft evidence. Do not invent certifications, guarantees, materials, dimensions, compatibility, or features.
