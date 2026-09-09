@@ -367,6 +367,10 @@ export function CbtGlobalPublishingPanel({
   const [imageZoom, setImageZoom] = useState(1);
   const [aiFeedback, setAiFeedback] = useState<{ field: "title" | "description"; message: string; error: boolean } | null>(null);
   const offersInitializedRef = useRef(false);
+  // Once the operator edits net proceeds, intermediate draft responses from
+  // content/image saves must not restore the draft's previous price.  The CBT
+  // listing config is the publishing source of truth for this field.
+  const priceUsdDirtyRef = useRef(false);
   // Poll handle for async CBT publish execution (worker path).
   const publishPollTimer = useRef<number | null>(null);
   // 变体草稿自动采集防抖：同一草稿只自动触发一次，避免每次打开都重复请求插件。
@@ -472,6 +476,7 @@ export function CbtGlobalPublishingPanel({
   // using draft fields as dependencies used to clear a confirmed category
   // when the same draft was refreshed or saved.
   useEffect(() => {
+    priceUsdDirtyRef.current = false;
     setCategorySearchQuery(normalizeCbtTitle(draft.title));
     setGlobalTitle(normalizeCbtTitle(draft.title));
     setDescription(sanitizeCbtDescription(draft.description));
@@ -544,7 +549,7 @@ export function CbtGlobalPublishingPanel({
     setGlobalTitle(normalizeCbtTitle(draft.title));
     setDescription(sanitizeCbtDescription(draft.description));
     setVideoUrls(draft.video_urls ?? []);
-    if (draft.currency === "USD" && draft.price) setPriceUsd(String(draft.price));
+    if (!priceUsdDirtyRef.current && draft.currency === "USD" && draft.price) setPriceUsd(String(draft.price));
     setSaved(null);
     setPreview(null);
     setExecution(null);
@@ -635,11 +640,13 @@ export function CbtGlobalPublishingPanel({
         if (!config) {
           // 无已保存刊登配置的草稿：用草稿自身字段同步刊登表单，避免价格/属性显示空白
           // 导致"请填写目标净收益/必填属性"的误报（草稿 price 已存在却未显示）。
-          setPriceUsd(
-            persistedDraft.currency === "USD" && persistedDraft.price
-              ? String(persistedDraft.price)
-              : "",
-          );
+          if (!priceUsdDirtyRef.current) {
+            setPriceUsd(
+              persistedDraft.currency === "USD" && persistedDraft.price
+                ? String(persistedDraft.price)
+                : "",
+            );
+          }
           setAttributes({
             ITEM_CONDITION: "new",
             SELLER_SKU: defaultSku(draftId),
@@ -696,10 +703,10 @@ export function CbtGlobalPublishingPanel({
         // 点 AI 又提示“已生成过”。
         setGlobalTitle(normalizeCbtTitle(config.global_title || persistedDraft.title || ""));
         setDescription(sanitizeCbtDescription(config.description || persistedDraft.description || ""));
-        // A saved procurement/domestic-shipping/profit formula is the source
-        // of truth for the Remote Net Proceeds amount. Fall back to a legacy
-        // manually saved amount only while no formula exists.
-        setPriceUsd(String(savedPricing?.target_price ?? config.price_usd));
+        // Global Selling publishes config.price_usd as net_proceeds. A legacy
+        // procurement formula may remain available as a reference, but it must
+        // never replace the operator's saved CBT net-proceeds amount.
+        if (!priceUsdDirtyRef.current) setPriceUsd(String(config.price_usd));
         setQuantity(String(config.available_quantity || 999));
         setAttributes({ ITEM_CONDITION: "new", SELLER_SKU: defaultSku(draftId), ...Object.fromEntries(config.attributes.map((item) => [item.id, item.value_name])), BRAND: "Unbranded", MODEL: config.family_name || defaultSku(draftId) });
         setOffers(config.sites_to_sell);
@@ -1290,17 +1297,20 @@ export function CbtGlobalPublishingPanel({
       return false;
     }
     setBusy("save"); setStatus(""); setPreview(null); setExecution(null);
+    const submittedPriceUsd = Number(priceUsd);
     try {
       const savedContent = await saveProductContent();
       const removedSmallImages = Math.max(0, draft.image_urls.length - savedContent.image_urls.length);
       const config = await saveCbtListingConfig(draftId, {
         store_id: Number(storeId), category_id: categoryId, family_name: familyName,
-        global_title: normalizeCbtTitle(globalTitle), description: sanitizeCbtDescription(description), price_usd: Number(priceUsd),
+        global_title: normalizeCbtTitle(globalTitle), description: sanitizeCbtDescription(description), price_usd: submittedPriceUsd,
         available_quantity: Number(quantity),
         attributes: attributesForSave(attributes, attributeDefinitions, saved?.attributes),
         sale_terms: warrantySaleTerms(warranty),
         sites_to_sell: offers,
       });
+      priceUsdDirtyRef.current = false;
+      setPriceUsd(String(config.price_usd));
       setSaved(config); onDraftChange(config.draft); setListingRail((current) => current.map((item) => item.id === config.draft.id ? config.draft : item)); onReviewInvalidated();
       setStatus(removedSmallImages
         ? `跨境刊登配置已保存；已自动剔除 ${removedSmallImages} 张小于 500×500px 的图片，可直接进行官方请求预检。`
@@ -1547,7 +1557,7 @@ export function CbtGlobalPublishingPanel({
         <label>店铺质保条款<select value={warranty} onChange={(event) => { setWarranty(event.target.value); setSaved(null); setPreview(null); }}><option value="7 days">7 天</option><option value="No warranty">无质保</option><option value="30 days">30 天</option></select></label>{missing.length > 0 && <p className="inline-warning">还缺少官方必填字段：{missing.join("、")}。</p>}
       </section>
 
-      <section id="sales" className="surface wf-section"><div className="wf-section-title"><span>6</span><div><h3>销售配置</h3><p>只填写一次目标净收益（USD）；提交值以 USD 保存，不填写采购成本、国内运费或平台费用。</p></div></div><div className="cbt-pricing-rule">全球销售采用净收益模式：ERP 会把你的“采购成本 + 国内运费 + 利润率”收益测算自动带入 USD 净收益；美客多据此计算各站买家售价。</div><div className="cbt-sales-table-wrap"><table className="cbt-sales-table"><thead><tr><th>站点</th><th>美客多售价</th><th>目标净收益（USD）</th><th>刊登类型</th><th>标题</th></tr></thead><tbody><tr className="cbt-global-row"><th><Globe2 size={16} /> 全球</th><td><span className="cbt-derived-value">由美客多自动计算</span></td><td><input type="number" min="0.01" step="0.01" value={priceUsd} placeholder="填写 USD 净收益" onChange={(event) => { setPriceUsd(event.target.value); setSaved(null); setPreview(null); }} />{pricing && <small>收益测算自动值：USD {pricing.target_price.toFixed(2)}</small>}</td><td><span className="cbt-derived-value">按站点配置</span></td><td><div className="cbt-title-input"><input value={globalTitle} onChange={(event) => setGlobalTitle(normalizeCbtTitle(event.target.value))} /><small>{globalTitle.length}/60</small></div></td></tr>{remoteMarkets.map((market) => { const offer = offers.find((item) => item.site_id === market.site_id); const enabled = Boolean(offer); return <tr className={enabled ? "" : "disabled"} key={market.site_id}><th><div className="cbt-site-toggle"><span><strong>{MARKET_NAMES[market.site_id] ?? market.site_id}</strong><small>{market.site_id} · Remote · {enabled ? "已在上方选中" : "未选中"}</small></span></div></th><td><span className="cbt-derived-value">由美客多结算</span></td><td><span className="cbt-derived-value">{estimatedProfitUsd === null ? "-" : estimatedProfitUsd.toFixed(2)}</span></td><td>{(() => { const ids = officialTypes[market.site_id]; if (!categoryId.startsWith("CBT")) return <span className="cbt-derived-value">请先确认 CBT 分类</span>; if (officialTypesLoading) return <span className="cbt-derived-value">正在读取官方类型…</span>; if (!ids?.length) return <span className="cbt-derived-value">官方未返回，可预检确认</span>; return <select disabled={!enabled} value={offer?.listing_type_id ?? ids[0]} onChange={(event) => updateOffer(market.site_id, "listing_type_id", event.target.value)}>{ids.includes("gold_pro") && <option value="gold_pro">Premium（优质）</option>}{ids.includes("gold_special") && <option value="gold_special">Classic（经典）</option>}</select>; })()}</td><td><div className="cbt-title-input"><input disabled={!enabled} value={offer?.title ?? globalTitle} onChange={(event) => updateOffer(market.site_id, "title", event.target.value)} /><small>{(offer?.title ?? globalTitle).length}/60</small></div></td></tr>; })}{fullMarkets.map((market) => <tr className="disabled cbt-full-row" key={`${market.site_id}-${market.logistic_type}`}><th><div className="cbt-site-toggle"><span><strong>墨西哥（FULL）</strong><small>MLM · FULL 履约不参与本次发布</small></span></div></th><td>不发布</td><td>-</td><td>已排除</td><td>由 FULL 流程单独管理</td></tr>)}</tbody></table></div>{pricing && pricing.target_currency !== "USD" && <p className="inline-warning">请补充 USD 成本定价后保存；当前草稿的本地站价格不能用于 CBT 发布。</p>}{preview && <div className={`validation-result ${preview.allowed ? "ready" : "blocked"}`}><strong>{preview.allowed ? "官方请求预检通过" : "刊登请求未通过"}</strong>{preview.errors.map((error) => <span key={error}>{error}</span>)}</div>}{execution && <div className={`validation-result ${execution.status === "published" ? "ready" : "blocked"}`}><strong>{execution.status === "published" ? "已提交并创建商品" : "未创建商品"}</strong>{execution.item_id && <span>商品 ID：{execution.item_id}</span>}{execution.permalink && <a href={execution.permalink} target="_blank" rel="noreferrer">打开商品页</a>}{execution.errors.map((error) => <span key={error}>{error}</span>)}{execution.response_details && Object.keys(execution.response_details).length > 0 && <SitePublishResults details={execution.response_details} />}</div>}</section>
+      <section id="sales" className="surface wf-section"><div className="wf-section-title"><span>6</span><div><h3>销售配置</h3><p>只填写一次目标净收益（USD）；提交值以 USD 保存，不填写采购成本、国内运费或平台费用。</p></div></div><div className="cbt-pricing-rule">全球销售采用净收益模式：以你在下方输入的“目标净收益（USD）”为最终提交值；历史成本测算只作参考，不会覆盖手动输入。美客多据此计算各站买家售价。</div><div className="cbt-sales-table-wrap"><table className="cbt-sales-table"><thead><tr><th>站点</th><th>美客多售价</th><th>目标净收益（USD）</th><th>刊登类型</th><th>标题</th></tr></thead><tbody><tr className="cbt-global-row"><th><Globe2 size={16} /> 全球</th><td><span className="cbt-derived-value">由美客多自动计算</span></td><td><input type="number" min="0.01" step="0.01" value={priceUsd} placeholder="填写 USD 净收益" onChange={(event) => { priceUsdDirtyRef.current = true; setPriceUsd(event.target.value); setSaved(null); setPreview(null); }} />{pricing && <small>历史收益测算参考：USD {pricing.target_price.toFixed(2)}</small>}</td><td><span className="cbt-derived-value">按站点配置</span></td><td><div className="cbt-title-input"><input value={globalTitle} onChange={(event) => setGlobalTitle(normalizeCbtTitle(event.target.value))} /><small>{globalTitle.length}/60</small></div></td></tr>{remoteMarkets.map((market) => { const offer = offers.find((item) => item.site_id === market.site_id); const enabled = Boolean(offer); return <tr className={enabled ? "" : "disabled"} key={market.site_id}><th><div className="cbt-site-toggle"><span><strong>{MARKET_NAMES[market.site_id] ?? market.site_id}</strong><small>{market.site_id} · Remote · {enabled ? "已在上方选中" : "未选中"}</small></span></div></th><td><span className="cbt-derived-value">由美客多结算</span></td><td><span className="cbt-derived-value">{estimatedProfitUsd === null ? "-" : estimatedProfitUsd.toFixed(2)}</span></td><td>{(() => { const ids = officialTypes[market.site_id]; if (!categoryId.startsWith("CBT")) return <span className="cbt-derived-value">请先确认 CBT 分类</span>; if (officialTypesLoading) return <span className="cbt-derived-value">正在读取官方类型…</span>; if (!ids?.length) return <span className="cbt-derived-value">官方未返回，可预检确认</span>; return <select disabled={!enabled} value={offer?.listing_type_id ?? ids[0]} onChange={(event) => updateOffer(market.site_id, "listing_type_id", event.target.value)}>{ids.includes("gold_pro") && <option value="gold_pro">Premium（优质）</option>}{ids.includes("gold_special") && <option value="gold_special">Classic（经典）</option>}</select>; })()}</td><td><div className="cbt-title-input"><input disabled={!enabled} value={offer?.title ?? globalTitle} onChange={(event) => updateOffer(market.site_id, "title", event.target.value)} /><small>{(offer?.title ?? globalTitle).length}/60</small></div></td></tr>; })}{fullMarkets.map((market) => <tr className="disabled cbt-full-row" key={`${market.site_id}-${market.logistic_type}`}><th><div className="cbt-site-toggle"><span><strong>墨西哥（FULL）</strong><small>MLM · FULL 履约不参与本次发布</small></span></div></th><td>不发布</td><td>-</td><td>已排除</td><td>由 FULL 流程单独管理</td></tr>)}</tbody></table></div>{pricing && pricing.target_currency !== "USD" && <p className="inline-warning">请补充 USD 成本定价后保存；当前草稿的本地站价格不能用于 CBT 发布。</p>}{preview && <div className={`validation-result ${preview.allowed ? "ready" : "blocked"}`}><strong>{preview.allowed ? "官方请求预检通过" : "刊登请求未通过"}</strong>{preview.errors.map((error) => <span key={error}>{error}</span>)}</div>}{execution && <div className={`validation-result ${execution.status === "published" ? "ready" : "blocked"}`}><strong>{execution.status === "published" ? "已提交并创建商品" : "未创建商品"}</strong>{execution.item_id && <span>商品 ID：{execution.item_id}</span>}{execution.permalink && <a href={execution.permalink} target="_blank" rel="noreferrer">打开商品页</a>}{execution.errors.map((error) => <span key={error}>{error}</span>)}{execution.response_details && Object.keys(execution.response_details).length > 0 && <SitePublishResults details={execution.response_details} />}</div>}</section>
       </main>
     </div>
     {previewImage && <div className="wf-image-lightbox" role="dialog" aria-modal="true" aria-label="图片大图预览" onClick={closeImagePreview}>
