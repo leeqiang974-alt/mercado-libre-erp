@@ -135,7 +135,7 @@ const ATTRIBUTE_NAMES_ZH: Record<string, string> = {
   ITEM_CONDITION: "商品状况", SELLER_SKU: "卖家 SKU", PACKAGE_LENGTH: "包装长度",
   PACKAGE_WIDTH: "包装宽度", PACKAGE_HEIGHT: "包装高度", PACKAGE_WEIGHT: "包装重量",
   BRAND: "品牌", MODEL: "型号", WARRANTY_TYPE: "质保类型", COLOR: "颜色",
-  MATERIAL: "材质", GTIN: "商品条码", EAN: "商品条码", UPC: "商品条码",
+  MATERIAL: "材质", PRODUCT_TYPE: "产品类型", GTIN: "商品条码", EAN: "商品条码", UPC: "商品条码",
 };
 
 function defaultSku(draftId: number) {
@@ -173,6 +173,23 @@ function uniqueDrafts(items: ProductDraftRead[]) {
 
 function attributeNameZh(attribute: Record<string, unknown> | undefined, id: string) {
   return ATTRIBUTE_NAMES_ZH[id] ?? String(attribute?.name_zh ?? attribute?.name ?? id);
+}
+
+function officialAttributeValues(definition: Record<string, unknown> | undefined) {
+  return Array.isArray(definition?.values)
+    ? definition.values.filter((value): value is Record<string, unknown> => Boolean(
+      value && typeof value === "object" && String(value.id ?? "").trim() && String(value.name ?? "").trim(),
+    ))
+    : [];
+}
+
+function inferOfficialAttributeValue(definition: Record<string, unknown>, evidence: string) {
+  const haystack = ` ${evidence.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()} `;
+  const matches = officialAttributeValues(definition).filter((value) => {
+    const needle = String(value.name ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    return needle.length >= 3 && haystack.includes(` ${needle} `);
+  });
+  return matches.length === 1 ? String(matches[0].name) : "";
 }
 
 function readableVariantDraftError(error: unknown) {
@@ -555,6 +572,25 @@ export function CbtGlobalPublishingPanel({
       return changed ? next : current;
     });
   }, [applicableVariationDefinitions, draftId, draftVariantAttributesKey]);
+
+  useEffect(() => {
+    if (!attributeDefinitions.length) return;
+    const evidence = `${sourceTitle} ${globalTitle} ${draft.description}`;
+    setAttributes((current) => {
+      const next = { ...current };
+      let changed = false;
+      for (const definition of attributeDefinitions) {
+        const id = String(definition.id ?? "").trim().toUpperCase();
+        if (!id || !requiredIds.includes(id) || next[id]?.trim() || !officialAttributeValues(definition).length) continue;
+        const inferred = inferOfficialAttributeValue(definition, evidence);
+        if (inferred) {
+          next[id] = inferred;
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [attributeDefinitions, draft.description, globalTitle, requiredIds, sourceTitle]);
 
   // Keep source content changes (AI generation, recollection, or a server-side
   // save) visible without resetting category confirmation, selected markets,
@@ -1592,7 +1628,18 @@ export function CbtGlobalPublishingPanel({
           </div>
         )}
         {sourceVariants.length > 1 && <p className="section-note">当前授权店铺为传统 CBT Global Selling：每个 Amazon ASIN 会保持独立草稿/发布，不会把不同商品强行合并成一个美客多变体。</p>}
-        <div className="form-grid two-col cbt-attributes">{requiredIds.filter((id) => id !== "SELLER_SKU" && id !== "BRAND" && id !== "MODEL").map((id) => { const definition = attributeDefinitions.find((item) => String(item.id).toUpperCase() === id); return <label key={id}>{attributeNameZh(definition, id)} *<input value={attributes[id] ?? ""} placeholder={id === "ITEM_CONDITION" ? "new" : "填写美客多要求的值"} onChange={(event) => setAttribute(id, event.target.value)} /></label>; })}</div>
+        <div className="form-grid two-col cbt-attributes">{requiredIds.filter((id) => id !== "SELLER_SKU" && id !== "BRAND" && id !== "MODEL").map((id) => {
+          const definition = attributeDefinitions.find((item) => String(item.id).toUpperCase() === id);
+          const officialValues = officialAttributeValues(definition);
+          return <label key={id}>{attributeNameZh(definition, id)} *
+            {officialValues.length > 0
+              ? <select value={attributes[id] ?? ""} onChange={(event) => setAttribute(id, event.target.value)}>
+                <option value="">请选择美客多官方选项</option>
+                {officialValues.map((value) => <option key={String(value.id)} value={String(value.name)}>{String(value.name)}</option>)}
+              </select>
+              : <input value={attributes[id] ?? ""} placeholder={id === "ITEM_CONDITION" ? "new" : "填写美客多要求的值"} onChange={(event) => setAttribute(id, event.target.value)} />}
+          </label>;
+        })}</div>
         <label>店铺质保条款<select value={warranty} onChange={(event) => { setWarranty(event.target.value); setSaved(null); setPreview(null); }}><option value="7 days">7 天</option><option value="No warranty">无质保</option><option value="30 days">30 天</option></select></label>{missing.length > 0 && <p className="inline-warning">还缺少官方必填字段：{missing.join("、")}。</p>}
       </section>
 
