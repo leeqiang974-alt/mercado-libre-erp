@@ -390,6 +390,8 @@ export function CbtGlobalPublishingPanel({
   const priceUsdDirtyRef = useRef(false);
   // Poll handle for async CBT publish execution (worker path).
   const publishPollTimer = useRef<number | null>(null);
+  const activeDraftIdRef = useRef(draftId);
+  activeDraftIdRef.current = draftId;
   // 变体草稿自动采集防抖：同一草稿只自动触发一次，避免每次打开都重复请求插件。
   const autoVariantTriggeredRef = useRef<Record<number, boolean>>({});
   useEffect(() => () => {
@@ -510,6 +512,10 @@ export function CbtGlobalPublishingPanel({
   // using draft fields as dependencies used to clear a confirmed category
   // when the same draft was refreshed or saved.
   useEffect(() => {
+    if (publishPollTimer.current !== null) {
+      window.clearInterval(publishPollTimer.current);
+      publishPollTimer.current = null;
+    }
     priceUsdDirtyRef.current = false;
     setCategorySearchQuery(normalizeCbtTitle(draft.title));
     setGlobalTitle(normalizeCbtTitle(draft.title));
@@ -537,6 +543,13 @@ export function CbtGlobalPublishingPanel({
     setHasSavedConfig(false);
     offersInitializedRef.current = false;
   }, [draftId]);
+
+  async function refreshListingRailAfterPublish(targetDraftId: number) {
+    const refreshed = uniqueDrafts(await listDrafts());
+    setListingRail(refreshed);
+    const updated = refreshed.find((item) => item.id === targetDraftId);
+    if (updated && activeDraftIdRef.current === targetDraftId) onDraftChange(updated);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -611,6 +624,10 @@ export function CbtGlobalPublishingPanel({
   useEffect(() => {
     setListingPage((page) => Math.min(Math.max(page, 1), listingPageCount));
   }, [listingPageCount]);
+
+  useEffect(() => () => {
+    if (publishPollTimer.current !== null) window.clearInterval(publishPollTimer.current);
+  }, []);
 
   useEffect(() => {
     const currentIndex = pendingListingRail.findIndex((item) => item.id === draftId);
@@ -1419,20 +1436,24 @@ export function CbtGlobalPublishingPanel({
     finally { setBusy(""); }
   }
 
-  function pollPublishJob(jobId: number | null | undefined) {
+  function pollPublishJob(jobId: number | null | undefined, targetDraftId: number) {
     if (!jobId) return;
     if (publishPollTimer.current !== null) window.clearInterval(publishPollTimer.current);
-    publishPollTimer.current = window.setInterval(async () => {
+    const timerId = window.setInterval(async () => {
+      if (activeDraftIdRef.current !== targetDraftId) {
+        window.clearInterval(timerId);
+        if (publishPollTimer.current === timerId) publishPollTimer.current = null;
+        return;
+      }
       try {
         const jobs = await listPublishJobs(200, 0);
+        if (activeDraftIdRef.current !== targetDraftId) return;
         const job = jobs.find((candidate) => candidate.id === jobId);
         if (!job) return;
         const st = String(job.status || "").toLowerCase();
         if (st === "published" || st === "failed" || st === "blocked") {
-          if (publishPollTimer.current !== null) {
-            window.clearInterval(publishPollTimer.current);
-            publishPollTimer.current = null;
-          }
+          window.clearInterval(timerId);
+          if (publishPollTimer.current === timerId) publishPollTimer.current = null;
           setExecution({
             status: st,
             item_id: job.item_id || "",
@@ -1442,7 +1463,10 @@ export function CbtGlobalPublishingPanel({
             errors: job.errors || [],
             job_id: job.id,
           });
-          if (st === "published") setStatus(`发布成功${job.item_id ? `，商品 ${job.item_id}` : ""}。`);
+          if (st === "published") {
+            await refreshListingRailAfterPublish(targetDraftId).catch(() => undefined);
+            if (activeDraftIdRef.current === targetDraftId) setStatus(`发布成功${job.item_id ? `，商品 ${job.item_id}` : ""}。`);
+          }
           else if (st === "blocked") setStatus(`发布结果待核对（任务 #${job.id}），请查看下方逐站点结果。`);
           else setStatus(`发布失败（任务 #${job.id}），请查看下方错误明细。`);
         }
@@ -1450,6 +1474,7 @@ export function CbtGlobalPublishingPanel({
         // transient polling failure; keep polling on the next tick.
       }
     }, 4000);
+    publishPollTimer.current = timerId;
   }
 
   async function executePublish() {
@@ -1490,8 +1515,11 @@ export function CbtGlobalPublishingPanel({
       const normalizedStatus = String(result.status || "").toLowerCase();
       if (normalizedStatus === "pending" || normalizedStatus === "validating") {
         setStatus(`已提交发布任务${result.job_id ? `（任务 #${result.job_id}）` : ""}，正在创建美客多商品，请稍候…`);
-        pollPublishJob(result.job_id);
-      } else if (normalizedStatus === "published") setStatus(`发布成功${result.item_id ? `，商品 ${result.item_id}` : ""}。`);
+        pollPublishJob(result.job_id, draftId);
+      } else if (normalizedStatus === "published") {
+        await refreshListingRailAfterPublish(draftId).catch(() => undefined);
+        setStatus(`发布成功${result.item_id ? `，商品 ${result.item_id}` : ""}。`);
+      }
       else if (normalizedStatus === "blocked") setStatus(`发布结果待核对${result.job_id ? `（任务 #${result.job_id}）` : ""}，请查看下方逐站点结果。`);
       else setStatus(`发布失败${result.job_id ? `（任务 #${result.job_id}）` : ""}，请查看下方错误明细。`);
     } catch (error) { setStatus(error instanceof Error ? error.message : "跨境发布请求失败，请查看发布任务记录。"); }
