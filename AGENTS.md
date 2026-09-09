@@ -115,5 +115,5 @@
 - For architecture questions and changes spanning three or more modules, read `graphify-out/GRAPH_REPORT.md` first, then inspect the actual source files needed for the task.
 - The graph is a navigation aid, not runtime or deployment evidence. Verify behavior against source, tests, the running ERP, and the production server over SSH as appropriate.
 - This repository uses Windows Codex Desktop with a WSL-hosted Graphify binary. Do not run the upstream `activate.sh` here and do not add Linux paths to `.codex/hooks.json`.
-- Generate or refresh the graph only on the main development computer with `/root/codex_harness/scripts/build_graph.sh` or `refresh_graph.sh` against `/mnt/c/Users/Administrator/Documents/amazon --美客多/work/mercado-libre-erp-github`. Do not run Graphify on the production server.
+- Generate or refresh the graph only on the main development computer with `/root/codex_harness/scripts/build_graph.sh` or `refresh_graph.sh`. Pass the current repository's WSL path (derive it from the active checkout, for example with `wslpath -a`, rather than hard-coding this computer's `C:` path). Do not run Graphify on the production server.
 - Refresh after broad refactors, file moves, new modules, or branch changes. Small localized edits do not require a refresh.
