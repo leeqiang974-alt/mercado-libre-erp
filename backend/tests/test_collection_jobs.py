@@ -123,6 +123,120 @@ def test_source_variant_collection_job_preserves_domain_and_reuses_existing_job(
         assert db.query(CollectionJob).one().collector_kind == "browser_extension"
 
 
+def test_source_variant_collection_job_reuses_exact_draft_without_prior_job():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        parent = SourceProduct(
+            source_url="https://www.amazon.com/dp/B000TEST01",
+            asin="B000TEST01",
+            raw_status=SourceProductStatus.COLLECTED,
+            variants_json=[
+                {"asin": "B000TEST01", "attributes": {"Size": "1 ML"}},
+                {"asin": "B000TEST02", "attributes": {"Size": "2.5 ML"}},
+            ],
+        )
+        exact_source = SourceProduct(
+            source_url="https://amazon.com/dp/B000TEST02",
+            asin="B000TEST02",
+            raw_status=SourceProductStatus.COLLECTED,
+            collection_method="browser_extension",
+        )
+        db.add_all([parent, exact_source])
+        db.flush()
+        exact_draft = ProductDraft(
+            source_product_id=exact_source.id,
+            source_variant_asin="B000TEST02",
+            source_variant_attributes_json={"Size": "2.5 ML"},
+            target_site_id="CBT",
+            target_category_id="CBT414038",
+            title="Existing exact variant draft",
+            content_version=4,
+        )
+        db.add(exact_draft)
+        db.commit()
+        parent_id = parent.id
+        exact_source_id = exact_source.id
+        exact_draft_id = exact_draft.id
+
+    response = client.post(
+        f"/api/imports/source-products/{parent_id}/variants/B000TEST02/collection-job",
+        json={"target_site_id": "CBT", "collector_kind": "browser_extension"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["source_product_id"] == exact_source_id
+    assert response.json()["draft_id"] == exact_draft_id
+    with testing_session() as db:
+        assert db.query(SourceProduct).count() == 2
+        assert db.query(ProductDraft).count() == 1
+        job = db.query(CollectionJob).one()
+        assert job.source_product_id == exact_source_id
+        assert job.draft_id == exact_draft_id
+
+
+def test_first_extension_capture_reuses_pending_variant_placeholder():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        parent = SourceProduct(
+            source_url="https://www.amazon.com/dp/B000TEST01",
+            asin="B000TEST01",
+            raw_status=SourceProductStatus.COLLECTED,
+            variants_json=[
+                {"asin": "B000TEST01", "attributes": {"Size": "1 ML"}},
+                {"asin": "B000TEST02", "attributes": {"Size": "2.5 ML"}},
+            ],
+            title="Measuring spoons",
+            image_urls_json=["https://example.test/parent.jpg"],
+        )
+        db.add(parent)
+        db.commit()
+        parent_id = parent.id
+
+    queued = client.post(
+        f"/api/imports/source-products/{parent_id}/variants/B000TEST02/collection-job",
+        json={"target_site_id": "CBT", "collector_kind": "browser_extension"},
+    )
+    assert queued.status_code == 200
+    placeholder_source_id = queued.json()["source_product_id"]
+    placeholder_draft_id = queued.json()["draft_id"]
+
+    captured = client.post(
+        "/api/imports/amazon-extension/capture",
+        json={
+            "source_url": "https://www.amazon.com/dp/B000TEST02?ref=variant",
+            "target_site_id": "CBT",
+            "snapshot": {
+                "source_url": "https://www.amazon.com/dp/B000TEST02",
+                "title": "2.5 ML stainless steel measuring spoons",
+                "images": ["https://images-na.ssl-images-amazon.com/images/I/example._AC_SL1500_.jpg"],
+                "variants": [
+                    {
+                        "asin": "B000TEST02",
+                        "attributes": {"Size": "2.5 ML"},
+                        "selected": True,
+                    }
+                ],
+            },
+        },
+    )
+
+    assert captured.status_code == 200
+    assert captured.json()["reused"] is True
+    assert captured.json()["source_product_id"] == placeholder_source_id
+    assert captured.json()["draft_id"] == placeholder_draft_id
+    with testing_session() as db:
+        assert db.query(SourceProduct).count() == 2
+        assert db.query(ProductDraft).count() == 1
+        source = db.get(SourceProduct, placeholder_source_id)
+        draft = db.get(ProductDraft, placeholder_draft_id)
+        assert source.raw_status == SourceProductStatus.COLLECTED
+        assert draft.source_variant_attributes_json == {"Size": "2.5 ML"}
+        assert db.query(AuditEvent).filter_by(
+            action="source_product.extension_capture_reused",
+            entity_id=str(placeholder_source_id),
+        ).count() == 1
+
+
 def test_source_variant_collection_job_rejects_unknown_variant():
     client, testing_session = make_client()
     with testing_session() as db:

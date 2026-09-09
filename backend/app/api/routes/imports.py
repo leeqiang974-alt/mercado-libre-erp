@@ -803,6 +803,110 @@ def get_source_product(
     return to_source_product_read(source)
 
 
+def _exact_page_draft_for_url(
+    db: Session,
+    source_url: str,
+    target_site_id: str,
+    *,
+    statuses: set[SourceProductStatus] | tuple[SourceProductStatus, ...],
+) -> tuple[SourceProduct, ProductDraft] | None:
+    """Return the canonical draft already bound to this exact Amazon page.
+
+    A page can arrive through the first-capture endpoint while a variant
+    collection placeholder is already waiting for the same ASIN.  Looking only
+    through CollectionJob misses drafts created by the other endpoint and used
+    to create a second source/draft for one exact product page.
+    """
+    normalized_url = _normalized_amazon_url_or_422(source_url)
+    asin = normalized_url.rsplit("/", 1)[-1].upper()
+    candidates = (
+        db.query(SourceProduct, ProductDraft)
+        .join(ProductDraft, ProductDraft.source_product_id == SourceProduct.id)
+        .filter(
+            func.upper(SourceProduct.asin) == asin,
+            SourceProduct.raw_status.in_(statuses),
+            ProductDraft.target_site_id == target_site_id,
+            func.upper(ProductDraft.source_variant_asin) == asin,
+        )
+        .order_by(
+            (ProductDraft.target_category_id != "").desc(),
+            ProductDraft.content_version.desc(),
+            ProductDraft.id.asc(),
+        )
+        .with_for_update()
+        .all()
+    )
+    for source, draft in candidates:
+        if _try_normalize_amazon_url(source.source_url) == normalized_url:
+            return source, draft
+    return None
+
+
+def _apply_extension_snapshot_to_source(
+    db: Session,
+    source: SourceProduct,
+    snapshot: AmazonSourceSnapshot,
+    video_urls: list[str],
+) -> tuple[list[ProductDraft], dict[str, object]]:
+    """Apply one verified extension capture without replacing draft identity."""
+    source_url = _normalized_amazon_url_or_422(snapshot.source_url)
+    source.source_url = source_url
+    source.asin = source_url.rsplit("/", 1)[-1].upper()
+    source.raw_status = SourceProductStatus.COLLECTED
+    source.collection_method = "browser_extension"
+    source.collected_at = datetime.now(UTC)
+    source.collection_error = ""
+    source.title = snapshot.title
+    source.brand = snapshot.brand
+    source.source_price = snapshot.price.amount
+    source.source_currency = snapshot.price.currency
+    source.description = snapshot.description
+    source.bullets_json = snapshot.bullets
+    source.image_urls_json = select_listing_images(snapshot.images)
+    source.variants_json = [
+        {**variant.model_dump(), "image_urls": select_listing_images(variant.image_urls)}
+        for variant in snapshot.variants
+    ]
+    source.technical_details_json = snapshot.technical_details
+    source.measurements_json = snapshot.measurements.model_dump(exclude_none=True)
+    drafts = db.query(ProductDraft).filter(ProductDraft.source_product_id == source.id).all()
+    for draft in drafts:
+        variant = next(
+            (
+                row
+                for row in source.variants_json
+                if str(row.get("asin", "")).upper()
+                == (draft.source_variant_asin or "").upper()
+            ),
+            None,
+        )
+        images = merge_listing_images(
+            variant.get("image_urls", []) if variant else [],
+            source.image_urls_json or [],
+        )
+        variant_attributes = (
+            dict(variant.get("attributes") or {}) if isinstance(variant, dict) else {}
+        )
+        update_draft_content(
+            db,
+            draft.id,
+            expected_content_version=draft.content_version,
+            title=(source.title[:60].rstrip() + "...")
+            if source.title and len(source.title) > 60
+            else source.title,
+            description=source.description,
+            image_urls_json=images,
+            video_urls_json=video_urls,
+            source_variant_attributes_json=variant_attributes,
+        )
+    quality = _extension_capture_quality(
+        snapshot,
+        image_count=len(source.image_urls_json),
+        video_count=len(video_urls),
+    )
+    return drafts, quality
+
+
 @router.post("/amazon-extension/capture")
 def create_source_product_from_extension(
     payload: AmazonExtensionCapture,
@@ -838,6 +942,49 @@ def create_source_product_from_extension(
             status_code=422,
             detail={"code": "extension_capture_incomplete", **quality},
         )
+
+    # A variant collection job may have pre-created an exact-page placeholder
+    # before the extension's first-capture callback arrives.  Reuse it instead
+    # of producing a second source and a second draft for the same ASIN/site.
+    db.rollback()
+    _lock_collection_site(db, target_site_id)
+    existing = _exact_page_draft_for_url(
+        db,
+        source_url,
+        target_site_id,
+        statuses=(SourceProductStatus.PENDING, *EXACT_PAGE_EVIDENCE_STATUSES),
+    )
+    if existing is not None:
+        source, draft = existing
+        drafts, quality = _apply_extension_snapshot_to_source(
+            db, source, snapshot, video_urls
+        )
+        create_audit_event(
+            db,
+            actor_type="extension",
+            actor_id="browser-extension",
+            action="source_product.extension_capture_reused",
+            entity_type="source_product",
+            entity_id=str(source.id),
+            after={
+                "draft_id": draft.id,
+                "draft_count": len(drafts),
+                "target_site_id": target_site_id,
+                "quality": quality,
+                "reason": "exact_page_draft_exists",
+            },
+            commit=False,
+        )
+        db.commit()
+        db.refresh(draft)
+        return {
+            "ok": True,
+            "id": draft.id,
+            "draft_id": draft.id,
+            "source_product_id": source.id,
+            "quality": quality,
+            "reused": True,
+        }
 
     source = create_source_product(
         db,
@@ -900,53 +1047,9 @@ def capture_source_product_from_extension(
         snapshot = AmazonSourceSnapshot.model_validate({**raw_snapshot, "source_url": source_url})
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"invalid_extension_snapshot: {exc}") from exc
-    source.source_url = source_url
-    source.asin = snapshot.source_url.rsplit("/", 1)[-1].upper()
-    source.raw_status = SourceProductStatus.COLLECTED
-    source.collection_method = "browser_extension"
-    source.collected_at = datetime.now(UTC)
-    source.collection_error = ""
-    source.title = snapshot.title
-    source.brand = snapshot.brand
-    source.source_price = snapshot.price.amount
-    source.source_currency = snapshot.price.currency
-    source.description = snapshot.description
-    source.bullets_json = snapshot.bullets
-    source.image_urls_json = select_listing_images(snapshot.images)
-    source.variants_json = [{**variant.model_dump(), "image_urls": select_listing_images(variant.image_urls)} for variant in snapshot.variants]
-    source.technical_details_json = snapshot.technical_details
-    source.measurements_json = snapshot.measurements.model_dump(exclude_none=True)
-    drafts = db.query(ProductDraft).filter(ProductDraft.source_product_id == source.id).all()
-    for draft in drafts:
-        variant = next((row for row in source.variants_json if str(row.get("asin", "")).upper() == (draft.source_variant_asin or "").upper()), None)
-        images = merge_listing_images(
-            variant.get("image_urls", []) if variant else [],
-            source.image_urls_json or [],
-        )
-        # A re-collection is the authoritative update for the currently bound
-        # Amazon ASIN.  Keep its selected Color/Size/etc. on the draft as well
-        # as on the source row; otherwise the editor still says "single item"
-        # even though the source has just returned its variant set.
-        variant_attributes = (
-            dict(variant.get("attributes") or {})
-            if isinstance(variant, dict)
-            else {}
-        )
-        # 标题/描述一并按变体页真实数据覆盖（父页可能是 2pcs、变体页是 6pcs，
-        # 用父页数据生成标题描述会错）。标题仅做存储层 60 字符截断，最终正式
-        # 标题由 AI 基于本变体页数据生成（严格 60 字符内，含空格与标点）。
-        update_draft_content(
-            db,
-            draft.id,
-            expected_content_version=draft.content_version,
-            title=(source.title[:60].rstrip() + "...")
-            if source.title and len(source.title) > 60
-            else source.title,
-            description=source.description,
-            image_urls_json=images,
-            video_urls_json=video_urls,
-            source_variant_attributes_json=variant_attributes,
-        )
+    drafts, quality = _apply_extension_snapshot_to_source(
+        db, source, snapshot, video_urls
+    )
     create_audit_event(
         db,
         actor_type="extension",
@@ -956,11 +1059,7 @@ def capture_source_product_from_extension(
         entity_id=str(source.id),
         after={
             "draft_count": len(drafts),
-            "quality": _extension_capture_quality(
-                snapshot,
-                image_count=len(source.image_urls_json),
-                video_count=len(video_urls),
-            ),
+            "quality": quality,
             "variant_attributes_updated": sum(
                 1
                 for draft in drafts
@@ -979,11 +1078,7 @@ def capture_source_product_from_extension(
         "ok": True,
         "source_product_id": source.id,
         "draft_count": len(drafts),
-        "quality": _extension_capture_quality(
-            snapshot,
-            image_count=len(source.image_urls_json),
-            video_count=len(video_urls),
-        ),
+        "quality": quality,
     }
 
 
@@ -1080,23 +1175,13 @@ def _completed_variant_page_draft(
     normalized_source_url = _normalized_amazon_url_or_422(parent_source.source_url)
     source_parts = urlparse(normalized_source_url)
     variant_url = f"{source_parts.scheme}://{source_parts.netloc}/dp/{variant_asin}"
-    return (
-        db.query(ProductDraft)
-        .join(CollectionJob, CollectionJob.draft_id == ProductDraft.id)
-        .join(SourceProduct, CollectionJob.source_product_id == SourceProduct.id)
-        .filter(
-            CollectionJob.source_identity == variant_url,
-            CollectionJob.target_site_id == target_site_id,
-            CollectionJob.status == CollectionJobStatus.COMPLETED,
-            SourceProduct.raw_status.in_(EXACT_PAGE_EVIDENCE_STATUSES),
-            func.upper(SourceProduct.asin) == variant_asin,
-            ProductDraft.source_product_id == SourceProduct.id,
-            func.upper(ProductDraft.source_variant_asin) == variant_asin,
-            ProductDraft.target_site_id == target_site_id,
-        )
-        .order_by(CollectionJob.id.desc(), ProductDraft.id.desc())
-        .first()
+    exact = _exact_page_draft_for_url(
+        db,
+        variant_url,
+        target_site_id,
+        statuses=EXACT_PAGE_EVIDENCE_STATUSES,
     )
+    return exact[1] if exact is not None else None
 
 
 def _prepare_variant_extension_placeholders(
@@ -1112,36 +1197,23 @@ def _prepare_variant_extension_placeholders(
     变体页自己的 source 才能被更新；若草稿尚未建立，先用父快照的该变体数据
     预建，保证插件未响应时用户也能立刻打开可编辑草稿。
     """
-    placeholder = (
-        db.query(SourceProduct)
-        .filter(
-            func.upper(SourceProduct.asin) == normalized_asin,
-            SourceProduct.collection_method == "browser_extension",
-            SourceProduct.raw_status == SourceProductStatus.PENDING,
-        )
-        .first()
+    exact = _exact_page_draft_for_url(
+        db,
+        variant_url,
+        target_site_id,
+        statuses=(SourceProductStatus.PENDING, *EXACT_PAGE_EVIDENCE_STATUSES),
     )
-    if placeholder is None:
-        placeholder = SourceProduct(
-            source_url=variant_url,
-            asin=normalized_asin,
-            raw_status=SourceProductStatus.PENDING,
-            collection_method="browser_extension",
-            source="amazon",
-        )
-        db.add(placeholder)
-        db.flush()
-    draft = (
-        db.query(ProductDraft)
-        .filter(
-            ProductDraft.source_product_id == placeholder.id,
-            func.upper(ProductDraft.source_variant_asin) == normalized_asin,
-            ProductDraft.target_site_id == target_site_id,
-        )
-        .first()
+    if exact is not None:
+        return exact
+    placeholder = SourceProduct(
+        source_url=variant_url,
+        asin=normalized_asin,
+        raw_status=SourceProductStatus.PENDING,
+        collection_method="browser_extension",
+        source="amazon",
     )
-    if draft is not None:
-        return placeholder, draft
+    db.add(placeholder)
+    db.flush()
     source_read = to_source_product_read(parent_source)
     snapshot = source_read.snapshot
     if snapshot is None:

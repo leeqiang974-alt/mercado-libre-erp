@@ -419,6 +419,19 @@ export function CbtGlobalPublishingPanel({
     return tags?.variation_attribute === true;
   }), [attributeDefinitions]);
   const draftVariantAttributes = draft.source_variant_attributes ?? {};
+  const applicableVariationDefinitions = useMemo(() => variationDefinitions.filter((definition) => {
+    const id = String(definition.id ?? "").trim().toUpperCase();
+    // Mercado Libre marks identifiers, package measurements and many other
+    // optional catalog fields as variation-capable.  That tag does not mean
+    // the operator must fill every one. Show only a real Amazon variant
+    // dimension that maps to this category and is not already in the required
+    // field block below.
+    return Boolean(
+      id
+      && !requiredIds.includes(id)
+      && sourceVariantValueForDefinition(definition, draftVariantAttributes),
+    );
+  }), [draftVariantAttributes, requiredIds, variationDefinitions]);
   const draftVariantAttributesKey = Object.entries(draftVariantAttributes)
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([name, value]) => `${name}:${value}`)
@@ -525,13 +538,13 @@ export function CbtGlobalPublishingPanel({
   }, [draftId, draft.source_product_id]);
 
   useEffect(() => {
-    if (!variationDefinitions.length || !Object.keys(draftVariantAttributes).length) return;
+    if (!applicableVariationDefinitions.length || !Object.keys(draftVariantAttributes).length) return;
     // Only fill empty official variation fields.  Re-collection may enrich
     // Color/Size, but it must never overwrite an operator's manual choice.
     setAttributes((current) => {
       const next = { ...current };
       let changed = false;
-      for (const definition of variationDefinitions) {
+      for (const definition of applicableVariationDefinitions) {
         const id = String(definition.id ?? "").trim().toUpperCase();
         const sourceValue = sourceVariantValueForDefinition(definition, draftVariantAttributes);
         if (id && sourceValue && !next[id]?.trim()) {
@@ -541,7 +554,7 @@ export function CbtGlobalPublishingPanel({
       }
       return changed ? next : current;
     });
-  }, [draftId, draftVariantAttributesKey, variationDefinitions]);
+  }, [applicableVariationDefinitions, draftId, draftVariantAttributesKey]);
 
   // Keep source content changes (AI generation, recollection, or a server-side
   // save) visible without resetting category confirmation, selected markets,
@@ -1565,9 +1578,9 @@ export function CbtGlobalPublishingPanel({
             </div>
           </div>
         ) : <p className="section-note">当前未采集到变体；点击上架库卡片的绿色“采”可重新抓取当前 Amazon 商品卡。</p>}
-        {variationDefinitions.length > 0 && Object.keys(draftVariantAttributes).length > 0 && (
+        {applicableVariationDefinitions.length > 0 && (
           <div className="form-grid two-col cbt-attributes" aria-label="官方变体属性设置">
-            {variationDefinitions.map((definition) => {
+            {applicableVariationDefinitions.map((definition) => {
               const id = String(definition.id ?? "").toUpperCase();
               const values = Array.isArray(definition.values) ? definition.values.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === "object")) : [];
               const listId = `variation-values-${id}`;
@@ -1579,7 +1592,7 @@ export function CbtGlobalPublishingPanel({
           </div>
         )}
         {sourceVariants.length > 1 && <p className="section-note">当前授权店铺为传统 CBT Global Selling：每个 Amazon ASIN 会保持独立草稿/发布，不会把不同商品强行合并成一个美客多变体。</p>}
-        <div className="form-grid two-col cbt-attributes"><label>型号（自动同步 Parent SKU）<input disabled value={familyName} /></label>{requiredIds.filter((id) => id !== "SELLER_SKU" && id !== "BRAND" && id !== "MODEL").map((id) => { const definition = attributeDefinitions.find((item) => String(item.id).toUpperCase() === id); return <label key={id}>{attributeNameZh(definition, id)} *<input value={attributes[id] ?? ""} placeholder={id === "ITEM_CONDITION" ? "new" : "例如 10 cm / 250 g"} onChange={(event) => setAttribute(id, event.target.value)} /></label>; })}</div>
+        <div className="form-grid two-col cbt-attributes">{requiredIds.filter((id) => id !== "SELLER_SKU" && id !== "BRAND" && id !== "MODEL").map((id) => { const definition = attributeDefinitions.find((item) => String(item.id).toUpperCase() === id); return <label key={id}>{attributeNameZh(definition, id)} *<input value={attributes[id] ?? ""} placeholder={id === "ITEM_CONDITION" ? "new" : "填写美客多要求的值"} onChange={(event) => setAttribute(id, event.target.value)} /></label>; })}</div>
         <label>店铺质保条款<select value={warranty} onChange={(event) => { setWarranty(event.target.value); setSaved(null); setPreview(null); }}><option value="7 days">7 天</option><option value="No warranty">无质保</option><option value="30 days">30 天</option></select></label>{missing.length > 0 && <p className="inline-warning">还缺少官方必填字段：{missing.join("、")}。</p>}
       </section>
 
