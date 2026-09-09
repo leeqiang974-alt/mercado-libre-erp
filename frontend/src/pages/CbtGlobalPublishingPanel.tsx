@@ -441,17 +441,29 @@ export function CbtGlobalPublishingPanel({
 
   useEffect(() => {
     let cancelled = false;
+    let refreshing = false;
     const refreshListingRail = () => listDrafts().then((items) => {
       if (cancelled) return;
       const uniqueItems = uniqueDrafts(items);
       setListingRail(uniqueItems);
-      const currentIndex = uniqueItems.filter((item) => item.publication_status !== "published").findIndex((item) => item.id === draftId);
-      setListingPage(currentIndex >= 0 ? Math.floor(currentIndex / LISTING_PAGE_SIZE) + 1 : 1);
-    }).catch(() => undefined);
-    void refreshListingRail();
-    const timer = window.setInterval(() => void refreshListingRail(), 5000);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [draftId]);
+    }).catch(() => undefined).finally(() => { refreshing = false; });
+    const requestListingRailRefresh = () => {
+      if (refreshing) return;
+      refreshing = true;
+      void refreshListingRail();
+    };
+    requestListingRailRefresh();
+    // Recollection already polls the selected draft (a few KB) and patches it
+    // into the rail as soon as the extension callback lands.  The old 5-second
+    // timer downloaded the complete 1000-draft rail (~2.2 MB) throughout the
+    // operation and made the callback/render path feel much slower.  Refresh
+    // the full rail only when this editor opens or regains focus.
+    window.addEventListener("focus", requestListingRailRefresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", requestListingRailRefresh);
+    };
+  }, []);
 
   // Selecting another card is an in-page edit-context change, not a document
   // navigation. Reset the visible form immediately so the previous product's
@@ -866,7 +878,7 @@ export function CbtGlobalPublishingPanel({
     event.stopPropagation();
     if (!item.source_product_id || recollectBusy !== null) return;
     setRecollectBusy(item.id);
-    setStatus("正在请求本机 Amazon 插件后台采集素材...");
+    setStatus("Amazon 页面正在采集完整图片、参数和变体，通常需要 15–30 秒；回传后本页会自动更新，无需整页刷新。");
     try {
       const source = await getSourceProduct(item.source_product_id);
       if (item.source_variant_asin) {
