@@ -1,0 +1,43 @@
+# Codex Desktop light-mode exclusions.
+# Keep the graph focused on maintained source code and architecture.
+graphify-out/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+node_modules/
+.venv/
+venv/
+dist/
+build/
+artifacts/
+logs/
+data/
+uploads/
+backups/
+backend/app/_vendor/
+*.log
+*.out.log
+*.err.log
+*.bak
+*.bak-*
+*.db
+*.sqlite*
+*.tar.gz
+*.zip
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.mp4
+*.xlsx
+*.xls
+*.csv
+
+# Root-level one-off diagnostics and patch helpers are not product modules.
+/_*.py
+/temp_*.py
+/tmp_*.js
+/check_*.py
+/debug_*.py
+/fix_*.py

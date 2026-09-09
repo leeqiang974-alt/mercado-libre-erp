@@ -107,3 +107,11 @@
 - Treat queue workers that report zero processed items as idle services, not running tasks, and close completed review agents promptly.
 - Manual AI content generation is exempt from the short 20-second general request guard and uses its own bounded provider timeout (90 seconds by default), which must remain below the public proxy timeout. Provider timeouts return a normalized retryable error, leave draft content unchanged, and create a `draft.ai_content_failed` audit event; never automatically retry a paid generation request.
 - A manual AI click may send at most one provider request. Reject an invalid response instead of silently paying for an automatic rewrite. If an AI-generated title or description is still non-empty, block a duplicate request before the provider call; an operator must explicitly clear and save that field before requesting a reconstruction. New AI descriptions must pass the structured English quality gate (80-260 words, readable line breaks, factual content, and final 7-day warranty sentence).
+
+## Graphify / Windows Codex Desktop
+
+- For architecture questions and changes spanning three or more modules, read `graphify-out/GRAPH_REPORT.md` first, then inspect the actual source files needed for the task.
+- The graph is a navigation aid, not runtime or deployment evidence. Verify behavior against source, tests, the running ERP, and the production server over SSH as appropriate.
+- This repository uses Windows Codex Desktop with a WSL-hosted Graphify binary. Do not run the upstream `activate.sh` here and do not add Linux paths to `.codex/hooks.json`.
+- Generate or refresh the graph only on the main development computer with `/root/codex_harness/scripts/build_graph.sh` or `refresh_graph.sh` against `/mnt/c/Users/Administrator/Documents/amazon --美客多/work/mercado-libre-erp-github`. Do not run Graphify on the production server.
+- Refresh after broad refactors, file moves, new modules, or branch changes. Small localized edits do not require a refresh.

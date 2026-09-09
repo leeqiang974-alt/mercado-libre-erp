@@ -14,3 +14,6 @@ frontend/dist/
 data/
 logs/
 backend/app/_vendor/
+
+# Local Graphify output used by Codex Desktop; regenerate on demand.
+/graphify-out/
