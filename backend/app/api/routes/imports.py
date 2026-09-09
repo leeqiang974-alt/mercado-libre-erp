@@ -714,24 +714,41 @@ def receive_amazon_extension_job_result(
         message = "浏览器插件采集信息不完整：" + "、".join(quality["issues"])
         _finish_extension_job_as_failed(db, job, payload.worker_id, message)
         raise HTTPException(status_code=422, detail={"code": "extension_capture_incomplete", **quality})
-    source = create_source_product(
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_name))"),
+            {"lock_name": f"amazon_collection:{job.target_site_id}"},
+        )
+    existing = _exact_page_draft_for_url(
         db,
-        source_url=source_url,
-        status=SourceProductStatus.COLLECTED,
-        snapshot=snapshot,
-        collection_method="browser_extension",
+        source_url,
+        job.target_site_id,
+        statuses=(SourceProductStatus.PENDING, *EXACT_PAGE_EVIDENCE_STATUSES),
     )
-    variant_asin, variant_attributes = selected_source_variant(snapshot, source.asin)
-    draft_payload = normalize_amazon_product(snapshot.model_dump(), job.target_site_id)
-    draft_payload.video_urls = video_urls
-    draft = create_product_draft(
-        db,
-        draft_payload,
-        source_product_id=source.id,
-        source_variant_asin=variant_asin,
-        source_variant_attributes=variant_attributes,
-        commit=False,
-    )
+    if existing is not None:
+        source, draft = existing
+        _, quality = _apply_extension_snapshot_to_source(
+            db, source, snapshot, video_urls
+        )
+    else:
+        source = create_source_product(
+            db,
+            source_url=source_url,
+            status=SourceProductStatus.COLLECTED,
+            snapshot=snapshot,
+            collection_method="browser_extension",
+        )
+        variant_asin, variant_attributes = selected_source_variant(snapshot, source.asin)
+        draft_payload = normalize_amazon_product(snapshot.model_dump(), job.target_site_id)
+        draft_payload.video_urls = video_urls
+        draft = create_product_draft(
+            db,
+            draft_payload,
+            source_product_id=source.id,
+            source_variant_asin=variant_asin,
+            source_variant_attributes=variant_attributes,
+            commit=False,
+        )
     job.source_product_id = source.id
     job.draft_id = draft.id
     job.status = CollectionJobStatus.COMPLETED
@@ -948,14 +965,14 @@ def create_source_product_from_extension(
     # of producing a second source and a second draft for the same ASIN/site.
     db.rollback()
     _lock_collection_site(db, target_site_id)
-    existing = _exact_page_draft_for_url(
+    pending = _exact_page_draft_for_url(
         db,
         source_url,
         target_site_id,
-        statuses=(SourceProductStatus.PENDING, *EXACT_PAGE_EVIDENCE_STATUSES),
+        statuses=(SourceProductStatus.PENDING,),
     )
-    if existing is not None:
-        source, draft = existing
+    if pending is not None:
+        source, draft = pending
         drafts, quality = _apply_extension_snapshot_to_source(
             db, source, snapshot, video_urls
         )
@@ -984,6 +1001,44 @@ def create_source_product_from_extension(
             "source_product_id": source.id,
             "quality": quality,
             "reused": True,
+        }
+
+    # `/amazon-extension/capture` is the create-only contract. A repeated
+    # callback for an already collected page must be idempotent and must not
+    # overwrite title/description/media that the operator may have edited.
+    # Intentional updates use `/source-products/{id}/extension-capture`.
+    collected = _exact_page_draft_for_url(
+        db,
+        source_url,
+        target_site_id,
+        statuses=EXACT_PAGE_EVIDENCE_STATUSES,
+    )
+    if collected is not None:
+        source, draft = collected
+        create_audit_event(
+            db,
+            actor_type="extension",
+            actor_id="browser-extension",
+            action="source_product.extension_duplicate_ignored",
+            entity_type="source_product",
+            entity_id=str(source.id),
+            after={
+                "draft_id": draft.id,
+                "target_site_id": target_site_id,
+                "quality": quality,
+                "reason": "exact_page_already_collected",
+            },
+            commit=False,
+        )
+        db.commit()
+        return {
+            "ok": True,
+            "id": draft.id,
+            "draft_id": draft.id,
+            "source_product_id": source.id,
+            "quality": quality,
+            "reused": True,
+            "idempotent": True,
         }
 
     source = create_source_product(

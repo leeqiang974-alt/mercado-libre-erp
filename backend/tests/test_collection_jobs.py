@@ -237,6 +237,113 @@ def test_first_extension_capture_reuses_pending_variant_placeholder():
         ).count() == 1
 
 
+def test_extension_job_result_updates_its_variant_placeholder_without_duplicate():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        parent = SourceProduct(
+            source_url="https://www.amazon.com/dp/B000TEST01",
+            asin="B000TEST01",
+            raw_status=SourceProductStatus.COLLECTED,
+            variants_json=[
+                {"asin": "B000TEST01", "attributes": {"Size": "1 ML"}},
+                {"asin": "B000TEST02", "attributes": {"Size": "2.5 ML"}},
+            ],
+            title="Measuring spoons",
+            image_urls_json=["https://example.test/parent.jpg"],
+        )
+        db.add(parent)
+        db.commit()
+        parent_id = parent.id
+
+    queued = client.post(
+        f"/api/imports/source-products/{parent_id}/variants/B000TEST02/collection-job",
+        json={"target_site_id": "CBT", "collector_kind": "browser_extension"},
+    )
+    assert queued.status_code == 200
+    job_id = queued.json()["id"]
+    placeholder_source_id = queued.json()["source_product_id"]
+    placeholder_draft_id = queued.json()["draft_id"]
+
+    result = client.post(
+        f"/api/imports/amazon-extension/jobs/{job_id}/result",
+        json={
+            "worker_id": "variant-test-worker",
+            "source_url": "https://www.amazon.com/dp/B000TEST02",
+            "status": "collected",
+            "snapshot": {
+                "source_url": "https://www.amazon.com/dp/B000TEST02",
+                "title": "2.5 ML stainless steel measuring spoons",
+                "images": ["https://images-na.ssl-images-amazon.com/images/I/example._AC_SL1500_.jpg"],
+                "variants": [
+                    {
+                        "asin": "B000TEST02",
+                        "attributes": {"Size": "2.5 ML"},
+                        "selected": True,
+                    }
+                ],
+            },
+        },
+    )
+
+    assert result.status_code == 200
+    assert result.json()["draft_id"] == placeholder_draft_id
+    with testing_session() as db:
+        assert db.query(SourceProduct).count() == 2
+        assert db.query(ProductDraft).count() == 1
+        job = db.get(CollectionJob, job_id)
+        draft = db.get(ProductDraft, placeholder_draft_id)
+        assert job.status == CollectionJobStatus.COMPLETED
+        assert job.source_product_id == placeholder_source_id
+        assert job.draft_id == placeholder_draft_id
+        assert draft.source_variant_attributes_json == {"Size": "2.5 ML"}
+
+
+def test_repeated_first_extension_capture_does_not_overwrite_edited_draft():
+    client, testing_session = make_client()
+    payload = {
+        "source_url": "https://www.amazon.com/dp/B000TEST01",
+        "target_site_id": "CBT",
+        "snapshot": {
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
+            "title": "Original Amazon title",
+            "description": "Original Amazon description",
+            "images": ["https://images-na.ssl-images-amazon.com/images/I/example._AC_SL1500_.jpg"],
+        },
+    }
+    first = client.post("/api/imports/amazon-extension/capture", json=payload)
+    assert first.status_code == 200
+    draft_id = first.json()["draft_id"]
+    with testing_session() as db:
+        draft = db.get(ProductDraft, draft_id)
+        draft.title = "Operator edited title"
+        draft.description = "Operator edited description"
+        draft.content_version += 1
+        db.commit()
+
+    repeated_payload = {
+        **payload,
+        "snapshot": {
+            **payload["snapshot"],
+            "title": "Late duplicate callback title",
+            "description": "Late duplicate callback description",
+        },
+    }
+    repeated = client.post("/api/imports/amazon-extension/capture", json=repeated_payload)
+
+    assert repeated.status_code == 200
+    assert repeated.json()["idempotent"] is True
+    assert repeated.json()["draft_id"] == draft_id
+    with testing_session() as db:
+        assert db.query(SourceProduct).count() == 1
+        assert db.query(ProductDraft).count() == 1
+        draft = db.get(ProductDraft, draft_id)
+        assert draft.title == "Operator edited title"
+        assert draft.description == "Operator edited description"
+        assert db.query(AuditEvent).filter_by(
+            action="source_product.extension_duplicate_ignored",
+        ).count() == 1
+
+
 def test_source_variant_collection_job_rejects_unknown_variant():
     client, testing_session = make_client()
     with testing_session() as db:
