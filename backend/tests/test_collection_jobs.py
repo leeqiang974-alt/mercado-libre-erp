@@ -197,6 +197,7 @@ def test_first_extension_capture_reuses_pending_variant_placeholder():
         json={"target_site_id": "CBT", "collector_kind": "browser_extension"},
     )
     assert queued.status_code == 200
+    job_id = queued.json()["id"]
     placeholder_source_id = queued.json()["source_product_id"]
     placeholder_draft_id = queued.json()["draft_id"]
 
@@ -229,12 +230,21 @@ def test_first_extension_capture_reuses_pending_variant_placeholder():
         assert db.query(ProductDraft).count() == 1
         source = db.get(SourceProduct, placeholder_source_id)
         draft = db.get(ProductDraft, placeholder_draft_id)
+        job = db.get(CollectionJob, job_id)
         assert source.raw_status == SourceProductStatus.COLLECTED
         assert draft.source_variant_attributes_json == {"Size": "2.5 ML"}
+        assert job.status == CollectionJobStatus.COMPLETED
+        assert job.source_product_id == placeholder_source_id
+        assert job.draft_id == placeholder_draft_id
         assert db.query(AuditEvent).filter_by(
             action="source_product.extension_capture_reused",
             entity_id=str(placeholder_source_id),
         ).count() == 1
+        job_event = db.query(AuditEvent).filter_by(
+            action="collection_job.extension_finished",
+            entity_id=str(job_id),
+        ).one()
+        assert job_event.after_json["reason"] == "completed_by_first_capture"
 
 
 def test_extension_job_result_updates_its_variant_placeholder_without_duplicate():

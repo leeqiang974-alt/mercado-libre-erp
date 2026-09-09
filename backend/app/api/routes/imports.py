@@ -661,6 +661,20 @@ def receive_amazon_extension_job_result(
     payload: AmazonExtensionJobResult,
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
+    # All PostgreSQL paths touching an exact-page collection job take the site
+    # advisory lock before the row lock. This matches job creation and avoids
+    # a row-lock/advisory-lock inversion when the operator clicks collect while
+    # the extension is returning a result.
+    job_site_id = db.scalar(
+        select(CollectionJob.target_site_id).where(CollectionJob.id == job_id)
+    )
+    if job_site_id is None:
+        raise HTTPException(status_code=404, detail="collection_job_not_found")
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_name))"),
+            {"lock_name": f"amazon_collection:{job_site_id}"},
+        )
     job = db.scalar(select(CollectionJob).where(CollectionJob.id == job_id).with_for_update())
     if job is None:
         raise HTTPException(status_code=404, detail="collection_job_not_found")
@@ -714,11 +728,8 @@ def receive_amazon_extension_job_result(
         message = "浏览器插件采集信息不完整：" + "、".join(quality["issues"])
         _finish_extension_job_as_failed(db, job, payload.worker_id, message)
         raise HTTPException(status_code=422, detail={"code": "extension_capture_incomplete", **quality})
-    if db.get_bind().dialect.name == "postgresql":
-        db.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(:lock_name))"),
-            {"lock_name": f"amazon_collection:{job.target_site_id}"},
-        )
+    previous_source_product_id = job.source_product_id
+    previous_draft_id = job.draft_id
     existing = _exact_page_draft_for_url(
         db,
         source_url,
@@ -763,12 +774,19 @@ def receive_amazon_extension_job_result(
         action="collection_job.extension_finished",
         entity_type="collection_job",
         entity_id=str(job.id),
-        before={"status": before_status},
+        before={
+            "status": before_status,
+            "source_product_id": previous_source_product_id,
+            "draft_id": previous_draft_id,
+        },
         after={
             "status": job.status.value,
             "draft_id": draft.id,
             "source_product_id": source.id,
             "quality": quality,
+            "reused_exact_page_draft": existing is not None,
+            "previous_source_product_id": previous_source_product_id,
+            "previous_draft_id": previous_draft_id,
         },
         commit=False,
     )
@@ -976,6 +994,55 @@ def create_source_product_from_extension(
         drafts, quality = _apply_extension_snapshot_to_source(
             db, source, snapshot, video_urls
         )
+        completed_job_ids: list[int] = []
+        related_jobs = (
+            db.query(CollectionJob)
+            .filter(
+                CollectionJob.target_site_id == target_site_id,
+                CollectionJob.source_identity == source_url,
+                CollectionJob.status.in_([
+                    CollectionJobStatus.PENDING,
+                    CollectionJobStatus.RUNNING,
+                ]),
+                or_(
+                    CollectionJob.source_product_id == source.id,
+                    CollectionJob.draft_id == draft.id,
+                ),
+            )
+            .with_for_update()
+            .all()
+        )
+        for job in related_jobs:
+            before_job = {
+                "status": job.status.value,
+                "source_product_id": job.source_product_id,
+                "draft_id": job.draft_id,
+            }
+            job.source_product_id = source.id
+            job.draft_id = draft.id
+            job.status = CollectionJobStatus.COMPLETED
+            job.message = "首次采集回传已填充变体占位草稿。"
+            job.completed_at = datetime.now(UTC)
+            job.claimed_by = None
+            job.claimed_at = None
+            completed_job_ids.append(job.id)
+            create_audit_event(
+                db,
+                actor_type="extension",
+                actor_id="browser-extension",
+                action="collection_job.extension_finished",
+                entity_type="collection_job",
+                entity_id=str(job.id),
+                before=before_job,
+                after={
+                    "status": job.status.value,
+                    "source_product_id": source.id,
+                    "draft_id": draft.id,
+                    "quality": quality,
+                    "reason": "completed_by_first_capture",
+                },
+                commit=False,
+            )
         create_audit_event(
             db,
             actor_type="extension",
@@ -989,6 +1056,7 @@ def create_source_product_from_extension(
                 "target_site_id": target_site_id,
                 "quality": quality,
                 "reason": "exact_page_draft_exists",
+                "completed_collection_job_ids": completed_job_ids,
             },
             commit=False,
         )
