@@ -35,6 +35,7 @@ from app.services.source_products import (
 )
 from app.models.source_product import SourceProduct, SourceProductStatus
 from app.models.product_draft import ProductDraft
+from app.models.cbt_listing_config import CbtListingConfig
 from app.services.collection_jobs import (
     create_collection_job,
     create_collection_jobs,
@@ -861,7 +862,10 @@ def _exact_page_draft_for_url(
             func.upper(SourceProduct.asin) == asin,
             SourceProduct.raw_status.in_(statuses),
             ProductDraft.target_site_id == target_site_id,
-            func.upper(ProductDraft.source_variant_asin) == asin,
+            or_(
+                func.upper(ProductDraft.source_variant_asin) == asin,
+                ProductDraft.source_variant_asin == "",
+            ),
         )
         .order_by(
             (ProductDraft.target_category_id != "").desc(),
@@ -905,7 +909,18 @@ def _apply_extension_snapshot_to_source(
     source.technical_details_json = snapshot.technical_details
     source.measurements_json = snapshot.measurements.model_dump(exclude_none=True)
     drafts = db.query(ProductDraft).filter(ProductDraft.source_product_id == source.id).all()
+    configured_draft_ids = {
+        row[0]
+        for row in db.query(CbtListingConfig.product_draft_id)
+        .filter(CbtListingConfig.product_draft_id.in_([draft.id for draft in drafts]))
+        .all()
+    } if drafts else set()
     for draft in drafts:
+        # Overnight/source refreshes must not replace content that the operator
+        # has already saved for publication. The fresh Amazon evidence remains
+        # available through the bound source product.
+        if draft.id in configured_draft_ids:
+            continue
         variant = next(
             (
                 row

@@ -1259,3 +1259,64 @@ def test_amazon_extension_claim_and_result_are_idempotent_and_audited():
         assert "collection_job.created" in actions
         assert "collection_job.extension_claimed" in actions
         assert "collection_job.extension_finished" in actions
+
+
+def test_amazon_extension_recollection_reuses_legacy_draft_without_variant_asin():
+    client, testing_session = make_client()
+    source_url = "https://www.amazon.com/dp/B000TEST01"
+    with testing_session() as db:
+        source = SourceProduct(
+            source_url=source_url,
+            asin="B000TEST01",
+            raw_status=SourceProductStatus.NEEDS_MANUAL_ACTION,
+            title="Incomplete legacy product",
+        )
+        db.add(source)
+        db.flush()
+        draft = ProductDraft(
+            source_product_id=source.id,
+            source_variant_asin="",
+            target_site_id="CBT",
+            title="Operator edited title",
+            description="Operator edited description",
+            risk_status="unreviewed",
+        )
+        db.add(draft)
+        db.flush()
+        original_draft_id = draft.id
+        job = collection_jobs_service.create_collection_jobs(
+            db,
+            [(source_url, "CBT")],
+            collector_kind="browser_extension",
+        )[0]
+        job_id = job.id
+
+    claim = client.get("/api/imports/amazon-extension/next", params={"worker_id": "legacy-recollect-worker"})
+    assert claim.status_code == 200
+    assert claim.json()["job"]["id"] == job_id
+
+    result = client.post(
+        f"/api/imports/amazon-extension/jobs/{job_id}/result",
+        json={
+            "worker_id": "legacy-recollect-worker",
+            "source_url": source_url,
+            "status": "collected",
+            "snapshot": {
+                "source_url": source_url,
+                "title": "Fresh browser title",
+                "description": "Fresh browser description",
+                "images": ["https://images.example.com/fresh.jpg"],
+                "variants": [],
+                "technical_details": {"Material": "Steel"},
+            },
+        },
+    )
+
+    assert result.status_code == 200
+    assert result.json()["draft_id"] == original_draft_id
+    with testing_session() as db:
+        assert db.query(ProductDraft).count() == 1
+        refreshed = db.get(ProductDraft, original_draft_id)
+        assert refreshed.title == "Fresh browser title"
+        assert refreshed.description == "Fresh browser description"
+        assert refreshed.image_urls_json == ["https://images.example.com/fresh.jpg"]

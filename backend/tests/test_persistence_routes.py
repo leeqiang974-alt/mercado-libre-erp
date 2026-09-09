@@ -106,6 +106,7 @@ def test_draft_list_exposes_latest_erp_publish_status_and_sites():
         store = Store(site_id="CBT", seller_id="seller", display_name="Global store")
         db.add_all([draft, store])
         db.flush()
+        draft_id = draft.id
         db.add(
             PublishJob(
                 product_draft_id=draft.id,
@@ -123,6 +124,16 @@ def test_draft_list_exposes_latest_erp_publish_status_and_sites():
                 },
             )
         )
+        db.flush()
+        db.add(
+            PublishJob(
+                product_draft_id=draft.id,
+                store_id=store.id,
+                requested_by="operator",
+                status=PublishJobStatus.FAILED,
+                response_summary_json={"errors": ["later retry failed"]},
+            )
+        )
         db.commit()
 
     response = client.get("/api/drafts")
@@ -130,6 +141,10 @@ def test_draft_list_exposes_latest_erp_publish_status_and_sites():
     assert response.status_code == 200
     assert response.json()[0]["publication_status"] == "published"
     assert response.json()[0]["published_sites"] == ["MLB", "MLM"]
+    detail_response = client.get(f"/api/drafts/{draft_id}")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["publication_status"] == "published"
+    assert detail_response.json()["published_sites"] == ["MLB", "MLM"]
 
 
 def test_import_amazon_html_resolves_manual_collection_job_atomically():

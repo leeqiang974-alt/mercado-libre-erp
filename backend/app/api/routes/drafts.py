@@ -38,6 +38,7 @@ from app.services.drafts import (
     update_draft_content,
 )
 from app.services.audit_events import create_audit_event
+from app.services.draft_publication_state import apply_draft_publication_state
 from app.services.draft_pricing import (
     get_draft_pricing,
     require_current_draft_pricing,
@@ -62,43 +63,7 @@ def list_drafts(
     # The listing rail only needs card metadata. Loading every description and
     # media array made #drafts unresponsive once the library grew large.
     drafts = list_product_drafts(db, limit=limit, compact=compact)
-    _DUPLICATE_ERROR_MARKERS = (
-        "listing.conflict",
-        "This listing already exists",
-        "only support 1 item",
-    )
-
-    def _is_duplicate_failure(job: PublishJob) -> bool:
-        if job.status != PublishJobStatus.FAILED:
-            return False
-        errors = (job.response_summary_json or {}).get("errors", [])
-        joined = " ".join(str(error) for error in errors)
-        return any(marker in joined for marker in _DUPLICATE_ERROR_MARKERS)
-
-    jobs = db.query(PublishJob).order_by(PublishJob.id.desc()).all()
-    latest: dict[int, PublishJob] = {}
-    for job in jobs:
-        # A re-publish that hit an already-existing listing (response lost on
-        # the first attempt, then re-created) must not override the real
-        # PUBLISHED outcome in the listing rail.
-        if _is_duplicate_failure(job):
-            continue
-        latest.setdefault(job.product_draft_id, job)
-    for draft in drafts:
-        job = latest.get(draft.id)
-        if job is None:
-            continue
-        draft.publication_status = job.status.value
-        if job.status == PublishJobStatus.PUBLISHED:
-            details = (job.response_summary_json or {}).get("response_details", {})
-            rows = details.get("site_items", []) if isinstance(details, dict) else []
-            draft.published_sites = [
-                str(row.get("site_id")) for row in rows
-                if isinstance(row, dict) and row.get("item_id") and row.get("site_id")
-            ]
-            if not draft.published_sites and job.meli_item_id:
-                draft.published_sites = ["CBT"]
-    return drafts
+    return apply_draft_publication_state(db, drafts)
 
 
 @router.get("/{product_draft_id}", response_model=ProductDraftRead)
@@ -109,7 +74,7 @@ def read_draft(
     draft = db.get(ProductDraft, product_draft_id)
     if draft is None:
         raise HTTPException(status_code=404, detail="Product draft not found.")
-    return to_draft_read(draft)
+    return apply_draft_publication_state(db, [to_draft_read(draft)])[0]
 
 
 @router.delete("/{product_draft_id}", status_code=status.HTTP_204_NO_CONTENT)
