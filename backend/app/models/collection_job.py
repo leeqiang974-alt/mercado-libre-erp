@@ -12,6 +12,7 @@ class CollectionJobStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
+    SKIPPED = "skipped"
     NEEDS_MANUAL_ACTION = "needs_manual_action"
     FAILED = "failed"
 
