@@ -1247,8 +1247,12 @@ export function CbtGlobalPublishingPanel({
     const operation = field === "title" ? "ai-title" : "ai-description";
     setBusy(operation);
     setStatus("");
+    setAiFeedback({ field, error: false, message: "正在调用 AI 重新生成，请稍候…" });
     try {
-      const result = await generateDraftContent(draftId, categoryId, [field]);
+      const fieldIsBlank = field === "title" ? !globalTitle.trim() : !description.trim();
+      // Saving an empty required title is invalid. A blank field plus this
+      // explicit manual click is therefore the reconstruction intent.
+      const result = await generateDraftContent(draftId, categoryId, [field], fieldIsBlank ? [field] : []);
       onDraftChange(result.draft);
       setListingRail((current) => current.map((item) => item.id === result.draft.id ? result.draft : item));
       if (field === "title") updateGlobalTitle(result.title);
@@ -1261,7 +1265,7 @@ export function CbtGlobalPublishingPanel({
     } catch (error) {
       const rawMessage = error instanceof Error ? error.message : "";
       const message = rawMessage.includes("ai_content_already_generated")
-        ? "该字段已经由 AI 生成过，系统未再次调用，避免重复消耗。需要重构时，请先清空该字段并保存，再点 AI。"
+        ? "该字段已有 AI 内容，系统未重复调用。需要重构时，请清空输入框后直接点 AI。"
         : rawMessage.includes("generated_content_invalid")
           ? "AI 返回内容未通过描述质量门禁，本次没有写入；请稍后手动再试。"
           : rawMessage || "AI 生成失败，请稍后重试。";

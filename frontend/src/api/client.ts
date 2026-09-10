@@ -999,11 +999,11 @@ export async function confirmDraftCategory(
   return response.json() as Promise<DraftCategoryResult>;
 }
 
-export async function generateDraftContent(productDraftId: number, categoryId: string, fields: Array<"title" | "description"> = ["title", "description"]) {
+export async function generateDraftContent(productDraftId: number, categoryId: string, fields: Array<"title" | "description"> = ["title", "description"], regenerateFields: Array<"title" | "description"> = []) {
   const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/generate-content`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ category_id: categoryId, language: "en", fields }),
+    body: JSON.stringify({ category_id: categoryId, language: "en", fields, regenerate_fields: regenerateFields }),
   });
   if (!response.ok) throw await httpError(response);
   return response.json() as Promise<GeneratedDraftContent>;

@@ -43,6 +43,7 @@ def test_failed_manual_ai_request_is_audited_without_provider_details(monkeypatc
             "status_code": 503,
             "code": "deepseek_api_key_required",
             "requested_fields": ["description"],
+            "regenerate_fields": [],
         }
     finally:
         app.dependency_overrides.clear()

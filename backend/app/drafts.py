@@ -217,6 +217,7 @@ async def generate_content(
             product_draft_id,
             payload.category_id,
             set(payload.fields),
+            set(payload.regenerate_fields),
             timeout_seconds=runtime_settings.ai_content_generation_timeout_seconds,
         )
     except HTTPException as exc:
@@ -242,6 +243,7 @@ async def generate_content(
                 "status_code": exc.status_code,
                 "code": code,
                 "requested_fields": sorted(set(payload.fields)),
+                "regenerate_fields": sorted(set(payload.regenerate_fields)),
             },
         )
         raise
@@ -257,6 +259,7 @@ async def generate_content(
                 "status_code": 500,
                 "code": "internal_error",
                 "requested_fields": sorted(set(payload.fields)),
+                "regenerate_fields": sorted(set(payload.regenerate_fields)),
             },
         )
         raise

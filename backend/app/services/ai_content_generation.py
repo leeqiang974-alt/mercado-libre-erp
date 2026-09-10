@@ -73,6 +73,7 @@ async def generate_and_save_draft_content(
     product_draft_id: int,
     category_id: str,
     fields: set[str] | None = None,
+    regenerate_fields: set[str] | None = None,
     timeout_seconds: float = 90,
 ) -> tuple[ProductDraft, GeneratedListingContent, str]:
     draft = db.get(ProductDraft, product_draft_id)
@@ -86,7 +87,10 @@ async def generate_and_save_draft_content(
     selected_fields = fields or {"title", "description"}
     if not selected_fields <= {"title", "description"}:
         raise HTTPException(status_code=422, detail="invalid_content_fields")
-    already_generated = _already_generated_fields(db, draft, selected_fields)
+    explicit_regenerate_fields = regenerate_fields or set()
+    if not explicit_regenerate_fields <= selected_fields:
+        raise HTTPException(status_code=422, detail="regenerate_fields_must_be_requested")
+    already_generated = _already_generated_fields(db, draft, selected_fields, explicit_regenerate_fields)
     if already_generated:
         raise HTTPException(
             status_code=409,
@@ -166,6 +170,7 @@ async def generate_and_save_draft_content(
             "title_length": len(content.title),
             "description_length": len(content.description),
             "updated_fields": sorted(selected_fields),
+            "explicit_regenerate_fields": sorted(explicit_regenerate_fields),
             "source_description_length": len(str(source.description or "")) if source else 0,
             "draft_evidence_description_length": draft_evidence_description_length,
             "source_bullet_count": len(source.bullets_json or []) if source else 0,
@@ -272,6 +277,7 @@ def _already_generated_fields(
     db: Session,
     draft: ProductDraft,
     selected_fields: set[str],
+    explicit_regenerate_fields: set[str] | None = None,
 ) -> list[str]:
     """Return requested AI fields that still contain prior AI output.
 
@@ -298,9 +304,12 @@ def _already_generated_fields(
             if field in {"title", "description"}
         )
     current = {"title": draft.title, "description": draft.description}
+    allowed_reconstruction = explicit_regenerate_fields or set()
     return sorted(
         field for field in selected_fields
-        if field in generated_fields and str(current.get(field) or "").strip()
+        if field in generated_fields
+        and field not in allowed_reconstruction
+        and str(current.get(field) or "").strip()
     )
 
 

@@ -145,6 +145,25 @@ async def test_previously_generated_nonempty_field_does_not_call_ai_again(monkey
     assert caught.value.detail == {"code": "ai_content_already_generated", "fields": ["description"]}
 
 
+def test_explicit_manual_reconstruction_bypasses_history_gate():
+    draft = SimpleNamespace(id=986, title="Existing AI title", description="")
+
+    class GeneratedAuditQuery:
+        def filter(self, *_args):
+            return self
+
+        def all(self):
+            return [({"updated_fields": ["title"]},)]
+
+    class FakeDb:
+        def query(self, _model):
+            return GeneratedAuditQuery()
+
+    assert ai_content_generation._already_generated_fields(
+        FakeDb(), draft, {"title"}, {"title"}
+    ) == []
+
+
 def test_generated_description_rejects_the_old_one_sentence_shape():
     old_description = (
         "This cable management set includes two white TPR cord holder clips. "
