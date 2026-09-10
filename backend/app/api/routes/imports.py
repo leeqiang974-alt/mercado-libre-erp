@@ -64,7 +64,7 @@ from app.schemas.source_products import (
 router = APIRouter(prefix="/api/imports", tags=["imports"])
 settings = get_settings()
 AmazonProductUrl = Annotated[str, Field(max_length=2048)]
-CONTINUOUS_CAMPAIGN_STATUS = "continuous"
+CONTINUOUS_CAMPAIGN_STATUS = KeywordCampaignStatus.CONTINUOUS.value
 CONTINUOUS_QUEUE_LOW_WATERMARK = 50
 CONTINUOUS_QUEUE_REFILL_SIZE = 200
 CONTINUOUS_FAILURE_PAUSE_WINDOW = 10
@@ -279,28 +279,41 @@ def _campaign_read(row: KeywordCollectionCampaign, db: Session) -> KeywordCampai
 
 def _maintain_continuous_extension_queue(db: Session) -> None:
     """Refill the active unattended campaign before the extension goes idle."""
-    campaign = (
+    campaigns = (
         db.query(KeywordCollectionCampaign)
         .filter(KeywordCollectionCampaign.status == CONTINUOUS_CAMPAIGN_STATUS)
         .order_by(KeywordCollectionCampaign.id.desc())
-        .first()
+        .all()
     )
-    if campaign is None:
+    if not campaigns:
         return
+    campaign = campaigns[0]
     if db.get_bind().dialect.name == "postgresql":
         db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:name))"), {"name": "amazon_continuous_campaign_refill"})
-        campaign = (
+        campaigns = (
             db.query(KeywordCollectionCampaign)
-            .filter(
-                KeywordCollectionCampaign.id == campaign.id,
-                KeywordCollectionCampaign.status == CONTINUOUS_CAMPAIGN_STATUS,
-            )
+            .filter(KeywordCollectionCampaign.status == CONTINUOUS_CAMPAIGN_STATUS)
+            .order_by(KeywordCollectionCampaign.id.desc())
             .with_for_update()
-            .one_or_none()
+            .all()
         )
-        if campaign is None:
+        if not campaigns:
             db.commit()
             return
+        campaign = campaigns[0]
+    for older in campaigns[1:]:
+        older.status = KeywordCampaignStatus.PAUSED.value
+        older.message = f"已有更新的持续挂机任务 #{campaign.id}，本任务已自动暂停。"
+        create_audit_event(
+            db,
+            actor_type="system",
+            actor_id="continuous-collection-guard",
+            action="keyword_campaign.continuous_superseded",
+            entity_type="keyword_campaign",
+            entity_id=str(older.id),
+            after={"new_active_campaign_id": campaign.id},
+            commit=False,
+        )
 
     recent_terminal = (
         db.query(CollectionJob)
@@ -313,7 +326,7 @@ def _maintain_continuous_extension_queue(db: Session) -> None:
                 CollectionJobStatus.NEEDS_MANUAL_ACTION,
             ]),
         )
-        .order_by(CollectionJob.id.desc())
+        .order_by(CollectionJob.completed_at.desc(), CollectionJob.id.desc())
         .limit(CONTINUOUS_FAILURE_PAUSE_WINDOW)
         .all()
     )
@@ -691,6 +704,57 @@ def create_keyword_campaign(payload: KeywordCampaignCreate, db: Session = Depend
 @router.get("/amazon-search/campaigns", response_model=list[KeywordCampaignRead])
 def list_keyword_campaigns(db: Session = Depends(get_db)) -> list[KeywordCampaignRead]:
     return [_campaign_read(row, db) for row in db.query(KeywordCollectionCampaign).order_by(KeywordCollectionCampaign.id.desc()).limit(30).all()]
+
+
+@router.post("/amazon-search/campaigns/{campaign_id}/continuous", response_model=KeywordCampaignRead)
+def start_continuous_keyword_campaign(campaign_id: int, db: Session = Depends(get_db)) -> KeywordCampaignRead:
+    campaigns = db.query(KeywordCollectionCampaign).with_for_update().all()
+    campaign = next((row for row in campaigns if row.id == campaign_id), None)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="keyword_campaign_not_found")
+    for row in campaigns:
+        if row.id != campaign.id and row.status == CONTINUOUS_CAMPAIGN_STATUS:
+            row.status = KeywordCampaignStatus.PAUSED.value
+            row.message = f"已由持续挂机任务 #{campaign.id} 接替。"
+    campaign.status = CONTINUOUS_CAMPAIGN_STATUS
+    campaign.message = "持续挂机已启用；队列低于阈值后将自动补充候选。"
+    create_audit_event(
+        db,
+        actor_type="operator",
+        actor_id="web",
+        action="keyword_campaign.continuous_enabled",
+        entity_type="keyword_campaign",
+        entity_id=str(campaign.id),
+        after={"status": CONTINUOUS_CAMPAIGN_STATUS},
+        commit=False,
+    )
+    db.commit()
+    db.refresh(campaign)
+    return _campaign_read(campaign, db)
+
+
+@router.post("/amazon-search/campaigns/{campaign_id}/pause", response_model=KeywordCampaignRead)
+def pause_keyword_campaign(campaign_id: int, db: Session = Depends(get_db)) -> KeywordCampaignRead:
+    campaign = db.query(KeywordCollectionCampaign).filter(KeywordCollectionCampaign.id == campaign_id).with_for_update().one_or_none()
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="keyword_campaign_not_found")
+    before = campaign.status
+    campaign.status = KeywordCampaignStatus.PAUSED.value
+    campaign.message = "持续挂机已由操作员暂停。"
+    create_audit_event(
+        db,
+        actor_type="operator",
+        actor_id="web",
+        action="keyword_campaign.paused",
+        entity_type="keyword_campaign",
+        entity_id=str(campaign.id),
+        before={"status": before},
+        after={"status": campaign.status},
+        commit=False,
+    )
+    db.commit()
+    db.refresh(campaign)
+    return _campaign_read(campaign, db)
 
 
 @router.post("/amazon-url/jobs/file", response_model=CollectionBatchRead)

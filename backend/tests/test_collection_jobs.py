@@ -1608,6 +1608,48 @@ def test_continuous_campaign_pauses_after_ten_consecutive_failures():
         ).count() == 1
 
 
+def test_operator_can_switch_and_pause_continuous_campaign():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        older = KeywordCollectionCampaign(
+            name="Older continuous campaign",
+            target_site_id="CBT",
+            keywords_json=["desk organizer"],
+            status="continuous",
+        )
+        newer = KeywordCollectionCampaign(
+            name="New campaign",
+            target_site_id="CBT",
+            keywords_json=["cable organizer"],
+            status="completed",
+        )
+        db.add_all([older, newer])
+        db.commit()
+        older_id = older.id
+        newer_id = newer.id
+
+    enabled = client.post(f"/api/imports/amazon-search/campaigns/{newer_id}/continuous")
+
+    assert enabled.status_code == 200
+    assert enabled.json()["status"] == "continuous"
+    with testing_session() as db:
+        assert db.get(KeywordCollectionCampaign, older_id).status == "paused"
+        assert db.get(KeywordCollectionCampaign, newer_id).status == "continuous"
+        assert db.query(AuditEvent).filter(
+            AuditEvent.action == "keyword_campaign.continuous_enabled"
+        ).count() == 1
+
+    paused = client.post(f"/api/imports/amazon-search/campaigns/{newer_id}/pause")
+
+    assert paused.status_code == 200
+    assert paused.json()["status"] == "paused"
+    with testing_session() as db:
+        assert db.get(KeywordCollectionCampaign, newer_id).status == "paused"
+        assert db.query(AuditEvent).filter(
+            AuditEvent.action == "keyword_campaign.paused"
+        ).count() == 1
+
+
 def test_amazon_extension_recollection_reuses_legacy_draft_without_variant_asin():
     client, testing_session = make_client()
     source_url = "https://www.amazon.com/dp/B000TEST01"

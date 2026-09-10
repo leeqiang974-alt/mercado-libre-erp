@@ -19,7 +19,9 @@ import {
   createCollectionJobsBatch,
   discoverAmazonProducts,
   createKeywordCampaign,
+  pauseKeywordCampaign,
   listKeywordCampaigns,
+  setKeywordCampaignContinuous,
   createCollectionJobsFile,
   createSourceVariantCollectionJob,
   createSourceVariantCollectionJobs,
@@ -577,7 +579,7 @@ export function ImportPage({
               <p>当前关键词：<b>{campaign.current_keyword || "全部关键词已发现"}</b> · 第 {campaign.current_page}/{campaign.pages_per_keyword} 页</p>
               {(() => { const processed = campaign.keywords.filter((item) => item.processed > 0).length; const running = campaign.keywords.filter((item) => item.running > 0).length; const pending = campaign.keywords.filter((item) => item.pending > 0).length; return <div className="campaign-metrics"><span>总关键词 <b>{campaign.keyword_count}</b></span><span>已处理 <b>{processed}</b></span><span>处理中 <b>{running}</b></span><span>待处理 <b>{pending}</b></span><span>发现商品 <b>{campaign.discovered_count}</b></span></div>; })()}
               <small>{campaign.message}</small>
-              <div className="button-row"><button className="secondary-button" onClick={() => { setCollectionResultPage(0); setSelectedCampaignId(selectedCampaignId === campaign.id ? null : campaign.id); }}>{selectedCampaignId === campaign.id ? "收起采集结果" : "查看采集结果"}</button></div>
+              <div className="button-row"><button className="secondary-button" onClick={() => { setCollectionResultPage(0); setSelectedCampaignId(selectedCampaignId === campaign.id ? null : campaign.id); }}>{selectedCampaignId === campaign.id ? "收起采集结果" : "查看采集结果"}</button><button className="secondary-button" disabled={busyAction === `campaign-mode-${campaign.id}`} onClick={async () => { setBusyAction(`campaign-mode-${campaign.id}`); setError(""); try { const updated = campaign.status === "continuous" ? await pauseKeywordCampaign(campaign.id) : await setKeywordCampaignContinuous(campaign.id); setCampaigns((current) => current.map((item) => item.id === updated.id ? updated : item)); } catch (reason) { setError(reason instanceof Error ? reason.message : "挂机状态修改失败"); } finally { setBusyAction(""); } }}>{campaign.status === "continuous" ? "暂停挂机" : "持续挂机"}</button></div>
               <div className="keyword-progress-table"><div className="keyword-progress-head"><span>关键词</span><span>状态</span><span>已处理</span><span>待处理</span><span>商品</span></div>{campaign.keywords.slice(keywordPage * 10, keywordPage * 10 + 10).map((item) => <button className="keyword-progress-row" key={item.keyword} onClick={() => setSelectedCampaignId(campaign.id)}><strong>{item.keyword}</strong><span>{item.status}</span><span>{item.processed}</span><span>{item.pending}</span><span>{item.discovered}</span></button>)}</div>
               {campaign.keywords.length > 10 && <div className="pagination-row"><button className="secondary-button" disabled={keywordPage === 0} onClick={() => setKeywordPage((page) => Math.max(0, page - 1))}>上一页关键词</button><span>第 {keywordPage + 1} / {Math.ceil(campaign.keywords.length / 10)} 页</span><button className="secondary-button" disabled={keywordPage >= Math.ceil(campaign.keywords.length / 10) - 1} onClick={() => setKeywordPage((page) => Math.min(Math.ceil(campaign.keywords.length / 10) - 1, page + 1))}>下一页关键词</button></div>}
             </article>

@@ -10,6 +10,7 @@ from app.db.base import Base
 class KeywordCampaignStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
+    CONTINUOUS = "continuous"
     PAUSED = "paused"
     COMPLETED = "completed"
 

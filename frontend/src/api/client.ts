@@ -716,6 +716,18 @@ export async function listKeywordCampaigns() {
   return response.json() as Promise<KeywordCampaign[]>;
 }
 
+export async function setKeywordCampaignContinuous(campaignId: number) {
+  const response = await fetch(`${API_BASE}/api/imports/amazon-search/campaigns/${campaignId}/continuous`, { method: "POST" });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<KeywordCampaign>;
+}
+
+export async function pauseKeywordCampaign(campaignId: number) {
+  const response = await fetch(`${API_BASE}/api/imports/amazon-search/campaigns/${campaignId}/pause`, { method: "POST" });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<KeywordCampaign>;
+}
+
 export async function createCollectionJobsFile(
   file: File,
   targetSiteId: string,
