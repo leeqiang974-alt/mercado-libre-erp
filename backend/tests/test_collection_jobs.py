@@ -1523,6 +1523,91 @@ def test_automated_campaign_uses_title_when_amazon_brand_field_is_missing():
         assert event.after_json["reason"] == "title_brand_suspected"
 
 
+def test_continuous_campaign_refills_before_extension_goes_idle():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        campaign = KeywordCollectionCampaign(
+            name="Continuous refill test",
+            target_site_id="CBT",
+            keywords_json=["desk organizer"],
+            status="continuous",
+        )
+        db.add(campaign)
+        db.commit()
+        pool_jobs = collection_jobs_service.create_collection_jobs(
+            db,
+            [
+                ("https://www.amazon.com/dp/B000TEST01", "CBT"),
+                ("https://www.amazon.com/dp/B000TEST02", "CBT"),
+            ],
+            campaign_keyword="desk organizer",
+            collector_kind="server",
+        )
+        for job in pool_jobs:
+            job.status = CollectionJobStatus.FAILED
+        db.commit()
+        campaign_id = campaign.id
+
+    claim = client.get("/api/imports/amazon-extension/next", params={"worker_id": "continuous-worker"})
+
+    assert claim.status_code == 200
+    assert claim.json()["job"] is not None
+    assert claim.json()["job"]["campaignId"] == campaign_id
+    with testing_session() as db:
+        extension_jobs = db.query(CollectionJob).filter(
+            CollectionJob.collector_kind == "browser_extension"
+        ).all()
+        assert len(extension_jobs) == 2
+        assert {job.status for job in extension_jobs} == {
+            CollectionJobStatus.RUNNING,
+            CollectionJobStatus.PENDING,
+        }
+        campaign = db.get(KeywordCollectionCampaign, campaign_id)
+        assert campaign.status == "continuous"
+        assert campaign.queued_count == 2
+        actions = [event.action for event in db.query(AuditEvent).all()]
+        assert "keyword_campaign.continuous_refilled" in actions
+
+
+def test_continuous_campaign_pauses_after_ten_consecutive_failures():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        campaign = KeywordCollectionCampaign(
+            name="Continuous pause test",
+            target_site_id="CBT",
+            keywords_json=["desk organizer"],
+            status="continuous",
+        )
+        db.add(campaign)
+        db.commit()
+        failed_jobs = collection_jobs_service.create_collection_jobs(
+            db,
+            [
+                (f"https://www.amazon.com/dp/B{i:09d}", "CBT")
+                for i in range(10)
+            ],
+            campaign_id=campaign.id,
+            campaign_keyword="desk organizer",
+            collector_kind="browser_extension",
+        )
+        for job in failed_jobs:
+            job.status = CollectionJobStatus.FAILED
+        db.commit()
+        campaign_id = campaign.id
+
+    claim = client.get("/api/imports/amazon-extension/next", params={"worker_id": "continuous-worker"})
+
+    assert claim.status_code == 200
+    assert claim.json()["job"] is None
+    with testing_session() as db:
+        campaign = db.get(KeywordCollectionCampaign, campaign_id)
+        assert campaign.status == "paused"
+        assert "连续 10 个" in campaign.message
+        assert db.query(AuditEvent).filter(
+            AuditEvent.action == "keyword_campaign.continuous_auto_paused"
+        ).count() == 1
+
+
 def test_amazon_extension_recollection_reuses_legacy_draft_without_variant_asin():
     client, testing_session = make_client()
     source_url = "https://www.amazon.com/dp/B000TEST01"

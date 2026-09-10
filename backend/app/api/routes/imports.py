@@ -5,8 +5,8 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select, text
-from sqlalchemy.orm import Session
+from sqlalchemy import exists, func, or_, select, text
+from sqlalchemy.orm import Session, aliased
 from starlette.concurrency import run_in_threadpool
 
 from app.db.session import get_db
@@ -64,6 +64,10 @@ from app.schemas.source_products import (
 router = APIRouter(prefix="/api/imports", tags=["imports"])
 settings = get_settings()
 AmazonProductUrl = Annotated[str, Field(max_length=2048)]
+CONTINUOUS_CAMPAIGN_STATUS = "continuous"
+CONTINUOUS_QUEUE_LOW_WATERMARK = 50
+CONTINUOUS_QUEUE_REFILL_SIZE = 200
+CONTINUOUS_FAILURE_PAUSE_WINDOW = 10
 
 
 class AmazonHtmlImport(BaseModel):
@@ -271,6 +275,173 @@ def _campaign_read(row: KeywordCollectionCampaign, db: Session) -> KeywordCampai
         current_keyword=current, current_page=row.current_page, discovered_count=row.discovered_count,
         queued_count=row.queued_count, duplicate_count=row.duplicate_count, message=row.message,
         keywords=list(progress.values()))
+
+
+def _maintain_continuous_extension_queue(db: Session) -> None:
+    """Refill the active unattended campaign before the extension goes idle."""
+    campaign = (
+        db.query(KeywordCollectionCampaign)
+        .filter(KeywordCollectionCampaign.status == CONTINUOUS_CAMPAIGN_STATUS)
+        .order_by(KeywordCollectionCampaign.id.desc())
+        .first()
+    )
+    if campaign is None:
+        return
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:name))"), {"name": "amazon_continuous_campaign_refill"})
+        campaign = (
+            db.query(KeywordCollectionCampaign)
+            .filter(
+                KeywordCollectionCampaign.id == campaign.id,
+                KeywordCollectionCampaign.status == CONTINUOUS_CAMPAIGN_STATUS,
+            )
+            .with_for_update()
+            .one_or_none()
+        )
+        if campaign is None:
+            db.commit()
+            return
+
+    recent_terminal = (
+        db.query(CollectionJob)
+        .filter(
+            CollectionJob.campaign_id == campaign.id,
+            CollectionJob.status.in_([
+                CollectionJobStatus.COMPLETED,
+                CollectionJobStatus.SKIPPED,
+                CollectionJobStatus.FAILED,
+                CollectionJobStatus.NEEDS_MANUAL_ACTION,
+            ]),
+        )
+        .order_by(CollectionJob.id.desc())
+        .limit(CONTINUOUS_FAILURE_PAUSE_WINDOW)
+        .all()
+    )
+    if (
+        len(recent_terminal) == CONTINUOUS_FAILURE_PAUSE_WINDOW
+        and all(
+            job.status in {CollectionJobStatus.FAILED, CollectionJobStatus.NEEDS_MANUAL_ACTION}
+            for job in recent_terminal
+        )
+    ):
+        campaign.status = KeywordCampaignStatus.PAUSED.value
+        campaign.message = "浏览器插件连续 10 个任务失败或需要验证，持续挂机已自动暂停。"
+        create_audit_event(
+            db,
+            actor_type="system",
+            actor_id="continuous-collection-guard",
+            action="keyword_campaign.continuous_auto_paused",
+            entity_type="keyword_campaign",
+            entity_id=str(campaign.id),
+            after={"reason": "consecutive_collection_failures", "window": CONTINUOUS_FAILURE_PAUSE_WINDOW},
+            commit=False,
+        )
+        db.commit()
+        return
+
+    queued = (
+        db.query(func.count(CollectionJob.id))
+        .filter(
+            CollectionJob.campaign_id == campaign.id,
+            CollectionJob.status.in_([CollectionJobStatus.PENDING, CollectionJobStatus.RUNNING]),
+        )
+        .scalar()
+        or 0
+    )
+    if queued >= CONTINUOUS_QUEUE_LOW_WATERMARK:
+        db.commit()
+        return
+
+    browser_job = aliased(CollectionJob)
+    pool_rows = (
+        db.query(CollectionJob)
+        .filter(
+            CollectionJob.collector_kind == "server",
+            CollectionJob.target_site_id == campaign.target_site_id,
+            CollectionJob.status == CollectionJobStatus.FAILED,
+            CollectionJob.campaign_keyword.in_(campaign.keywords_json or []),
+            ~exists().where(
+                (browser_job.collector_kind == "browser_extension")
+                & (browser_job.target_site_id == CollectionJob.target_site_id)
+                & (browser_job.source_identity == CollectionJob.source_identity)
+            ),
+        )
+        .order_by(CollectionJob.id.asc())
+        .limit(CONTINUOUS_QUEUE_REFILL_SIZE * 4)
+        .all()
+    )
+    seen: set[str] = set()
+    selected: list[CollectionJob] = []
+    for row in pool_rows:
+        identity = str(row.source_identity or row.source_url)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        selected.append(row)
+        if len(selected) >= CONTINUOUS_QUEUE_REFILL_SIZE:
+            break
+    if not selected:
+        campaign.status = KeywordCampaignStatus.COMPLETED.value
+        campaign.message = "持续挂机候选池已耗尽，任务自动结束。"
+        create_audit_event(
+            db,
+            actor_type="system",
+            actor_id="continuous-collection-refill",
+            action="keyword_campaign.continuous_exhausted",
+            entity_type="keyword_campaign",
+            entity_id=str(campaign.id),
+            after={"reason": "eligible_candidate_pool_exhausted"},
+            commit=False,
+        )
+        db.commit()
+        return
+
+    jobs = [
+        CollectionJob(
+            source_url=row.source_url,
+            source_identity=row.source_identity or row.source_url,
+            target_site_id=row.target_site_id,
+            campaign_id=campaign.id,
+            campaign_keyword=row.campaign_keyword,
+            collector_kind="browser_extension",
+        )
+        for row in selected
+    ]
+    db.add_all(jobs)
+    db.flush()
+    for job in jobs:
+        create_audit_event(
+            db,
+            actor_type="system",
+            actor_id="continuous-collection-refill",
+            action="collection_job.created",
+            entity_type="collection_job",
+            entity_id=str(job.id),
+            after={
+                "status": CollectionJobStatus.PENDING.value,
+                "source_url": job.source_url,
+                "target_site_id": job.target_site_id,
+                "campaign_id": campaign.id,
+                "campaign_keyword": job.campaign_keyword,
+                "collector_kind": job.collector_kind,
+                "reason": "continuous_queue_refill",
+            },
+            commit=False,
+        )
+    campaign.queued_count += len(jobs)
+    campaign.discovered_count += len(jobs)
+    campaign.message = f"持续挂机运行中；队列低于 {CONTINUOUS_QUEUE_LOW_WATERMARK} 后自动补入 {len(jobs)} 个候选。"
+    create_audit_event(
+        db,
+        actor_type="system",
+        actor_id="continuous-collection-refill",
+        action="keyword_campaign.continuous_refilled",
+        entity_type="keyword_campaign",
+        entity_id=str(campaign.id),
+        after={"refilled": len(jobs), "queued_before": queued, "low_watermark": CONTINUOUS_QUEUE_LOW_WATERMARK},
+        commit=False,
+    )
+    db.commit()
 
 
 @router.post("/amazon-html")
@@ -663,6 +834,7 @@ def claim_next_amazon_extension_job(
     require an explicit retry, so an overnight browser cannot create a hot
     retry loop against Amazon.
     """
+    _maintain_continuous_extension_queue(db)
     now = datetime.now(UTC)
     stale_before = now - timedelta(seconds=settings.job_stale_after_seconds)
     stale_jobs = (
@@ -699,6 +871,14 @@ def claim_next_amazon_extension_job(
             CollectionJob.status == CollectionJobStatus.PENDING,
             CollectionJob.collector_kind == "browser_extension",
             or_(CollectionJob.next_attempt_at.is_(None), CollectionJob.next_attempt_at <= now),
+            or_(
+                CollectionJob.campaign_id.is_(None),
+                ~CollectionJob.campaign_id.in_(
+                    select(KeywordCollectionCampaign.id).where(
+                        KeywordCollectionCampaign.status == KeywordCampaignStatus.PAUSED.value
+                    )
+                ),
+            ),
         )
         .order_by(CollectionJob.id.asc())
     )

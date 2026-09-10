@@ -573,7 +573,7 @@ export function ImportPage({
           <div className="section-heading"><div><h3>关键词采集任务</h3><p>实时显示关键词发现、详情采集、去重和暂停原因。</p></div></div>
           {campaigns.length === 0 ? <div className="empty-state compact-empty"><Clock3 size={24} /><strong>暂无关键词采集任务</strong></div> : visibleCampaigns.map((campaign) => (
             <article className="campaign-task-card" key={campaign.id}>
-              <div><strong>{campaign.name}</strong><span className={`campaign-status ${campaign.status}`}>{campaign.status === "running" ? "运行中" : campaign.status === "paused" ? "已暂停" : campaign.status === "completed" ? "已完成" : "等待中"}</span></div>
+              <div><strong>{campaign.name}</strong><span className={`campaign-status ${campaign.status}`}>{campaign.status === "continuous" ? "持续运行" : campaign.status === "running" ? "运行中" : campaign.status === "paused" ? "已暂停" : campaign.status === "completed" ? "已完成" : "等待中"}</span></div>
               <p>当前关键词：<b>{campaign.current_keyword || "全部关键词已发现"}</b> · 第 {campaign.current_page}/{campaign.pages_per_keyword} 页</p>
               {(() => { const processed = campaign.keywords.filter((item) => item.processed > 0).length; const running = campaign.keywords.filter((item) => item.running > 0).length; const pending = campaign.keywords.filter((item) => item.pending > 0).length; return <div className="campaign-metrics"><span>总关键词 <b>{campaign.keyword_count}</b></span><span>已处理 <b>{processed}</b></span><span>处理中 <b>{running}</b></span><span>待处理 <b>{pending}</b></span><span>发现商品 <b>{campaign.discovered_count}</b></span></div>; })()}
               <small>{campaign.message}</small>
