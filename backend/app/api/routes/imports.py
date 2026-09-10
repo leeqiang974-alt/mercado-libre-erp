@@ -144,8 +144,20 @@ _UNBRANDED_SOURCE_VALUES = {
     "without brand",
 }
 
+_GENERIC_AUTOMATED_TITLE_OPENERS = {
+    "adjustable", "adhesive", "baking", "bathtub", "bowl", "cake", "coat",
+    "cupcake", "digital", "document", "door", "dough", "drawer", "furniture",
+    "handheld", "heavy", "kitchen", "large", "magnetic", "measuring", "metal",
+    "mini", "mixing", "non-slip", "nonstick", "oven", "pack", "piece", "pieces",
+    "plastic", "professional", "remote", "reusable", "scraper", "set", "silicone",
+    "sink", "small", "soap", "stainless", "steel", "toothbrush", "towel",
+    "universal", "wall", "wood", "wooden",
+}
 
-def _automated_discovery_brand(snapshot: AmazonSourceSnapshot) -> str:
+
+def _automated_discovery_brand(
+    snapshot: AmazonSourceSnapshot, campaign_keyword: str | None = None
+) -> tuple[str, str]:
     """Return a real source brand that should exclude an automated candidate.
 
     Amazon search cards do not expose a dependable brand field, so the safe
@@ -156,9 +168,31 @@ def _automated_discovery_brand(snapshot: AmazonSourceSnapshot) -> str:
     brand = " ".join(str(snapshot.brand or "").split()).strip()
     normalized = re.sub(r"^(?:brand|brand name|marca)\s*:\s*", "", brand, flags=re.IGNORECASE)
     normalized = normalized.strip(" .,:;-/").casefold()
-    if normalized in _UNBRANDED_SOURCE_VALUES:
-        return ""
-    return brand
+    if normalized not in _UNBRANDED_SOURCE_VALUES:
+        return brand, "source_brand_present"
+
+    # Amazon sometimes renders the byline late or returns "Generic" even when
+    # the title still begins with a clear brand (for example OXO, KitchenAid or
+    # Ovenza).  For unattended selection, use a conservative title fallback:
+    # accept numeric/generic product openers and the campaign's own product
+    # words; otherwise treat the leading token as suspected brand evidence.
+    title = " ".join(str(snapshot.title or "").split()).strip()
+    match = re.match(r"^([A-Za-z0-9][A-Za-z0-9&'+.-]*)", title)
+    if not match:
+        return "", ""
+    opener = match.group(1)
+    opener_key = opener.strip(" .,:;-/").casefold()
+    keyword_tokens = {
+        token.casefold()
+        for token in re.findall(r"[A-Za-z0-9]+", campaign_keyword or "")
+    }
+    if (
+        opener_key[:1].isdigit()
+        or opener_key in keyword_tokens
+        or opener_key in _GENERIC_AUTOMATED_TITLE_OPENERS
+    ):
+        return "", ""
+    return opener, "title_brand_suspected"
 
 
 def _is_automated_brand_filtered_job(job: CollectionJob) -> bool:
@@ -780,7 +814,9 @@ def receive_amazon_extension_job_result(
         message = "浏览器插件采集信息不完整：" + "、".join(quality["issues"])
         _finish_extension_job_as_failed(db, job, payload.worker_id, message)
         raise HTTPException(status_code=422, detail={"code": "extension_capture_incomplete", **quality})
-    source_brand = _automated_discovery_brand(snapshot)
+    source_brand, brand_filter_reason = _automated_discovery_brand(
+        snapshot, job.campaign_keyword
+    )
     if job.campaign_id is not None and source_brand:
         job.status = CollectionJobStatus.SKIPPED
         job.message = f"自动选品已跳过品牌商品：{source_brand[:120]}"
@@ -797,7 +833,7 @@ def receive_amazon_extension_job_result(
             before={"status": before_status},
             after={
                 "status": job.status.value,
-                "reason": "source_brand_present",
+                "reason": brand_filter_reason,
                 "source_brand": source_brand[:120],
                 "campaign_id": job.campaign_id,
                 "quality": quality,
@@ -811,7 +847,7 @@ def receive_amazon_extension_job_result(
             "status": job.status.value,
             "draft_id": None,
             "quality": quality,
-            "skip_reason": "source_brand_present",
+            "skip_reason": brand_filter_reason,
         }
     previous_source_product_id = job.source_product_id
     previous_draft_id = job.draft_id

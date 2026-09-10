@@ -1458,7 +1458,7 @@ def test_automated_campaign_accepts_explicit_generic_brand():
             "status": "collected",
             "snapshot": {
                 "source_url": "https://www.amazon.com/dp/B000TEST01",
-                "title": "Generic Cable Clips",
+                "title": "Cable Clips Set",
                 "brand": "Brand: Generic",
                 "images": ["https://images.example.com/main.jpg"],
                 "variants": [],
@@ -1472,6 +1472,55 @@ def test_automated_campaign_accepts_explicit_generic_brand():
     with testing_session() as db:
         assert db.query(SourceProduct).one().brand == "Brand: Generic"
         assert db.query(ProductDraft).count() == 1
+
+
+def test_automated_campaign_uses_title_when_amazon_brand_field_is_missing():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        campaign = KeywordCollectionCampaign(
+            name="Missing byline brand test",
+            keywords_json=["measuring cup set"],
+            status="completed",
+        )
+        db.add(campaign)
+        db.flush()
+        job = collection_jobs_service.create_collection_jobs(
+            db,
+            [("https://www.amazon.com/dp/B000TEST01", "CBT")],
+            campaign_id=campaign.id,
+            campaign_keyword="measuring cup set",
+            collector_kind="browser_extension",
+        )[0]
+        job_id = job.id
+
+    client.get("/api/imports/amazon-extension/next", params={"worker_id": "title-brand-worker"})
+    result = client.post(
+        f"/api/imports/amazon-extension/jobs/{job_id}/result",
+        json={
+            "worker_id": "title-brand-worker",
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
+            "status": "collected",
+            "snapshot": {
+                "source_url": "https://www.amazon.com/dp/B000TEST01",
+                "title": "KitchenAid Measuring Cup Set",
+                "brand": "",
+                "images": ["https://images.example.com/main.jpg"],
+                "variants": [],
+                "technical_details": {},
+            },
+        },
+    )
+
+    assert result.status_code == 200
+    assert result.json()["status"] == "skipped"
+    assert result.json()["skip_reason"] == "title_brand_suspected"
+    with testing_session() as db:
+        assert db.query(SourceProduct).count() == 0
+        event = db.query(AuditEvent).filter(
+            AuditEvent.action == "collection_job.automated_brand_filtered"
+        ).one()
+        assert event.after_json["source_brand"] == "KitchenAid"
+        assert event.after_json["reason"] == "title_brand_suspected"
 
 
 def test_amazon_extension_recollection_reuses_legacy_draft_without_variant_asin():
