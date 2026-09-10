@@ -2051,6 +2051,9 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .wf-action-bar .check-row { font-size:12px; margin:0; white-space:nowrap; }
 .listing-pagination { align-items:center; border-top:1px solid #e7ebef; display:flex; flex:0 0 auto; gap:6px; justify-content:space-between; padding:8px 0 0; }
 .listing-pagination span { color:#667085; font-size:11px; white-space:nowrap; }
+.listing-page-position > button { background:transparent; border:0; border-bottom:1px dashed #98a2b3; color:#344054; cursor:text; font:inherit; min-width:18px; padding:1px 2px; }
+.listing-page-position > button:hover { border-color:#f97316; color:#c2410c; }
+.listing-page-position > input { border:1px solid #f97316; border-radius:3px; color:#344054; font:inherit; height:22px; padding:1px 3px; text-align:center; width:34px; }
 .listing-search { align-items:center; border:1px solid #d5dce3; border-radius:4px; display:flex; gap:6px; margin:8px 0 4px; padding:6px 8px; }
 .listing-search svg { color:#667085; flex:0 0 auto; }
 .listing-search input { border:0; font-size:12px; min-width:0; outline:0; width:100%; }

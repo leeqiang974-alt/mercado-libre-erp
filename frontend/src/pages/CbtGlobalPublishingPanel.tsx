@@ -323,6 +323,8 @@ export function CbtGlobalPublishingPanel({
   const [stores, setStores] = useState<StoreRecord[]>([]);
   const [listingRail, setListingRail] = useState<ProductDraftRead[]>([]);
   const [listingPage, setListingPage] = useState(1);
+  const [listingPageInput, setListingPageInput] = useState("1");
+  const [listingPageEditing, setListingPageEditing] = useState(false);
   const [listingSearch, setListingSearch] = useState("");
   const [storeId, setStoreId] = useState("");
   const [profile, setProfile] = useState<CbtPublishingProfile | null>(null);
@@ -391,6 +393,7 @@ export function CbtGlobalPublishingPanel({
   // Poll handle for async CBT publish execution (worker path).
   const publishPollTimer = useRef<number | null>(null);
   const activeDraftIdRef = useRef(draftId);
+  const draftRailListRef = useRef<HTMLDivElement | null>(null);
   activeDraftIdRef.current = draftId;
   // 变体草稿自动采集防抖：同一草稿只自动触发一次，避免每次打开都重复请求插件。
   const autoVariantTriggeredRef = useRef<Record<number, boolean>>({});
@@ -625,14 +628,39 @@ export function CbtGlobalPublishingPanel({
     setListingPage((page) => Math.min(Math.max(page, 1), listingPageCount));
   }, [listingPageCount]);
 
+  useEffect(() => {
+    if (!listingPageEditing) setListingPageInput(String(listingPage));
+  }, [listingPage, listingPageEditing]);
+
   useEffect(() => () => {
     if (publishPollTimer.current !== null) window.clearInterval(publishPollTimer.current);
   }, []);
 
   useEffect(() => {
     const currentIndex = pendingListingRail.findIndex((item) => item.id === draftId);
-    setListingPage(currentIndex >= 0 ? Math.floor(currentIndex / LISTING_PAGE_SIZE) + 1 : 1);
+    // A rail refresh can temporarily remove the selected row (most notably
+    // immediately after deletion). In that case retain the operator's page;
+    // never interpret "not found" as an instruction to jump back to page 1.
+    if (currentIndex >= 0) setListingPage(Math.floor(currentIndex / LISTING_PAGE_SIZE) + 1);
   }, [draftId, pendingListingRail]);
+
+  function goToListingPage(value: number, resetScroll = true) {
+    const nextPage = Math.min(Math.max(Math.trunc(value), 1), listingPageCount);
+    setListingPage(nextPage);
+    setListingPageInput(String(nextPage));
+    setListingPageEditing(false);
+    if (resetScroll) requestAnimationFrame(() => draftRailListRef.current?.scrollTo({ top: 0 }));
+  }
+
+  function commitListingPageInput() {
+    const requestedPage = Number(listingPageInput);
+    if (!Number.isFinite(requestedPage) || requestedPage < 1) {
+      setListingPageInput(String(listingPage));
+      setListingPageEditing(false);
+      return;
+    }
+    goToListingPage(requestedPage);
+  }
 
   useEffect(() => {
     const query = listingSearch.trim().toLowerCase();
@@ -650,20 +678,32 @@ export function CbtGlobalPublishingPanel({
     event.stopPropagation();
     if (["published", "pending", "validating"].includes(item.publication_status || "")) return;
     if (!window.confirm(`确定删除“${item.title || "未命名商品"}”吗？`)) return;
+    const previousPage = listingPage;
+    const previousScrollTop = draftRailListRef.current?.scrollTop ?? 0;
+    const deletedIndex = pendingListingRail.findIndex((candidate) => candidate.id === item.id);
     try {
       await deleteDraft(item.id);
       // Re-read after a successful delete.  The card is removed only after the
       // server confirms it is gone, which avoids a misleading local-only UI.
       const remaining = uniqueDrafts(await listDrafts());
       setListingRail(remaining);
+      const remainingPending = remaining.filter((candidate) => candidate.publication_status !== "published");
+      const remainingPageCount = Math.max(1, Math.ceil(remainingPending.length / LISTING_PAGE_SIZE));
+      const retainedPage = Math.min(previousPage, remainingPageCount);
+      setListingPage(retainedPage);
+      setListingPageInput(String(retainedPage));
       setStatus(`已删除商品 #${item.id}。`);
       if (item.id === draftId) {
         // 删除的是当前编辑中的草稿：从待上架库列表里挑相邻草稿继续编辑，
         // 而不是全局跳回第一个待上架草稿/上架库，避免“删除后跳回首页”的困惑。
-        const next = pendingListingRail.find((candidate) => candidate.id !== item.id);
+        const nextIndex = deletedIndex < 0 ? (retainedPage - 1) * LISTING_PAGE_SIZE : Math.min(deletedIndex, remainingPending.length - 1);
+        const next = remainingPending[nextIndex];
         if (next && onSelectDraft) onSelectDraft(next);
         else onBackToEditing();
       }
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (draftRailListRef.current) draftRailListRef.current.scrollTop = previousScrollTop;
+      }));
     } catch (deleteError) {
       setStatus(`未删除商品 #${item.id}：${deleteError instanceof Error ? deleteError.message : "服务器拒绝了删除请求"}`);
     }
@@ -1587,13 +1627,13 @@ export function CbtGlobalPublishingPanel({
         <label className="listing-search"><Search size={14} /><input value={listingSearch} placeholder="定位商品编号或标题" onChange={(event) => setListingSearch(event.target.value)} /></label>
         {listingSearch.trim() && <p className="listing-search-result">{pendingListingRail.some((item) => String(item.id) === listingSearch.trim()) || pendingListingRail.some((item) => String(item.title ?? "").toLowerCase().includes(listingSearch.trim().toLowerCase())) ? "已定位，保留前后商品" : "未找到，当前显示原列表"}</p>}
         {status && <p className="draft-rail-status" role="status">{status}</p>}
-        <div className="draft-rail-list">{listingPageItems.map((item) => <button className={`draft-rail-item ${item.id === draftId ? "selected" : ""}`} key={item.id} onClick={() => onSelectDraft?.(item)}>
+        <div className="draft-rail-list" ref={draftRailListRef}>{listingPageItems.map((item) => <button className={`draft-rail-item ${item.id === draftId ? "selected" : ""}`} key={item.id} onClick={() => onSelectDraft?.(item)}>
           {!['published', 'pending', 'validating'].includes(item.publication_status || '') && <><span className="draft-delete-wrap"><span className="draft-delete-icon" aria-hidden="true">×</span><span className="draft-delete-tooltip">删除商品</span><span role="button" tabIndex={0} className="draft-delete-hit" aria-label={`删除 ${item.title || "未命名商品"}`} onClick={(event) => void removeListingDraft(event, item)} /></span>{item.source_product_id && <span className="draft-recollect-wrap"><span className="draft-recollect-icon" aria-hidden="true">采</span><span className="draft-recollect-tooltip">重新采集素材</span><span role="button" tabIndex={0} className="draft-recollect-hit" aria-label={`重新采集 ${item.title || "未命名商品"}`} onClick={(event) => void recollectListingDraft(event, item)} />{recollectBusy === item.id && <span className="draft-recollect-spinner" aria-label="正在重新采集" />}</span>}</>}
           <img className="product-image" src={item.image_urls[0] || ""} alt="" /><span><strong>{item.title || "未命名商品"}</strong><small>#{item.id} · {item.target_site_id}</small><small>{item.publication_status === "published" ? `已发布：${item.published_sites.join("、") || "CBT"}` : item.publication_status === "pending" || item.publication_status === "validating" ? "发布中" : item.publication_status === "failed" || item.publication_status === "blocked" ? "发布失败，可修改后重试" : "未发布"}</small></span></button>)}</div>
         <div className="listing-pagination" aria-label="上架库分页">
-          <button type="button" className="tiny-button" disabled={listingPage <= 1} onClick={() => setListingPage((page) => page - 1)}>上一页</button>
-          <span>第 {listingPage}/{listingPageCount} 页</span>
-          <button type="button" className="tiny-button" disabled={listingPage >= listingPageCount} onClick={() => setListingPage((page) => page + 1)}>下一页</button>
+          <button type="button" className="tiny-button" disabled={listingPage <= 1} onClick={() => goToListingPage(listingPage - 1)}>上一页</button>
+          <span className="listing-page-position">第 {listingPageEditing ? <input autoFocus inputMode="numeric" aria-label="跳转到页码" value={listingPageInput} onChange={(event) => setListingPageInput(event.target.value.replace(/\D/g, ""))} onBlur={commitListingPageInput} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { setListingPageInput(String(listingPage)); setListingPageEditing(false); } }} /> : <button type="button" title="点击输入页码" onClick={() => { setListingPageInput(String(listingPage)); setListingPageEditing(true); }}>{listingPage}</button>}/{listingPageCount} 页</span>
+          <button type="button" className="tiny-button" disabled={listingPage >= listingPageCount} onClick={() => goToListingPage(listingPage + 1)}>下一页</button>
         </div>
       </aside>
       <main className="wf-editor-main">
