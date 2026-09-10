@@ -125,6 +125,49 @@ def _extension_capture_quality(
     }
 
 
+_UNBRANDED_SOURCE_VALUES = {
+    "",
+    "does not apply",
+    "generic",
+    "generico",
+    "genérico",
+    "no brand",
+    "none",
+    "not branded",
+    "not applicable",
+    "n/a",
+    "sans marque",
+    "sem marca",
+    "sin marca",
+    "unknown",
+    "unbranded",
+    "without brand",
+}
+
+
+def _automated_discovery_brand(snapshot: AmazonSourceSnapshot) -> str:
+    """Return a real source brand that should exclude an automated candidate.
+
+    Amazon search cards do not expose a dependable brand field, so the safe
+    decision point is the completed detail-page capture.  This rule is scoped
+    to overnight keyword campaign jobs; operator collection and recollection
+    must keep working even when Amazon reports a brand.
+    """
+    brand = " ".join(str(snapshot.brand or "").split()).strip()
+    normalized = re.sub(r"^(?:brand|brand name|marca)\s*:\s*", "", brand, flags=re.IGNORECASE)
+    normalized = normalized.strip(" .,:;-/").casefold()
+    if normalized in _UNBRANDED_SOURCE_VALUES:
+        return ""
+    return brand
+
+
+def _is_automated_brand_filtered_job(job: CollectionJob) -> bool:
+    return (
+        job.status == CollectionJobStatus.SKIPPED
+        and job.message.startswith("自动选品已跳过品牌商品：")
+    )
+
+
 class AmazonDiscoveryImport(BaseModel):
     keyword: str = Field(min_length=2, max_length=160)
     domain: str = Field(default="amazon.com")
@@ -175,18 +218,19 @@ def _campaign_read(row: KeywordCollectionCampaign, db: Session) -> KeywordCampai
             "pending": 0,
             "failed": 0,
             "needs_manual_action": 0,
+            "skipped": 0,
         }
         for keyword in keywords
     }
     for keyword, status, count in progress_rows:
         if not keyword:
             continue
-        item = progress.setdefault(keyword, {"keyword": keyword, "discovered": 0, "completed": 0, "running": 0, "pending": 0, "failed": 0, "needs_manual_action": 0})
+        item = progress.setdefault(keyword, {"keyword": keyword, "discovered": 0, "completed": 0, "running": 0, "pending": 0, "failed": 0, "needs_manual_action": 0, "skipped": 0})
         item["discovered"] = int(item["discovered"]) + int(count)
         if status in item:
             item[status] = int(item[status]) + int(count)
     for item in progress.values():
-        item["processed"] = int(item["completed"]) + int(item["failed"]) + int(item["needs_manual_action"])
+        item["processed"] = int(item["completed"]) + int(item["failed"]) + int(item["needs_manual_action"]) + int(item["skipped"])
         item["status"] = "处理中" if int(item["running"]) else ("待处理" if int(item["pending"]) else ("已完成" if int(item["processed"]) else "未发现结果"))
     return KeywordCampaignRead(id=row.id, name=row.name, domain=row.domain, target_site_id=row.target_site_id,
         keyword_count=len(keywords), pages_per_keyword=row.pages_per_keyword, status=row.status,
@@ -380,7 +424,11 @@ def create_amazon_url_collection_job(
     if existing := _existing_collection_jobs(
         db, target_site_id, {normalized_url}
     ).get(normalized_url):
-        return to_collection_job_read(existing)
+        # A brand-filtered campaign result is terminal only for automatic
+        # selection.  It must not prevent an operator from explicitly asking
+        # to collect the same Amazon page later.
+        if not _is_automated_brand_filtered_job(existing):
+            return to_collection_job_read(existing)
     job = create_collection_job(
         db=db,
         source_url=normalized_url,
@@ -507,7 +555,10 @@ def _create_amazon_url_collection_jobs_batch(
             )
             continue
         seen.add(normalized_url)
-        if existing := existing_by_url.get(normalized_url):
+        if (
+            (existing := existing_by_url.get(normalized_url))
+            and not _is_automated_brand_filtered_job(existing)
+        ):
             items.append(
                 CollectionBatchItemRead(
                     input_url=input_url,
@@ -679,7 +730,7 @@ def receive_amazon_extension_job_result(
     job = db.scalar(select(CollectionJob).where(CollectionJob.id == job_id).with_for_update())
     if job is None:
         raise HTTPException(status_code=404, detail="collection_job_not_found")
-    if job.status == CollectionJobStatus.COMPLETED:
+    if job.status in {CollectionJobStatus.COMPLETED, CollectionJobStatus.SKIPPED}:
         return {"ok": True, "job_id": job.id, "status": job.status.value, "draft_id": job.draft_id, "idempotent": True}
     if job.claimed_by and job.claimed_by != payload.worker_id.strip():
         raise HTTPException(status_code=409, detail="collection_job_claimed_by_another_worker")
@@ -729,6 +780,39 @@ def receive_amazon_extension_job_result(
         message = "浏览器插件采集信息不完整：" + "、".join(quality["issues"])
         _finish_extension_job_as_failed(db, job, payload.worker_id, message)
         raise HTTPException(status_code=422, detail={"code": "extension_capture_incomplete", **quality})
+    source_brand = _automated_discovery_brand(snapshot)
+    if job.campaign_id is not None and source_brand:
+        job.status = CollectionJobStatus.SKIPPED
+        job.message = f"自动选品已跳过品牌商品：{source_brand[:120]}"
+        job.completed_at = datetime.now(UTC)
+        job.claimed_by = None
+        job.claimed_at = None
+        create_audit_event(
+            db,
+            actor_type="extension",
+            actor_id=payload.worker_id.strip(),
+            action="collection_job.automated_brand_filtered",
+            entity_type="collection_job",
+            entity_id=str(job.id),
+            before={"status": before_status},
+            after={
+                "status": job.status.value,
+                "reason": "source_brand_present",
+                "source_brand": source_brand[:120],
+                "campaign_id": job.campaign_id,
+                "quality": quality,
+            },
+            commit=False,
+        )
+        db.commit()
+        return {
+            "ok": True,
+            "job_id": job.id,
+            "status": job.status.value,
+            "draft_id": None,
+            "quality": quality,
+            "skip_reason": "source_brand_present",
+        }
     previous_source_product_id = job.source_product_id
     previous_draft_id = job.draft_id
     existing = _exact_page_draft_for_url(

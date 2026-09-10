@@ -16,6 +16,7 @@ from app.models.collection_job import CollectionJob, CollectionJobStatus
 from app.models.audit_event import AuditEvent
 from app.models.amazon_domain_throttle import AmazonDomainThrottle
 from app.models.product_draft import ProductDraft
+from app.models.keyword_collection_campaign import KeywordCollectionCampaign
 from app.models.registry import import_all_models
 from app.models.source_product import SourceProduct, SourceProductStatus
 from app.schemas.drafts import ProductDraftCreate
@@ -1259,6 +1260,218 @@ def test_amazon_extension_claim_and_result_are_idempotent_and_audited():
         assert "collection_job.created" in actions
         assert "collection_job.extension_claimed" in actions
         assert "collection_job.extension_finished" in actions
+
+
+def test_automated_extension_campaign_skips_branded_product_without_creating_draft():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        campaign = KeywordCollectionCampaign(
+            name="Unbranded overnight test",
+            keywords_json=["desk organizer"],
+            status="completed",
+        )
+        db.add(campaign)
+        db.flush()
+        job = collection_jobs_service.create_collection_jobs(
+            db,
+            [("https://www.amazon.com/dp/B000TEST01", "CBT")],
+            campaign_id=campaign.id,
+            campaign_keyword="desk organizer",
+            collector_kind="browser_extension",
+        )[0]
+        job_id = job.id
+
+    claim = client.get("/api/imports/amazon-extension/next", params={"worker_id": "brand-filter-worker"})
+    assert claim.status_code == 200
+    result = client.post(
+        f"/api/imports/amazon-extension/jobs/{job_id}/result",
+        json={
+            "worker_id": "brand-filter-worker",
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
+            "status": "collected",
+            "snapshot": {
+                "source_url": "https://www.amazon.com/dp/B000TEST01",
+                "title": "Useful Desk Organizer",
+                "brand": "Example Brand",
+                "images": ["https://images.example.com/main.jpg"],
+                "variants": [],
+                "technical_details": {},
+            },
+        },
+    )
+
+    assert result.status_code == 200
+    assert result.json()["status"] == "skipped"
+    assert result.json()["skip_reason"] == "source_brand_present"
+    assert result.json()["draft_id"] is None
+    repeated = client.post(
+        f"/api/imports/amazon-extension/jobs/{job_id}/result",
+        json={
+            "worker_id": "brand-filter-worker",
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
+            "status": "collected",
+            "snapshot": {},
+        },
+    )
+    assert repeated.status_code == 200
+    assert repeated.json()["status"] == "skipped"
+    assert repeated.json()["idempotent"] is True
+    with testing_session() as db:
+        job = db.get(CollectionJob, job_id)
+        assert job.status == CollectionJobStatus.SKIPPED
+        assert "Example Brand" in job.message
+        assert db.query(SourceProduct).count() == 0
+        assert db.query(ProductDraft).count() == 0
+        event = db.query(AuditEvent).filter(
+            AuditEvent.action == "collection_job.automated_brand_filtered"
+        ).one()
+        assert event.after_json["reason"] == "source_brand_present"
+
+    progress = client.get("/api/imports/amazon-search/campaigns")
+    assert progress.status_code == 200
+    keyword = progress.json()[0]["keywords"][0]
+    assert keyword["skipped"] == 1
+    assert keyword["processed"] == 1
+    assert keyword["status"] == "已完成"
+
+    manual = client.post(
+        "/api/imports/amazon-url/jobs",
+        json={"source_url": "https://www.amazon.com/dp/B000TEST01", "target_site_id": "CBT"},
+    )
+    assert manual.status_code == 200
+    assert manual.json()["status"] == "pending"
+    assert manual.json()["id"] != job_id
+
+    manual_batch = client.post(
+        "/api/imports/amazon-url/jobs/batch",
+        json={
+            "source_urls": ["https://www.amazon.com/dp/B000TEST01"],
+            "target_site_id": "CBT",
+        },
+    )
+    # The just-created manual job is now the latest exact-page job, so normal
+    # duplicate protection applies again after the filtered campaign terminal.
+    assert manual_batch.status_code == 200
+    assert manual_batch.json()["existing_count"] == 1
+
+
+def test_manual_batch_can_requeue_brand_filtered_campaign_result():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        campaign = KeywordCollectionCampaign(
+            name="Filtered batch retry",
+            keywords_json=["desk organizer"],
+            status="completed",
+        )
+        db.add(campaign)
+        db.flush()
+        skipped = collection_jobs_service.create_collection_jobs(
+            db,
+            [("https://www.amazon.com/dp/B000TEST01", "CBT")],
+            campaign_id=campaign.id,
+            campaign_keyword="desk organizer",
+            collector_kind="browser_extension",
+        )[0]
+        skipped.status = CollectionJobStatus.SKIPPED
+        skipped.message = "自动选品已跳过品牌商品：Example Brand"
+        db.commit()
+
+    response = client.post(
+        "/api/imports/amazon-url/jobs/batch",
+        json={
+            "source_urls": ["https://www.amazon.com/dp/B000TEST01"],
+            "target_site_id": "CBT",
+            "collector_kind": "browser_extension",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["created_count"] == 1
+    assert response.json()["existing_count"] == 0
+    with testing_session() as db:
+        jobs = db.query(CollectionJob).order_by(CollectionJob.id).all()
+        assert len(jobs) == 2
+        assert jobs[-1].status == CollectionJobStatus.PENDING
+
+
+def test_operator_extension_job_keeps_branded_product():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        job = collection_jobs_service.create_collection_jobs(
+            db,
+            [("https://www.amazon.com/dp/B000TEST01", "CBT")],
+            collector_kind="browser_extension",
+        )[0]
+        job_id = job.id
+
+    client.get("/api/imports/amazon-extension/next", params={"worker_id": "operator-worker"})
+    result = client.post(
+        f"/api/imports/amazon-extension/jobs/{job_id}/result",
+        json={
+            "worker_id": "operator-worker",
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
+            "status": "collected",
+            "snapshot": {
+                "source_url": "https://www.amazon.com/dp/B000TEST01",
+                "title": "Operator Requested Product",
+                "brand": "Example Brand",
+                "images": ["https://images.example.com/main.jpg"],
+                "variants": [],
+                "technical_details": {},
+            },
+        },
+    )
+
+    assert result.status_code == 200
+    assert result.json()["status"] == "completed"
+    assert result.json()["draft_id"] is not None
+    with testing_session() as db:
+        assert db.query(SourceProduct).one().brand == "Example Brand"
+        assert db.query(ProductDraft).count() == 1
+
+
+def test_automated_campaign_accepts_explicit_generic_brand():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        campaign = KeywordCollectionCampaign(
+            name="Generic brand test",
+            keywords_json=["cable clips"],
+            status="completed",
+        )
+        db.add(campaign)
+        db.flush()
+        job = collection_jobs_service.create_collection_jobs(
+            db,
+            [("https://www.amazon.com/dp/B000TEST01", "CBT")],
+            campaign_id=campaign.id,
+            campaign_keyword="cable clips",
+            collector_kind="browser_extension",
+        )[0]
+        job_id = job.id
+
+    client.get("/api/imports/amazon-extension/next", params={"worker_id": "generic-worker"})
+    result = client.post(
+        f"/api/imports/amazon-extension/jobs/{job_id}/result",
+        json={
+            "worker_id": "generic-worker",
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
+            "status": "collected",
+            "snapshot": {
+                "source_url": "https://www.amazon.com/dp/B000TEST01",
+                "title": "Generic Cable Clips",
+                "brand": "Brand: Generic",
+                "images": ["https://images.example.com/main.jpg"],
+                "variants": [],
+                "technical_details": {},
+            },
+        },
+    )
+
+    assert result.status_code == 200
+    assert result.json()["status"] == "completed"
+    with testing_session() as db:
+        assert db.query(SourceProduct).one().brand == "Brand: Generic"
+        assert db.query(ProductDraft).count() == 1
 
 
 def test_amazon_extension_recollection_reuses_legacy_draft_without_variant_asin():
