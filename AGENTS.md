@@ -1,5 +1,11 @@
 # Project Delivery Rules
 
+## CBT One-Click Publish
+
+- One click on “立即发布” must run the current-page save, official preflight, and publish-task creation as one continuous flow; never require one click per stage.
+- If another page operation is busy, do not silently discard the publish click. Show a queued state and continue automatically when that operation finishes.
+- Guard one publish intent synchronously so rapid repeat clicks cannot create duplicate jobs. Verify both the frontend build and that one intent creates only one config update and one publish job.
+
 ## Definition of Done
 
 - Do not describe infrastructure, API shapes, mocked tests, or UI shells as a finished product.
