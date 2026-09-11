@@ -135,7 +135,8 @@ const ATTRIBUTE_NAMES_ZH: Record<string, string> = {
   ITEM_CONDITION: "商品状况", SELLER_SKU: "卖家 SKU", PACKAGE_LENGTH: "包装长度",
   PACKAGE_WIDTH: "包装宽度", PACKAGE_HEIGHT: "包装高度", PACKAGE_WEIGHT: "包装重量",
   BRAND: "品牌", MODEL: "型号", WARRANTY_TYPE: "质保类型", COLOR: "颜色",
-  MATERIAL: "材质", PRODUCT_TYPE: "产品类型", GTIN: "商品条码", EAN: "商品条码", UPC: "商品条码",
+  MATERIAL: "材质", PRODUCT_TYPE: "产品类型", PART_NUMBER: "零件编号", VEHICLE_TYPE: "适用车辆类型",
+  GTIN: "商品条码", EAN: "商品条码", UPC: "商品条码",
 };
 
 function defaultSku(draftId: number) {
@@ -607,6 +608,16 @@ export function CbtGlobalPublishingPanel({
       return changed ? next : current;
     });
   }, [attributeDefinitions, draft.description, globalTitle, requiredIds, sourceTitle]);
+
+  useEffect(() => {
+    if (!requiredIds.includes("PART_NUMBER")) return;
+    // PART_NUMBER is a free-text official field, not a dictionary. Use the
+    // source ASIN when available, otherwise the draft's unique seller SKU.
+    // Never reuse one hard-coded part number across different products.
+    setAttributes((current) => current.PART_NUMBER?.trim()
+      ? current
+      : { ...current, PART_NUMBER: draft.source_variant_asin?.trim() || defaultSku(draftId) });
+  }, [draft.source_variant_asin, draftId, requiredIds]);
 
   // Keep source content changes (AI generation, recollection, or a server-side
   // save) visible without resetting category confirmation, selected markets,
@@ -1704,7 +1715,9 @@ export function CbtGlobalPublishingPanel({
           const definition = attributeDefinitions.find((item) => String(item.id).toUpperCase() === id);
           const officialValues = officialAttributeValues(definition);
           return <label key={id}>{attributeNameZh(definition, id)} *
-            {officialValues.length > 0
+            {id === "ITEM_CONDITION"
+              ? <input value="New" readOnly aria-label="商品状况固定为 New" />
+              : officialValues.length > 0
               ? <select value={attributes[id] ?? ""} onChange={(event) => setAttribute(id, event.target.value)}>
                 <option value="">请选择美客多官方选项</option>
                 {officialValues.map((value) => <option key={String(value.id)} value={String(value.name)}>{String(value.name)}</option>)}
