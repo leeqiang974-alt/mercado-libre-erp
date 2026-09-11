@@ -50,7 +50,7 @@ async def test_provider_read_timeout_is_normalized_as_retryable(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_invalid_ai_copy_is_not_automatically_sent_a_second_time(monkeypatch):
+async def test_invalid_ai_copy_retries_three_times_without_writing(monkeypatch):
     draft = SimpleNamespace(
         id=986,
         target_site_id="CBT",
@@ -102,7 +102,54 @@ async def test_invalid_ai_copy_is_not_automatically_sent_a_second_time(monkeypat
 
     assert caught.value.status_code == 502
     assert caught.value.detail["code"] == "generated_content_invalid"
-    assert requests == 1
+    assert caught.value.detail["field"] == "description"
+    assert caught.value.detail["attempts"] == 3
+    assert requests == 3
+
+
+@pytest.mark.asyncio
+async def test_parallel_generation_retries_only_the_failed_field(monkeypatch):
+    requests = {"title": 0, "description": 0}
+    description = """This cable organizer keeps charging cords and small wires positioned on desks, shelves, and work surfaces. Its compact form supports tidy routing without adding bulky hardware to the selected placement area.
+
+Key details:
+- Designed for everyday cable organization.
+- Compact holder format for common charging cords.
+- Intended for clean and dry installation surfaces.
+
+Suitable uses: Place the organizer near a computer, phone charger, nightstand, home workstation, office desk, or other area where loose cords need a consistent resting position between uses.
+The store provides a 7-day warranty for this product."""
+
+    async def field_response(**kwargs):
+        prompt = kwargs["prompt"]
+        field = "title" if 'exact shape: {"title"' in prompt else "description"
+        requests[field] += 1
+        if field == "title":
+            return {"title": "Cable Organizer Clips"}
+        if requests[field] == 1:
+            return {"description": "Too short."}
+        return {"description": description}
+
+    async def no_delay(_seconds):
+        return None
+
+    monkeypatch.setattr(ai_content_generation, "_request_content", field_response)
+    monkeypatch.setattr(ai_content_generation.asyncio, "sleep", no_delay)
+
+    title_result, description_result = await __import__("asyncio").gather(
+        ai_content_generation._generate_field_with_retry(
+            field="title", base_url="https://example.test", model="test", provider="deepseek",
+            api_key="test", base_prompt="evidence", source_brand="", timeout_seconds=10,
+        ),
+        ai_content_generation._generate_field_with_retry(
+            field="description", base_url="https://example.test", model="test", provider="deepseek",
+            api_key="test", base_prompt="evidence", source_brand="", timeout_seconds=10,
+        ),
+    )
+
+    assert title_result == ("Cable Organizer Clips", 1)
+    assert description_result == (description, 2)
+    assert requests == {"title": 1, "description": 2}
 
 
 @pytest.mark.asyncio

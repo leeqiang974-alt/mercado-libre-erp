@@ -228,10 +228,31 @@ async def generate_content(
         detail = exc.detail
         if isinstance(detail, dict):
             code = str(detail.get("code") or "request_rejected")[:120]
+            failed_field = str(detail.get("field") or "")[:20] or None
+            attempts = detail.get("attempts")
+            retryable = bool(detail.get("retryable"))
         elif isinstance(detail, str):
             code = detail[:120]
+            failed_field = None
+            attempts = None
+            retryable = False
         else:
             code = "request_rejected"
+            failed_field = None
+            attempts = None
+            retryable = False
+        failure_after = {
+            "status_code": exc.status_code,
+            "code": code,
+            "requested_fields": sorted(set(payload.fields)),
+            "regenerate_fields": sorted(set(payload.regenerate_fields)),
+        }
+        if failed_field:
+            failure_after["failed_field"] = failed_field
+        if isinstance(attempts, int):
+            failure_after["attempts"] = attempts
+        if retryable:
+            failure_after["retryable"] = True
         create_audit_event(
             db=db,
             actor_type="system",
@@ -239,12 +260,7 @@ async def generate_content(
             action="draft.ai_content_failed",
             entity_type="product_draft",
             entity_id=str(product_draft_id),
-            after={
-                "status_code": exc.status_code,
-                "code": code,
-                "requested_fields": sorted(set(payload.fields)),
-                "regenerate_fields": sorted(set(payload.regenerate_fields)),
-            },
+            after=failure_after,
         )
         raise
     except Exception:

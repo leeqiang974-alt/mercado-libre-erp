@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 
@@ -65,6 +66,7 @@ PROHIBITED_TERMS = (
 )
 MIN_DESCRIPTION_WORDS = 80
 MAX_DESCRIPTION_WORDS = 260
+MAX_GENERATION_ATTEMPTS = 3
 
 
 async def generate_and_save_draft_content(
@@ -90,11 +92,12 @@ async def generate_and_save_draft_content(
     explicit_regenerate_fields = regenerate_fields or set()
     if not explicit_regenerate_fields <= selected_fields:
         raise HTTPException(status_code=422, detail="regenerate_fields_must_be_requested")
-    already_generated = _already_generated_fields(db, draft, selected_fields, explicit_regenerate_fields)
-    if already_generated:
+    already_generated = set(_already_generated_fields(db, draft, selected_fields, explicit_regenerate_fields))
+    fields_to_generate = selected_fields - already_generated
+    if not fields_to_generate:
         raise HTTPException(
             status_code=409,
-            detail={"code": "ai_content_already_generated", "fields": already_generated},
+            detail={"code": "ai_content_already_generated", "fields": sorted(already_generated)},
         )
     metadata = get_cached_metadata(db, category_attributes_key(normalized_category))
     if not metadata or metadata.get("verified") is not True:
@@ -127,30 +130,42 @@ async def generate_and_save_draft_content(
     draft_evidence_description_length = len(draft.description or "")
     prompt = _build_prompt(draft, source, normalized_category)
     source_brand = str(source.brand or "") if source else ""
-    generated = await _request_content(
-        base_url=base_url,
-        model=model,
-        provider=provider,
-        api_key=api_key,
-        prompt=prompt,
-        timeout_seconds=timeout_seconds,
-    )
-    try:
-        content = _validate_generated(generated, source_brand)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail={"code": "generated_content_invalid", "reason": str(exc)},
-        ) from exc
-    content = GeneratedListingContent(
-        title=content.title,
-        description=sanitize_unbranded_description(content.description, source_brand),
-        brand="Unbranded",
-    )
-    if "title" in selected_fields:
-        draft.title = content.title
-    if "description" in selected_fields:
-        draft.description = content.description
+    # Generate title and description independently.  The provider calls run in
+    # parallel, and only the field that fails validation/transport is retried.
+    # Nothing is written until every requested field has a final valid value.
+    per_attempt_timeout = max(5.0, timeout_seconds / MAX_GENERATION_ATTEMPTS - 1.0)
+    ordered_fields = sorted(fields_to_generate)
+    results = await asyncio.gather(*(
+        _generate_field_with_retry(
+            field=field,
+            base_url=base_url,
+            model=model,
+            provider=provider,
+            api_key=api_key,
+            base_prompt=prompt,
+            source_brand=source_brand,
+            timeout_seconds=per_attempt_timeout,
+        )
+        for field in ordered_fields
+    ), return_exceptions=True)
+    generated_values: dict[str, str] = {}
+    attempt_counts: dict[str, int] = {}
+    for field, result in zip(ordered_fields, results, strict=True):
+        if isinstance(result, BaseException):
+            raise result
+        value, attempts = result
+        generated_values[field] = value
+        attempt_counts[field] = attempts
+
+    title = generated_values.get("title", draft.title or "")
+    description = generated_values.get("description", draft.description or "")
+    if "description" in generated_values:
+        description = sanitize_unbranded_description(description, source_brand)
+    content = GeneratedListingContent(title=title, description=description, brand="Unbranded")
+    if "title" in generated_values:
+        draft.title = title
+    if "description" in generated_values:
+        draft.description = description
     draft.brand = "Unbranded"
     draft.target_category_id = normalized_category
     draft.content_version += 1
@@ -169,7 +184,9 @@ async def generate_and_save_draft_content(
             "category_id": normalized_category,
             "title_length": len(content.title),
             "description_length": len(content.description),
-            "updated_fields": sorted(selected_fields),
+            "updated_fields": sorted(fields_to_generate),
+            "preserved_generated_fields": sorted(already_generated),
+            "attempt_counts": attempt_counts,
             "explicit_regenerate_fields": sorted(explicit_regenerate_fields),
             "source_description_length": len(str(source.description or "")) if source else 0,
             "draft_evidence_description_length": draft_evidence_description_length,
@@ -183,6 +200,66 @@ async def generate_and_save_draft_content(
     db.commit()
     db.refresh(draft)
     return draft, content, model
+
+
+async def _generate_field_with_retry(
+    *,
+    field: str,
+    base_url: str,
+    model: str,
+    provider: str,
+    api_key: str,
+    base_prompt: str,
+    source_brand: str,
+    timeout_seconds: float,
+    max_attempts: int = MAX_GENERATION_ATTEMPTS,
+) -> tuple[str, int]:
+    """Return one validated field, retrying only that field on a usable failure."""
+    last_reason = ""
+    for attempt in range(1, max_attempts + 1):
+        prompt = _build_field_prompt(base_prompt, field, last_reason)
+        try:
+            generated = await _request_content(
+                base_url=base_url,
+                model=model,
+                provider=provider,
+                api_key=api_key,
+                prompt=prompt,
+                timeout_seconds=timeout_seconds,
+            )
+            return _validate_generated_field(field, generated, source_brand), attempt
+        except ValueError as exc:
+            last_reason = str(exc)
+            if attempt >= max_attempts:
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "code": "generated_content_invalid",
+                        "field": field,
+                        "reason": last_reason,
+                        "attempts": attempt,
+                    },
+                ) from exc
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            if not detail.get("retryable") or attempt >= max_attempts:
+                if isinstance(exc.detail, dict):
+                    exc.detail = {**exc.detail, "field": field, "attempts": attempt}
+                raise
+            last_reason = str(detail.get("code") or "provider request failed")
+        await asyncio.sleep(min(0.5 * attempt, 1.5))
+    raise AssertionError("generation retry loop exited unexpectedly")
+
+
+def _build_field_prompt(base_prompt: str, field: str, previous_error: str = "") -> str:
+    if field == "title":
+        contract = 'Return JSON only in this exact shape: {"title":"..."}. Generate only the title.'
+    elif field == "description":
+        contract = 'Return JSON only in this exact shape: {"description":"..."}. Generate only the description.'
+    else:
+        raise ValueError("invalid content field")
+    correction = f"\nThe previous {field} attempt failed validation: {previous_error}. Correct it." if previous_error else ""
+    return f"{base_prompt}\n\nFIELD TASK:\n{contract}{correction}"
 
 
 async def _request_content(
@@ -217,10 +294,23 @@ async def _request_content(
             status_code=504,
             detail={"code": f"{provider}_timeout", "retryable": True},
         ) from exc
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        retryable = status == 429 or status >= 500
+        raise HTTPException(
+            status_code=502,
+            detail={"code": f"{provider}_http_error", "retryable": retryable},
+        ) from exc
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail={"code": f"{provider}_unreachable"}) from exc
+        raise HTTPException(
+            status_code=502,
+            detail={"code": f"{provider}_unreachable", "retryable": True},
+        ) from exc
     except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail={"code": f"{provider}_invalid_response"}) from exc
+        raise HTTPException(
+            status_code=502,
+            detail={"code": f"{provider}_invalid_response", "retryable": True},
+        ) from exc
     try:
         raw = body["choices"][0]["message"]["content"]
         if not isinstance(raw, str):
@@ -231,7 +321,21 @@ async def _request_content(
             raise TypeError
         return parsed
     except (KeyError, IndexError, TypeError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail={"code": f"{provider}_invalid_response"}) from exc
+        raise HTTPException(
+            status_code=502,
+            detail={"code": f"{provider}_invalid_response", "retryable": True},
+        ) from exc
+
+
+def _validate_generated_field(field: str, value: dict[str, object], source_brand: str = "") -> str:
+    raw = value.get(field)
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError(f"{field} is required")
+    if field == "title":
+        return _validate_title(raw, source_brand)
+    if field == "description":
+        return _validate_description(raw, source_brand)
+    raise ValueError("invalid content field")
 
 
 def _validate_generated(value: dict[str, object], source_brand: str = "") -> GeneratedListingContent:
@@ -239,8 +343,13 @@ def _validate_generated(value: dict[str, object], source_brand: str = "") -> Gen
         content = GeneratedListingContent.model_validate(value)
     except ValidationError as exc:
         raise ValueError("title and description are required") from exc
-    title = _normalize_ascii(" ".join(content.title.split()))
-    description = _normalize_ascii(content.description.strip())
+    title = _validate_title(content.title, source_brand)
+    description = _validate_description(content.description, source_brand)
+    return GeneratedListingContent(title=title, description=description, brand="Unbranded")
+
+
+def _validate_title(raw_title: str, source_brand: str = "") -> str:
+    title = _normalize_ascii(" ".join(raw_title.split()))
     if len(title) == 0 or len(title) > 60:
         raise ValueError("title must be 1-60 characters")
     if re.search(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0e00-\u0e7f]", title):
@@ -252,6 +361,11 @@ def _validate_generated(value: dict[str, object], source_brand: str = "") -> Gen
         raise ValueError("title contains a prohibited marketing term")
     if source_brand.strip() and source_brand.casefold() in title.casefold():
         raise ValueError("title contains the source brand")
+    return title
+
+
+def _validate_description(raw_description: str, source_brand: str = "") -> str:
+    description = _normalize_ascii(raw_description.strip())
     if re.search(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0e00-\u0e7f]", description):
         raise ValueError("description must be English")
     if source_brand.strip() and source_brand.casefold() in description.casefold():
@@ -270,7 +384,7 @@ def _validate_generated(value: dict[str, object], source_brand: str = "") -> Gen
         raise ValueError(f"description must contain {MIN_DESCRIPTION_WORDS}-{MAX_DESCRIPTION_WORDS} English words")
     if "\n" not in description:
         raise ValueError("description must use readable paragraphs or bullet lines")
-    return GeneratedListingContent(title=title, description=description, brand="Unbranded")
+    return description
 
 
 def _already_generated_fields(
