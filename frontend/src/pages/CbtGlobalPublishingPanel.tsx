@@ -387,6 +387,8 @@ export function CbtGlobalPublishingPanel({
     listingPage * LISTING_PAGE_SIZE,
   );
   const [status, setStatus] = useState("");
+  const [publishQueued, setPublishQueued] = useState(false);
+  const [publishFlowRunning, setPublishFlowRunning] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [hasSavedConfig, setHasSavedConfig] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -400,6 +402,7 @@ export function CbtGlobalPublishingPanel({
   // Poll handle for async CBT publish execution (worker path).
   const publishPollTimer = useRef<number | null>(null);
   const activeDraftIdRef = useRef(draftId);
+  const publishFlowActiveRef = useRef(false);
   const draftRailListRef = useRef<HTMLDivElement | null>(null);
   activeDraftIdRef.current = draftId;
   // 变体草稿自动采集防抖：同一草稿只自动触发一次，避免每次打开都重复请求插件。
@@ -548,6 +551,9 @@ export function CbtGlobalPublishingPanel({
     setExecution(null);
     setSimilarOffers(null);
     setStatus("");
+    setPublishQueued(false);
+    setPublishFlowRunning(false);
+    publishFlowActiveRef.current = false;
     setAiFeedback(null);
     setConfigLoaded(false);
     setHasSavedConfig(false);
@@ -1541,53 +1547,69 @@ export function CbtGlobalPublishingPanel({
   }
 
   async function executePublish() {
-    if (busy) return;
-    // 发布前无条件同步页面当前内容（发布 worker 从数据库读取数据构造请求，
-    // 若只按 !saved 判断，已保存过配置后改字段不点保存，发布的就是旧数据）
-    setStatus("正在同步并保存当前配置…");
-    const ok = await saveConfig();
-    if (!ok) { return; } // saveConfig 内部已提示具体缺失项，不再覆盖
-    // 保证发布前检查通过（配置变更后 preview 会被置空）
-    if (!preview?.allowed) {
-      setStatus("正在自动完成发布前检查…");
-      setBusy("preview");
-      try {
-        const p = await previewCbtPublishFromDraft(draftId);
-        setPreview(p);
-        if (!p.allowed) {
-          setStatus("发布前检查未通过，请查看下方错误明细。");
-          setBusy("");
-          return;
-        }
-      } catch (error) {
-        setStatus(error instanceof Error ? error.message : "生成官方请求预检失败");
-        setBusy("");
-        return;
-      }
-    }
-    setBusy("");
-    setStatus("正在等待发布确认…");
-    if (!window.confirm("确认向 Mercado Libre 提交真实刊登吗？提交后将创建商品。")) {
-      setStatus("已取消发布，未向美客多提交请求。");
+    if (publishFlowActiveRef.current) return;
+    if (busy) {
+      setPublishQueued(true);
+      setStatus("当前页面操作完成后将自动继续发布，无需再次点击。");
       return;
     }
-    setBusy("execute"); setExecution(null); setStatus("正在提交跨境发布任务…");
+    publishFlowActiveRef.current = true;
+    setPublishQueued(false);
+    setPublishFlowRunning(true);
     try {
-      const result = await executeCbtPublishFromDraft(draftId);
-      setExecution(result);
-      const normalizedStatus = String(result.status || "").toLowerCase();
-      if (normalizedStatus === "pending" || normalizedStatus === "validating") {
-        setStatus(`已提交发布任务${result.job_id ? `（任务 #${result.job_id}）` : ""}，正在创建美客多商品，请稍候…`);
-        pollPublishJob(result.job_id, draftId);
-      } else if (normalizedStatus === "published") {
-        await refreshListingRailAfterPublish(draftId).catch(() => undefined);
-        setStatus(`发布成功${result.item_id ? `，商品 ${result.item_id}` : ""}。`);
+      // One click owns the complete save -> preflight -> publish sequence.
+      setStatus("正在同步并保存当前配置…");
+      const ok = await saveConfig();
+      if (!ok) return;
+
+      setStatus("正在自动完成发布前检查…");
+      setBusy("preview");
+      let currentPreview;
+      try {
+        currentPreview = await previewCbtPublishFromDraft(draftId);
+        setPreview(currentPreview);
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "生成官方请求预检失败");
+        return;
       }
-      else if (normalizedStatus === "blocked") setStatus(`发布结果待核对${result.job_id ? `（任务 #${result.job_id}）` : ""}，请查看下方逐站点结果。`);
-      else setStatus(`发布失败${result.job_id ? `（任务 #${result.job_id}）` : ""}，请查看下方错误明细。`);
-    } catch (error) { setStatus(error instanceof Error ? error.message : "跨境发布请求失败，请查看发布任务记录。"); }
-    finally { setBusy(""); }
+      if (!currentPreview.allowed) {
+        setStatus("发布前检查未通过，请查看下方错误明细。");
+        return;
+      }
+
+      setBusy("");
+      setStatus("正在等待发布确认…");
+      if (!window.confirm("确认向 Mercado Libre 提交真实刊登吗？提交后将创建商品。")) {
+        setStatus("已取消发布，未向美客多提交请求。");
+        return;
+      }
+      setBusy("execute"); setExecution(null); setStatus("正在提交跨境发布任务…");
+      try {
+        const result = await executeCbtPublishFromDraft(draftId);
+        setExecution(result);
+        const normalizedStatus = String(result.status || "").toLowerCase();
+        if (normalizedStatus === "pending" || normalizedStatus === "validating") {
+          setStatus(`已提交发布任务${result.job_id ? `（任务 #${result.job_id}）` : ""}，正在创建美客多商品，请稍候…`);
+          pollPublishJob(result.job_id, draftId);
+        } else if (normalizedStatus === "published") {
+          await refreshListingRailAfterPublish(draftId).catch(() => undefined);
+          setStatus(`发布成功${result.item_id ? `，商品 ${result.item_id}` : ""}。`);
+        }
+        else if (normalizedStatus === "blocked") setStatus(`发布结果待核对${result.job_id ? `（任务 #${result.job_id}）` : ""}，请查看下方逐站点结果。`);
+        else setStatus(`发布失败${result.job_id ? `（任务 #${result.job_id}）` : ""}，请查看下方错误明细。`);
+      } catch (error) { setStatus(error instanceof Error ? error.message : "跨境发布请求失败，请查看发布任务记录。"); }
+    } finally {
+      setBusy("");
+      publishFlowActiveRef.current = false;
+      setPublishFlowRunning(false);
+    }
   }
+
+  useEffect(() => {
+    if (busy || !publishQueued || publishFlowActiveRef.current) return;
+    setPublishQueued(false);
+    void executePublish();
+  }, [busy, publishQueued]);
 
   async function openFamilyPicker() {
     if (busy) return;
@@ -1749,7 +1771,7 @@ export function CbtGlobalPublishingPanel({
         </div>
       </div>
     </div>}
-    <footer className="wf-action-bar"><span role="status" aria-live="polite">{status || (saved ? "配置已保存" : "请先完成必填内容")}</span><div><button className="secondary-button" onClick={onBackToEditing}>取消</button><button disabled={busy === "save"} onClick={saveConfig}><Save size={16} /> 保存</button><button className="secondary-button" disabled={busy === "preview" || busy === "save"} onClick={previewPayload}><ListChecks size={16} /> 预检</button><button disabled={!readiness?.mercado_libre.live_publish_enabled || busy === "execute"} onClick={executePublish} aria-busy={busy === "execute"}>{busy === "execute" ? <RefreshCw className="spin" size={16} /> : <Globe2 size={16} />} {busy === "execute" ? "正在提交…" : "立即发布"}</button><button className="secondary-button" disabled={!saved || busy === "family"} onClick={() => void openFamilyPicker()} title="把相同 Parent SKU（产品族）的多个变体草稿一次性提交发布，美客多会把它们合并展示为同一产品的变体">{busy === "family" ? <RefreshCw className="spin" size={16} /> : <ListChecks size={16} />} 合并发布变体</button></div></footer>
+    <footer className="wf-action-bar"><span role="status" aria-live="polite">{status || (saved ? "配置已保存" : "请先完成必填内容")}</span><div><button className="secondary-button" onClick={onBackToEditing}>取消</button><button disabled={busy === "save"} onClick={saveConfig}><Save size={16} /> 保存</button><button className="secondary-button" disabled={busy === "preview" || busy === "save"} onClick={previewPayload}><ListChecks size={16} /> 预检</button><button disabled={!readiness?.mercado_libre.live_publish_enabled || publishFlowRunning || publishQueued} onClick={executePublish} aria-busy={publishFlowRunning || publishQueued}>{publishFlowRunning || publishQueued ? <RefreshCw className="spin" size={16} /> : <Globe2 size={16} />} {publishQueued ? "等待发布…" : publishFlowRunning ? "处理中…" : "立即发布"}</button><button className="secondary-button" disabled={!saved || busy === "family"} onClick={() => void openFamilyPicker()} title="把相同 Parent SKU（产品族）的多个变体草稿一次性提交发布，美客多会把它们合并展示为同一产品的变体">{busy === "family" ? <RefreshCw className="spin" size={16} /> : <ListChecks size={16} />} 合并发布变体</button></div></footer>
 
       {showFamilyPicker && (
         <div className="wf-family-overlay" role="dialog" aria-modal="true">
