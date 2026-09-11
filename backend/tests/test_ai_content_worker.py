@@ -88,3 +88,33 @@ async def test_prefill_skips_draft_with_existing_ai_title_and_description(monkey
     summary = await ai_content_worker.run_ai_content_prefill_pass(db, limit=1)
 
     assert summary["processed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_prefill_remaining_counts_all_pending_drafts_beyond_pass_limit(monkeypatch):
+    db = _session()
+    drafts = [
+        ProductDraft(
+            target_site_id="CBT",
+            target_category_id="CBT414091",
+            title=f"Collected source title {index}",
+            description=f"Collected source description {index}",
+        )
+        for index in range(3)
+    ]
+    db.add_all(drafts)
+    db.commit()
+
+    async def generate(_db, _settings, draft_id, _category_id, _fields, **_kwargs):
+        return (
+            db.get(ProductDraft, draft_id),
+            SimpleNamespace(title="Finished title", description="Finished description"),
+            "agnes-test",
+            {"updated_fields": ["title", "description"], "attempt_counts": {}},
+        )
+
+    monkeypatch.setattr(ai_content_worker, "generate_and_save_draft_content", generate)
+
+    summary = await ai_content_worker.run_ai_content_prefill_pass(db, limit=1)
+
+    assert summary == {"processed": 1, "completed": 1, "failed": 0, "remaining": 2}

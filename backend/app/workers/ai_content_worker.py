@@ -104,9 +104,8 @@ async def run_ai_content_prefill_pass(db: Session, limit: int = 1) -> dict[str, 
             cooldown = timedelta(minutes=min(10 * (2 ** max(0, failure_rounds - 1)), 360))
             if now < last_failed_at + cooldown:
                 continue
-        selected.append(draft)
-        if len(selected) >= max(1, limit):
-            break
+        if len(selected) < max(1, limit):
+            selected.append(draft)
 
     summary = {"processed": 0, "completed": 0, "failed": 0, "remaining": 0}
     for candidate in selected:
