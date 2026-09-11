@@ -722,7 +722,19 @@ def start_continuous_keyword_campaign(campaign_id: int, db: Session = Depends(ge
             row.status = KeywordCampaignStatus.PAUSED.value
             row.message = f"已由持续挂机任务 #{campaign.id} 接替。"
     campaign.status = CONTINUOUS_CAMPAIGN_STATUS
-    campaign.message = "持续挂机已启用；队列低于阈值后将自动补充候选。"
+    converted_count = (
+        db.query(CollectionJob)
+        .filter(
+            CollectionJob.campaign_id == campaign.id,
+            CollectionJob.status == CollectionJobStatus.PENDING,
+            CollectionJob.collector_kind == "browser_extension",
+        )
+        .update(
+            {CollectionJob.collector_kind: RECOLLECT_COLLECTOR_KIND},
+            synchronize_session=False,
+        )
+    )
+    campaign.message = "持续挂机已启用；批量任务复用上架库绿色“采”流程，队列不足时自动补充。"
     create_audit_event(
         db,
         actor_type="operator",
@@ -730,7 +742,11 @@ def start_continuous_keyword_campaign(campaign_id: int, db: Session = Depends(ge
         action="keyword_campaign.continuous_enabled",
         entity_type="keyword_campaign",
         entity_id=str(campaign.id),
-        after={"status": CONTINUOUS_CAMPAIGN_STATUS},
+        after={
+            "status": CONTINUOUS_CAMPAIGN_STATUS,
+            "protocol": "meli-amazon-recollect",
+            "converted_pending_jobs": converted_count,
+        },
         commit=False,
     )
     db.commit()
