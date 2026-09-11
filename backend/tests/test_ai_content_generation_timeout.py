@@ -69,6 +69,9 @@ async def test_invalid_ai_copy_retries_three_times_without_writing(monkeypatch):
             return []
 
     class FakeDb:
+        def scalar(self, _statement):
+            return draft
+
         def get(self, model, _id):
             return draft if model is ProductDraft else None
 
@@ -172,6 +175,9 @@ async def test_previously_generated_nonempty_field_does_not_call_ai_again(monkey
             return [({"updated_fields": ["description"]},)]
 
     class FakeDb:
+        def scalar(self, _statement):
+            return draft
+
         def get(self, model, _id):
             return draft if model is ProductDraft else None
 

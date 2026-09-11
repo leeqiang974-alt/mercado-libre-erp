@@ -160,6 +160,35 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  ai_content_worker:
+    image: mvp-skeleton-backend:latest
+    init: true
+    environment:
+      DATABASE_URL: postgresql+psycopg://meli:meli@postgres:5432/amazon_meli
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
+      VOLCENGINE_API_KEY: ${VOLCENGINE_API_KEY:-}
+      VOLCENGINE_BASE_URL: ${VOLCENGINE_BASE_URL:-https://ark.cn-beijing.volces.com/api/coding/v3}
+      VOLCENGINE_MODEL: ${VOLCENGINE_MODEL:-doubao-seed-2.1-turbo}
+      AGNES_API_KEY: ${AGNES_API_KEY:-}
+      AGNES_BASE_URL: ${AGNES_BASE_URL:-https://apihub.agnes-ai.com/v1}
+      AGNES_MODEL: ${AGNES_MODEL:-agnes-2.5-flash}
+      AI_CONTENT_GENERATION_TIMEOUT_SECONDS: ${AI_CONTENT_GENERATION_TIMEOUT_SECONDS:-90}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app:ro
+    command: python -m app.worker --queue ai-content --loop --interval 30 --limit 2
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'app.worker' >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
   frontend:
     image: ${PYTHON_RUNTIME_IMAGE:-python:3.12-slim}
     init: true

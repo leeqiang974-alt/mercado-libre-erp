@@ -6,13 +6,14 @@ from app.db.session import SessionLocal
 from app.workers.collection_worker import run_pending_collection_jobs
 from app.workers.publish_worker import run_pending_publish_jobs
 from app.workers.review_worker import run_pending_review_jobs
+from app.workers.ai_content_worker import run_ai_content_prefill_pass
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run background jobs.")
     parser.add_argument(
         "--queue",
-        choices=["collection", "publish", "review"],
+        choices=["collection", "publish", "review", "ai-content"],
         default="collection",
         help="Queue to process.",
     )
@@ -27,12 +28,14 @@ def main() -> None:
                 summary = asyncio.run(run_pending_publish_jobs(db, limit=args.limit))
             elif args.queue == "review":
                 summary = asyncio.run(run_pending_review_jobs(db, limit=args.limit))
+            elif args.queue == "ai-content":
+                summary = asyncio.run(run_ai_content_prefill_pass(db, limit=min(args.limit, 2)))
             else:
                 summary = asyncio.run(run_pending_collection_jobs(db, limit=args.limit))
         print(summary, flush=True)
         if not args.loop:
             return
-        time.sleep(args.interval)
+        time.sleep(1.0 if args.queue == "ai-content" and summary.get("processed", 0) else args.interval)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ import re
 import httpx
 from fastapi import HTTPException
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
@@ -77,8 +78,17 @@ async def generate_and_save_draft_content(
     fields: set[str] | None = None,
     regenerate_fields: set[str] | None = None,
     timeout_seconds: float = 90,
+    provider_override: str | None = None,
 ) -> tuple[ProductDraft, GeneratedListingContent, str, dict[str, object]]:
-    draft = db.get(ProductDraft, product_draft_id)
+    # Serialize manual and background generation for one draft. A second
+    # caller rechecks AI history after the first transaction commits instead
+    # of paying for duplicate output or overwriting a newer result.
+    draft = db.scalar(
+        select(ProductDraft)
+        .where(ProductDraft.id == product_draft_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if draft is None:
         raise HTTPException(status_code=404, detail="Product draft not found.")
     normalized_category = category_id.strip().upper() or draft.target_category_id.strip().upper()
@@ -107,7 +117,9 @@ async def generate_and_save_draft_content(
     # The selected provider is runtime configuration, while the credential
     # resolver owns only encrypted/fallback secret values.  Do not read a
     # provider selector from ResolvedIntegrationCredentials.
-    provider = get_current_provider(db, settings)
+    provider = (provider_override or get_current_provider(db, settings)).strip().lower()
+    if provider not in {"deepseek", "volcengine", "agnes"}:
+        raise HTTPException(status_code=422, detail="invalid_content_generation_provider")
     if provider == "deepseek":
         api_key = credentials.deepseek_api_key
     elif provider == "volcengine":
