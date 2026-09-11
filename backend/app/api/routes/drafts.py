@@ -211,7 +211,7 @@ async def generate_content(
 ) -> DraftContentGenerationResponse:
     runtime_settings = get_settings()
     try:
-        draft, content, model = await generate_and_save_draft_content(
+        draft, content, model, generation_meta = await generate_and_save_draft_content(
             db,
             runtime_settings,
             product_draft_id,
@@ -231,16 +231,22 @@ async def generate_content(
             failed_field = str(detail.get("field") or "")[:20] or None
             attempts = detail.get("attempts")
             retryable = bool(detail.get("retryable"))
+            attempt_counts = detail.get("attempt_counts")
+            field_outcomes = detail.get("field_outcomes")
         elif isinstance(detail, str):
             code = detail[:120]
             failed_field = None
             attempts = None
             retryable = False
+            attempt_counts = None
+            field_outcomes = None
         else:
             code = "request_rejected"
             failed_field = None
             attempts = None
             retryable = False
+            attempt_counts = None
+            field_outcomes = None
         failure_after = {
             "status_code": exc.status_code,
             "code": code,
@@ -253,6 +259,10 @@ async def generate_content(
             failure_after["attempts"] = attempts
         if retryable:
             failure_after["retryable"] = True
+        if isinstance(attempt_counts, dict):
+            failure_after["attempt_counts"] = attempt_counts
+        if isinstance(field_outcomes, dict):
+            failure_after["field_outcomes"] = field_outcomes
         create_audit_event(
             db=db,
             actor_type="system",
@@ -289,6 +299,7 @@ async def generate_content(
             "title_valid": True,
             "description_valid": True,
             "warranty_included": True,
+            **generation_meta,
         },
         model=model,
     )

@@ -89,6 +89,10 @@ export type GeneratedDraftContent = {
     title_valid: boolean;
     description_valid: boolean;
     warranty_included: boolean;
+    updated_fields?: Array<"title" | "description">;
+    preserved_fields?: Array<"title" | "description">;
+    attempt_counts?: Partial<Record<"title" | "description", number>>;
+    field_outcomes?: Partial<Record<"title" | "description", string>>;
   };
   model: string;
 };

@@ -211,7 +211,7 @@ async def generate_content(
 ) -> DraftContentGenerationResponse:
     runtime_settings = get_settings()
     try:
-        draft, content, model = await generate_and_save_draft_content(
+        draft, content, model, generation_meta = await generate_and_save_draft_content(
             db,
             runtime_settings,
             product_draft_id,
@@ -273,6 +273,7 @@ async def generate_content(
             "title_valid": True,
             "description_valid": True,
             "warranty_included": True,
+            **generation_meta,
         },
         model=model,
     )

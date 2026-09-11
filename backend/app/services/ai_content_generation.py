@@ -77,7 +77,7 @@ async def generate_and_save_draft_content(
     fields: set[str] | None = None,
     regenerate_fields: set[str] | None = None,
     timeout_seconds: float = 90,
-) -> tuple[ProductDraft, GeneratedListingContent, str]:
+) -> tuple[ProductDraft, GeneratedListingContent, str, dict[str, object]]:
     draft = db.get(ProductDraft, product_draft_id)
     if draft is None:
         raise HTTPException(status_code=404, detail="Product draft not found.")
@@ -150,12 +150,30 @@ async def generate_and_save_draft_content(
     ), return_exceptions=True)
     generated_values: dict[str, str] = {}
     attempt_counts: dict[str, int] = {}
+    field_outcomes: dict[str, str] = {}
+    failures: list[BaseException] = []
     for field, result in zip(ordered_fields, results, strict=True):
         if isinstance(result, BaseException):
-            raise result
+            failures.append(result)
+            field_outcomes[field] = "failed"
+            if isinstance(result, HTTPException) and isinstance(result.detail, dict):
+                attempts = result.detail.get("attempts")
+                if isinstance(attempts, int):
+                    attempt_counts[field] = attempts
+            continue
         value, attempts = result
         generated_values[field] = value
         attempt_counts[field] = attempts
+        field_outcomes[field] = "succeeded"
+    if failures:
+        failure = failures[0]
+        if isinstance(failure, HTTPException) and isinstance(failure.detail, dict):
+            failure.detail = {
+                **failure.detail,
+                "attempt_counts": attempt_counts,
+                "field_outcomes": field_outcomes,
+            }
+        raise failure
 
     title = generated_values.get("title", draft.title or "")
     description = generated_values.get("description", draft.description or "")
@@ -199,7 +217,12 @@ async def generate_and_save_draft_content(
     )
     db.commit()
     db.refresh(draft)
-    return draft, content, model
+    return draft, content, model, {
+        "updated_fields": ordered_fields,
+        "preserved_fields": sorted(already_generated),
+        "attempt_counts": attempt_counts,
+        "field_outcomes": field_outcomes,
+    }
 
 
 async def _generate_field_with_retry(
