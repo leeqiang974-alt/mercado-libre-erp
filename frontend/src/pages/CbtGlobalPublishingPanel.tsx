@@ -172,6 +172,12 @@ function uniqueDrafts(items: ProductDraftRead[]) {
   return Array.from(new Map(items.map((item) => [item.id, item])).values());
 }
 
+function categoryTreeNodeId(item: Record<string, unknown>) {
+  // The full cached catalog uses category_id, while Mercado Libre's live
+  // children endpoint uses id. Both are official category nodes.
+  return String(item.category_id ?? item.id ?? "").trim();
+}
+
 function attributeNameZh(attribute: Record<string, unknown> | undefined, id: string) {
   return ATTRIBUTE_NAMES_ZH[id] ?? String(attribute?.name_zh ?? attribute?.name ?? id);
 }
@@ -983,8 +989,10 @@ export function CbtGlobalPublishingPanel({
       const result = await getCbtCategoryTree(Number(storeId), nextCategoryId);
       setCategoryTree(result.children);
       const detail = result.category;
-      const path = detail?.path_from_root_zh ?? detail?.path_from_root;
+      const path = detail?.path_from_root_zh ?? detail?.path_from_root
+        ?? detail?.path_names_zh ?? detail?.path_names;
       setCategoryTreePath(Array.isArray(path) ? path.map((item) => {
+        if (typeof item === "string") return item;
         const row = item as Record<string, unknown>;
         return String(row.name_zh ?? row.name ?? "");
       }).filter(Boolean).join(" > ") : "CBT 全部分类");
@@ -1662,7 +1670,7 @@ export function CbtGlobalPublishingPanel({
         {categoryActionStatus && <p className={`category-action-status ${categoryLeafVerified ? "success" : "error"}`} role="status">{categoryActionStatus}</p>}
         {predictions.length > 0 && <div className="prediction-list">{predictions.map((item) => { const id = String(item.category_id ?? ""); const name = String(item.category_name_zh ?? item.category_name ?? item.domain_name ?? id); const isSelected = id === categoryId; const isLeaf = item.is_leaf === true; return <button type="button" className={isSelected ? "selected" : ""} key={id} onClick={(event) => { event.preventDefault(); event.stopPropagation(); if (isLeaf) void selectCategory(id, item); else void browseCategoryTree(id); }}><strong>{name}{isLeaf ? " · 最底层" : " · 进入下一级"}</strong><small>{String(item.parent_path_zh ?? item.parent_path ?? "正在读取母级分类路径")}</small><small>{id} · {isSelected ? "已确认并加载属性" : isLeaf ? "点击后自动确认" : "点击进入子分类"}</small></button>; })}</div>}
         <div className="section-note">搜索结果不合适？<button className="tiny-button" type="button" onClick={() => { setShowCategoryTree((value) => !value); if (!showCategoryTree && !categoryTree.length) void browseCategoryTree(); }}>{showCategoryTree ? "收起分类目录" : "浏览完整分类目录"}</button></div>
-        {showCategoryTree && <div className="prediction-list"><div className="section-note"><strong>官方 CBT 分类目录</strong> · {categoryTreePath || "正在读取"} <button className="tiny-button" type="button" onClick={() => browseCategoryTree()} disabled={busy === "category-tree"}>返回根分类</button></div>{categoryTree.map((item) => { const id = String(item.id ?? ""); const name = String(item.name_zh ?? item.name ?? id); return <button key={id} type="button" onClick={() => browseCategoryTree(id)}><strong>{name}</strong><small>{id} · 点击展开；没有子分类时即选为最终候选</small></button>; })}</div>}
+        {showCategoryTree && <div className="prediction-list"><div className="section-note"><strong>官方 CBT 分类目录</strong> · {categoryTreePath || "正在读取"} <button className="tiny-button" type="button" onClick={() => browseCategoryTree()} disabled={busy === "category-tree"}>返回根分类</button></div>{categoryTree.map((item) => { const id = categoryTreeNodeId(item); const name = String(item.name_zh ?? item.name ?? id); return <button key={id} type="button" disabled={!id || busy === "category-tree"} onClick={() => void browseCategoryTree(id)}><strong>{name} →</strong><small>{id} · 点击进入下一级；到达最底层后自动确认</small></button>; })}</div>}
       </section>
 
       <section id="basic" className="surface wf-section"><div className="wf-section-title"><span>2</span><div><h3>产品基本信息</h3><p>标题强制英文不超过 60 字符；品牌固定为无品牌。</p></div></div><div className="form-grid two-col"><label>Parent SKU / 产品族名称 *<input value={familyName} placeholder="例如 SKU02761" onChange={(event) => { const value = event.target.value; setFamilyName(value); setAttributes((current) => ({ ...current, MODEL: value })); setSaved(null); setPreview(null); }} /></label><label>可售库存 *<input type="number" min="1" step="1" value={quantity} onChange={(event) => { setQuantity(event.target.value); setSaved(null); setPreview(null); }} /></label></div><label><span className="wf-field-label-row">英文标题 *<button type="button" className="tiny-button wf-ai-button" disabled={busy.startsWith("ai-")} onClick={() => void generateAiField("title")}><Sparkles size={13} />{busy === "ai-title" ? "生成中…" : "AI"}</button></span><div className="wf-title-input"><input value={globalTitle} onChange={(event) => updateGlobalTitle(event.target.value)} /><small>{globalTitle.length}/60</small></div>{aiFeedback?.field === "title" && <small className={`wf-ai-feedback ${aiFeedback.error ? "error" : "success"}`} role="status">{aiFeedback.message}</small>}{globalTitle.length > 60 && <small className="inline-warning">标题超过 60 字符：不会自动截断，请使用 AI 重新生成或手动精简。</small>}</label><label>品牌（固定）<input disabled value="Unbranded（无品牌）" /></label></section>
