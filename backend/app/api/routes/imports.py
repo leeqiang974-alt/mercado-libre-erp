@@ -324,6 +324,7 @@ def _maintain_continuous_extension_queue(db: Session) -> None:
         db.query(CollectionJob)
         .filter(
             CollectionJob.campaign_id == campaign.id,
+            CollectionJob.collector_kind == RECOLLECT_COLLECTOR_KIND,
             CollectionJob.status.in_([
                 CollectionJobStatus.COMPLETED,
                 CollectionJobStatus.SKIPPED,

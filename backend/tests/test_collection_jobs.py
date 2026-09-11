@@ -1277,7 +1277,7 @@ def test_automated_extension_campaign_skips_branded_product_without_creating_dra
             [("https://www.amazon.com/dp/B000TEST01", "CBT")],
             campaign_id=campaign.id,
             campaign_keyword="desk organizer",
-            collector_kind="browser_extension",
+            collector_kind="browser_recollect",
         )[0]
         job_id = job.id
 
@@ -1588,14 +1588,14 @@ def test_continuous_campaign_pauses_after_ten_consecutive_failures():
             ],
             campaign_id=campaign.id,
             campaign_keyword="desk organizer",
-            collector_kind="browser_extension",
+            collector_kind="browser_recollect",
         )
         for job in failed_jobs:
             job.status = CollectionJobStatus.FAILED
         db.commit()
         campaign_id = campaign.id
 
-    claim = client.get("/api/imports/amazon-extension/next", params={"worker_id": "continuous-worker"})
+    claim = client.get("/api/imports/amazon-recollect/next", params={"worker_id": "continuous-worker"})
 
     assert claim.status_code == 200
     assert claim.json()["job"] is None
