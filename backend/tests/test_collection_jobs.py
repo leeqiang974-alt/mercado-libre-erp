@@ -1548,14 +1548,14 @@ def test_continuous_campaign_refills_before_extension_goes_idle():
         db.commit()
         campaign_id = campaign.id
 
-    claim = client.get("/api/imports/amazon-extension/next", params={"worker_id": "continuous-worker"})
+    claim = client.get("/api/imports/amazon-recollect/next", params={"worker_id": "continuous-worker"})
 
     assert claim.status_code == 200
     assert claim.json()["job"] is not None
     assert claim.json()["job"]["campaignId"] == campaign_id
     with testing_session() as db:
         extension_jobs = db.query(CollectionJob).filter(
-            CollectionJob.collector_kind == "browser_extension"
+            CollectionJob.collector_kind == "browser_recollect"
         ).all()
         assert len(extension_jobs) == 2
         assert {job.status for job in extension_jobs} == {
@@ -1648,6 +1648,67 @@ def test_operator_can_switch_and_pause_continuous_campaign():
         assert db.query(AuditEvent).filter(
             AuditEvent.action == "keyword_campaign.paused"
         ).count() == 1
+
+
+def test_listing_recollect_driver_reuses_green_collect_protocol_and_completes_job():
+    client, testing_session = make_client()
+    with testing_session() as db:
+        campaign = KeywordCollectionCampaign(
+            name="Listing recollect protocol",
+            target_site_id="CBT",
+            keywords_json=["desk organizer"],
+            status="continuous",
+        )
+        db.add(campaign)
+        db.flush()
+        job = collection_jobs_service.create_collection_jobs(
+            db,
+            [("https://www.amazon.com/dp/B000TEST01", "CBT")],
+            campaign_id=campaign.id,
+            campaign_keyword="desk organizer",
+            collector_kind="browser_recollect",
+        )[0]
+        job_id = job.id
+
+    claim = client.get(
+        "/api/imports/amazon-recollect/next",
+        params={"worker_id": "listing-recollect-test"},
+    )
+
+    assert claim.status_code == 200
+    claimed = claim.json()["job"]
+    assert claimed["id"] == job_id
+    assert claimed["sourceProductId"] > 0
+    source_id = claimed["sourceProductId"]
+
+    captured = client.post(
+        f"/api/imports/source-products/{source_id}/extension-capture",
+        json={
+            "source_url": "https://www.amazon.com/dp/B000TEST01",
+            "target_site_id": "CBT",
+            "snapshot": {
+                "source_url": "https://www.amazon.com/dp/B000TEST01",
+                "title": "Adjustable desk cable organizer",
+                "price": {"amount": 12.99, "currency": "USD"},
+                "bullets": ["Keeps charging cables organized"],
+                "description": "Reusable desktop cable holder.",
+                "images": ["https://images-na.ssl-images-amazon.com/images/I/example._AC_SL1500_.jpg"],
+                "technical_details": {"Material": "Silicone"},
+            },
+        },
+    )
+
+    assert captured.status_code == 200
+    assert captured.json()["draft_count"] == 1
+    assert captured.json()["completed_collection_job_ids"] == [job_id]
+    with testing_session() as db:
+        refreshed = db.get(CollectionJob, job_id)
+        assert refreshed.status == CollectionJobStatus.COMPLETED
+        assert refreshed.draft_id is not None
+        assert db.query(ProductDraft).count() == 1
+        actions = [event.action for event in db.query(AuditEvent).all()]
+        assert "collection_job.listing_recollect_claimed" in actions
+        assert "collection_job.listing_recollect_finished" in actions
 
 
 def test_amazon_extension_recollection_reuses_legacy_draft_without_variant_asin():

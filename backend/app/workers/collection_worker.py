@@ -32,7 +32,10 @@ async def run_pending_collection_jobs(
         select(CollectionJob)
         .where(
             CollectionJob.status == CollectionJobStatus.PENDING,
-            or_(CollectionJob.collector_kind.is_(None), CollectionJob.collector_kind != "browser_extension"),
+            or_(
+                CollectionJob.collector_kind.is_(None),
+                ~CollectionJob.collector_kind.in_(["browser_extension", "browser_recollect"]),
+            ),
             or_(
                 CollectionJob.next_attempt_at.is_(None),
                 CollectionJob.next_attempt_at <= now,

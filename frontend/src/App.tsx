@@ -18,6 +18,7 @@ import { ReportsPage } from "./pages/ReportsPage";
 import { MessagesPage } from "./pages/MessagesPage";
 import { StoreProductsPage } from "./pages/StoreProductsPage";
 import { BulkSelectionPage } from "./pages/BulkSelectionPage";
+import { ContinuousRecollectDriver } from "./components/ContinuousRecollectDriver";
 
 const HASH_PAGE_ALIASES: Record<string, string> = {
   // Keep the previous product-list URL working, but send operators to the
@@ -147,6 +148,7 @@ export function App() {
 
   return (
     <Layout page={page} onPageChange={changePage}>
+      <ContinuousRecollectDriver />
       {page === "dashboard" && <DashboardPage onNavigate={setPage} />}
 
       {/* 商品管理 */}

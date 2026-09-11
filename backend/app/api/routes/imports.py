@@ -68,6 +68,7 @@ CONTINUOUS_CAMPAIGN_STATUS = KeywordCampaignStatus.CONTINUOUS.value
 CONTINUOUS_QUEUE_LOW_WATERMARK = 50
 CONTINUOUS_QUEUE_REFILL_SIZE = 200
 CONTINUOUS_FAILURE_PAUSE_WINDOW = 10
+RECOLLECT_COLLECTOR_KIND = "browser_recollect"
 
 
 class AmazonHtmlImport(BaseModel):
@@ -238,6 +239,10 @@ class KeywordCampaignRead(BaseModel):
     keywords: list[dict[str, int | str]] = []
 
 
+class RecollectFailure(BaseModel):
+    message: str = Field(default="上架库补采插件未返回有效结果。", max_length=500)
+
+
 def _campaign_read(row: KeywordCollectionCampaign, db: Session) -> KeywordCampaignRead:
     keywords = row.keywords_json or []
     current = keywords[row.current_keyword_index] if row.current_keyword_index < len(keywords) else None
@@ -374,7 +379,7 @@ def _maintain_continuous_extension_queue(db: Session) -> None:
             CollectionJob.status == CollectionJobStatus.FAILED,
             CollectionJob.campaign_keyword.in_(campaign.keywords_json or []),
             ~exists().where(
-                (browser_job.collector_kind == "browser_extension")
+                (browser_job.collector_kind.in_(["browser_extension", RECOLLECT_COLLECTOR_KIND]))
                 & (browser_job.target_site_id == CollectionJob.target_site_id)
                 & (browser_job.source_identity == CollectionJob.source_identity)
             ),
@@ -416,7 +421,7 @@ def _maintain_continuous_extension_queue(db: Session) -> None:
             target_site_id=row.target_site_id,
             campaign_id=campaign.id,
             campaign_keyword=row.campaign_keyword,
-            collector_kind="browser_extension",
+            collector_kind=RECOLLECT_COLLECTOR_KIND,
         )
         for row in selected
     ]
@@ -885,6 +890,170 @@ def get_amazon_url_collection_job_statuses(
     if len(unique_ids) > 200:
         raise HTTPException(status_code=422, detail="collection_job_status_limit_exceeded")
     return list_collection_jobs_by_ids(db, unique_ids)
+
+
+@router.get("/amazon-recollect/next")
+def claim_next_listing_recollect_job(
+    worker_id: str = Query(..., min_length=1, max_length=120),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Claim one job for the exact same event flow as the listing-library green collect button."""
+    _maintain_continuous_extension_queue(db)
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:name))"),
+            {"name": "amazon_listing_recollect_claim"},
+        )
+    now = datetime.now(UTC)
+    stale_before = now - timedelta(seconds=settings.job_stale_after_seconds)
+    stale_jobs = (
+        db.query(CollectionJob)
+        .filter(
+            CollectionJob.collector_kind == RECOLLECT_COLLECTOR_KIND,
+            CollectionJob.status == CollectionJobStatus.RUNNING,
+            CollectionJob.claimed_at.is_not(None),
+            CollectionJob.claimed_at < stale_before,
+        )
+        .all()
+    )
+    for stale in stale_jobs:
+        stale.status = CollectionJobStatus.PENDING
+        stale.message = "上架库补采页面中断，已自动放回队列。"
+        stale.started_at = None
+        stale.completed_at = None
+        stale.claimed_by = None
+        stale.claimed_at = None
+        create_audit_event(
+            db,
+            actor_type="system",
+            actor_id="listing-recollect-driver",
+            action="collection_job.listing_recollect_claim_expired",
+            entity_type="collection_job",
+            entity_id=str(stale.id),
+            after={"status": CollectionJobStatus.PENDING.value},
+            commit=False,
+        )
+    active_job = (
+        db.query(CollectionJob.id)
+        .filter(
+            CollectionJob.collector_kind == RECOLLECT_COLLECTOR_KIND,
+            CollectionJob.status == CollectionJobStatus.RUNNING,
+        )
+        .first()
+    )
+    if active_job is not None:
+        db.commit()
+        return {"job": None}
+    query = (
+        db.query(CollectionJob)
+        .filter(
+            CollectionJob.status == CollectionJobStatus.PENDING,
+            CollectionJob.collector_kind == RECOLLECT_COLLECTOR_KIND,
+            or_(CollectionJob.next_attempt_at.is_(None), CollectionJob.next_attempt_at <= now),
+            or_(
+                CollectionJob.campaign_id.is_(None),
+                ~CollectionJob.campaign_id.in_(
+                    select(KeywordCollectionCampaign.id).where(
+                        KeywordCollectionCampaign.status == KeywordCampaignStatus.PAUSED.value
+                    )
+                ),
+            ),
+        )
+        .order_by(CollectionJob.id.asc())
+    )
+    if db.get_bind().dialect.name == "postgresql":
+        query = query.with_for_update(skip_locked=True)
+    job = query.first()
+    if job is None:
+        db.commit()
+        return {"job": None}
+
+    source_url = _normalized_amazon_url_or_422(job.source_url)
+    source = db.get(SourceProduct, job.source_product_id) if job.source_product_id else None
+    if source is None:
+        source = db.scalar(
+            select(SourceProduct)
+            .where(SourceProduct.source_url == source_url)
+            .order_by(SourceProduct.id.asc())
+            .limit(1)
+        )
+    if source is None:
+        source = SourceProduct(
+            source_url=source_url,
+            asin=source_url.rsplit("/", 1)[-1].upper(),
+            raw_status=SourceProductStatus.PENDING,
+            collection_method="browser_extension",
+            source="amazon",
+        )
+        db.add(source)
+        db.flush()
+
+    job.source_product_id = source.id
+    job.status = CollectionJobStatus.RUNNING
+    job.started_at = now
+    job.completed_at = None
+    job.claimed_by = worker_id.strip()
+    job.claimed_at = now
+    job.message = "正在复用上架库绿色“采”流程补采。"
+    create_audit_event(
+        db,
+        actor_type="extension",
+        actor_id=worker_id.strip(),
+        action="collection_job.listing_recollect_claimed",
+        entity_type="collection_job",
+        entity_id=str(job.id),
+        before={"status": CollectionJobStatus.PENDING.value},
+        after={
+            "status": CollectionJobStatus.RUNNING.value,
+            "source_product_id": source.id,
+            "source_url": source_url,
+            "protocol": "meli-amazon-recollect",
+        },
+        commit=False,
+    )
+    db.commit()
+    return {
+        "job": {
+            "id": job.id,
+            "sourceProductId": source.id,
+            "sourceUrl": source_url,
+            "campaignId": job.campaign_id,
+        }
+    }
+
+
+@router.post("/amazon-recollect/jobs/{job_id}/failure")
+def fail_listing_recollect_job(
+    job_id: int,
+    payload: RecollectFailure,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    job = db.scalar(select(CollectionJob).where(CollectionJob.id == job_id).with_for_update())
+    if job is None:
+        raise HTTPException(status_code=404, detail="collection_job_not_found")
+    if job.status in {CollectionJobStatus.COMPLETED, CollectionJobStatus.SKIPPED}:
+        return {"ok": True, "job_id": job.id, "status": job.status.value, "idempotent": True}
+    if job.collector_kind != RECOLLECT_COLLECTOR_KIND:
+        raise HTTPException(status_code=409, detail="collection_job_not_listing_recollect")
+    before = job.status.value
+    job.status = CollectionJobStatus.FAILED
+    job.message = payload.message.strip() or "上架库补采插件未返回有效结果。"
+    job.completed_at = datetime.now(UTC)
+    job.claimed_by = None
+    job.claimed_at = None
+    create_audit_event(
+        db,
+        actor_type="extension",
+        actor_id="listing-recollect-driver",
+        action="collection_job.listing_recollect_failed",
+        entity_type="collection_job",
+        entity_id=str(job.id),
+        before={"status": before},
+        after={"status": job.status.value, "message": job.message},
+        commit=False,
+    )
+    db.commit()
+    return {"ok": True, "job_id": job.id, "status": job.status.value}
 
 
 @router.get("/amazon-extension/next")
@@ -1549,9 +1718,112 @@ def capture_source_product_from_extension(
         snapshot = AmazonSourceSnapshot.model_validate({**raw_snapshot, "source_url": source_url})
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"invalid_extension_snapshot: {exc}") from exc
+    selected_images = select_listing_images(snapshot.images)
+    capture_quality = _extension_capture_quality(
+        snapshot,
+        image_count=len(selected_images),
+        video_count=len(video_urls),
+    )
+    if not snapshot.title.strip() or not selected_images:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "extension_capture_incomplete", **capture_quality},
+        )
+    related_jobs = (
+        db.query(CollectionJob)
+        .filter(
+            CollectionJob.source_product_id == source.id,
+            CollectionJob.collector_kind == RECOLLECT_COLLECTOR_KIND,
+            CollectionJob.status.in_([CollectionJobStatus.PENDING, CollectionJobStatus.RUNNING]),
+        )
+        .with_for_update()
+        .all()
+    )
+    campaign_job = next((job for job in related_jobs if job.campaign_id is not None), None)
+    source_brand, brand_filter_reason = _automated_discovery_brand(
+        snapshot,
+        campaign_job.campaign_keyword if campaign_job is not None else None,
+    )
+    if campaign_job is not None and source_brand:
+        for job in related_jobs:
+            job.status = CollectionJobStatus.SKIPPED
+            job.message = f"自动选品已跳过品牌商品：{source_brand[:120]}"
+            job.completed_at = datetime.now(UTC)
+            job.claimed_by = None
+            job.claimed_at = None
+            create_audit_event(
+                db,
+                actor_type="extension",
+                actor_id="listing-recollect-driver",
+                action="collection_job.automated_brand_filtered",
+                entity_type="collection_job",
+                entity_id=str(job.id),
+                before={"status": CollectionJobStatus.RUNNING.value},
+                after={
+                    "status": job.status.value,
+                    "reason": brand_filter_reason,
+                    "source_brand": source_brand[:120],
+                    "campaign_id": job.campaign_id,
+                    "protocol": "meli-amazon-recollect",
+                },
+                commit=False,
+            )
+        has_draft = db.query(ProductDraft.id).filter(ProductDraft.source_product_id == source.id).first() is not None
+        if not has_draft and source.raw_status == SourceProductStatus.PENDING:
+            for job in related_jobs:
+                job.source_product_id = None
+            db.delete(source)
+        db.commit()
+        return {
+            "ok": True,
+            "source_product_id": source_product_id,
+            "draft_count": 0,
+            "quality": capture_quality,
+            "skipped": True,
+        }
     drafts, quality = _apply_extension_snapshot_to_source(
         db, source, snapshot, video_urls
     )
+    if not drafts:
+        target_site_id = related_jobs[0].target_site_id if related_jobs else "CBT"
+        draft_payload = normalize_amazon_product(snapshot.model_dump(), target_site_id)
+        draft_payload.video_urls = video_urls
+        variant_asin, variant_attributes = selected_source_variant(snapshot, source.asin)
+        draft = create_product_draft(
+            db,
+            draft_payload,
+            source_product_id=source.id,
+            source_variant_asin=variant_asin,
+            source_variant_attributes=variant_attributes,
+            commit=False,
+        )
+        drafts = [draft]
+    completed_job_ids: list[int] = []
+    for job in related_jobs:
+        job.status = CollectionJobStatus.COMPLETED
+        job.message = "已通过上架库绿色“采”流程完成补采。"
+        job.draft_id = drafts[0].id
+        job.completed_at = datetime.now(UTC)
+        job.claimed_by = None
+        job.claimed_at = None
+        completed_job_ids.append(job.id)
+        create_audit_event(
+            db,
+            actor_type="extension",
+            actor_id="listing-recollect-driver",
+            action="collection_job.listing_recollect_finished",
+            entity_type="collection_job",
+            entity_id=str(job.id),
+            before={"status": CollectionJobStatus.RUNNING.value},
+            after={
+                "status": job.status.value,
+                "source_product_id": source.id,
+                "draft_id": drafts[0].id,
+                "quality": quality,
+                "protocol": "meli-amazon-recollect",
+            },
+            commit=False,
+        )
     create_audit_event(
         db,
         actor_type="extension",
@@ -1572,6 +1844,7 @@ def capture_source_product_from_extension(
                     if isinstance(row, dict)
                 )
             ),
+            "completed_collection_job_ids": completed_job_ids,
         },
         commit=False,
     )
@@ -1581,6 +1854,7 @@ def capture_source_product_from_extension(
         "source_product_id": source.id,
         "draft_count": len(drafts),
         "quality": quality,
+        "completed_collection_job_ids": completed_job_ids,
     }
 
 

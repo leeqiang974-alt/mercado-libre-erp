@@ -728,6 +728,30 @@ export async function pauseKeywordCampaign(campaignId: number) {
   return response.json() as Promise<KeywordCampaign>;
 }
 
+export type ListingRecollectJob = {
+  id: number;
+  sourceProductId: number;
+  sourceUrl: string;
+  campaignId: number | null;
+};
+
+export async function claimNextListingRecollectJob(workerId: string) {
+  const params = new URLSearchParams({ worker_id: workerId });
+  const response = await fetch(`${API_BASE}/api/imports/amazon-recollect/next?${params}`);
+  if (!response.ok) throw await httpError(response);
+  return response.json() as Promise<{ job: ListingRecollectJob | null }>;
+}
+
+export async function failListingRecollectJob(jobId: number, message: string) {
+  const response = await fetch(`${API_BASE}/api/imports/amazon-recollect/jobs/${jobId}/failure`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message }),
+  });
+  if (!response.ok) throw await httpError(response);
+  return response.json() as Promise<{ ok: boolean; job_id: number; status: string }>;
+}
+
 export async function createCollectionJobsFile(
   file: File,
   targetSiteId: string,
