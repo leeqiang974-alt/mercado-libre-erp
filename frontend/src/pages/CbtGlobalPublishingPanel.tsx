@@ -414,6 +414,7 @@ export function CbtGlobalPublishingPanel({
   const publishPollTimer = useRef<number | null>(null);
   const activeDraftIdRef = useRef(draftId);
   const publishFlowActiveRef = useRef(false);
+  const publishFlowTokenRef = useRef(0);
   const draftRailListRef = useRef<HTMLDivElement | null>(null);
   activeDraftIdRef.current = draftId;
   // 变体草稿自动采集防抖：同一草稿只自动触发一次，避免每次打开都重复请求插件。
@@ -536,6 +537,7 @@ export function CbtGlobalPublishingPanel({
   // using draft fields as dependencies used to clear a confirmed category
   // when the same draft was refreshed or saved.
   useEffect(() => {
+    publishFlowTokenRef.current += 1;
     if (publishPollTimer.current !== null) {
       window.clearInterval(publishPollTimer.current);
       publishPollTimer.current = null;
@@ -1255,10 +1257,16 @@ export function CbtGlobalPublishingPanel({
     values: Omit<DraftContentUpdate, "expected_content_version">,
   ) {
     const targetDraftId = draftId;
-    const submit = (expectedContentVersion: number) => saveDraftContent(targetDraftId, {
-      ...values,
-      expected_content_version: expectedContentVersion,
-    });
+    const submit = async (expectedContentVersion: number) => {
+      const updated = await saveDraftContent(targetDraftId, {
+        ...values,
+        expected_content_version: expectedContentVersion,
+      });
+      if (activeDraftIdRef.current !== targetDraftId) {
+        throw new Error("已切换到其他草稿，本次保存结果不会写入当前页面。 ");
+      }
+      return updated;
+    };
     try {
       return await submit(draft.content_version ?? 1);
     } catch (error) {
@@ -1280,6 +1288,7 @@ export function CbtGlobalPublishingPanel({
   }
 
   async function saveProductContent() {
+    const targetDraftId = draftId;
     if (draft.image_urls.length > MAX_PRODUCT_IMAGES) {
       throw new Error(`美客多最多允许发布 ${MAX_PRODUCT_IMAGES} 张图片，请先删除多余图片。`);
     }
@@ -1293,8 +1302,10 @@ export function CbtGlobalPublishingPanel({
       image_urls: draft.image_urls.filter(Boolean),
       video_urls: videoUrls,
     });
+    if (activeDraftIdRef.current !== targetDraftId) throw new Error("已切换到其他草稿，本次保存已停止。 ");
     onDraftChange(updated);
-    const ossDraft = await mirrorDraftImagesToOss(draftId);
+    const ossDraft = await mirrorDraftImagesToOss(targetDraftId);
+    if (activeDraftIdRef.current !== targetDraftId) throw new Error("已切换到其他草稿，本次保存已停止。 ");
     onDraftChange(ossDraft);
     return ossDraft;
   }
@@ -1505,11 +1516,13 @@ export function CbtGlobalPublishingPanel({
       return false;
     }
     setBusy("save"); setStatus(""); setPreview(null); setExecution(null);
+    const targetDraftId = draftId;
     const submittedPriceUsd = Number(priceUsd);
     try {
       const savedContent = await saveProductContent();
+      if (activeDraftIdRef.current !== targetDraftId) return false;
       const removedSmallImages = Math.max(0, draft.image_urls.length - savedContent.image_urls.length);
-      const config = await saveCbtListingConfig(draftId, {
+      const config = await saveCbtListingConfig(targetDraftId, {
         store_id: Number(storeId), category_id: categoryId, family_name: familyName,
         global_title: normalizeCbtTitle(globalTitle), description: sanitizeCbtDescription(description), price_usd: submittedPriceUsd,
         available_quantity: Number(quantity),
@@ -1517,6 +1530,7 @@ export function CbtGlobalPublishingPanel({
         sale_terms: warrantySaleTerms(warranty),
         sites_to_sell: offers,
       });
+      if (activeDraftIdRef.current !== targetDraftId) return false;
       priceUsdDirtyRef.current = false;
       setPriceUsd(String(config.price_usd));
       setSaved(config); onDraftChange(config.draft); setListingRail((current) => current.map((item) => item.id === config.draft.id ? config.draft : item)); onReviewInvalidated();
@@ -1524,11 +1538,15 @@ export function CbtGlobalPublishingPanel({
         ? `跨境刊登配置已保存；已自动剔除 ${removedSmallImages} 张小于 500×500px 的图片，可直接进行官方请求预检。`
         : "跨境刊登配置已保存，可直接进行官方请求预检。");
       return true;
-    } catch (error) { setStatus(readableDraftContentSaveError(error, "保存跨境刊登配置失败")); return false; }
-    finally { setBusy(""); }
+    } catch (error) {
+      if (activeDraftIdRef.current === targetDraftId) setStatus(readableDraftContentSaveError(error, "保存跨境刊登配置失败"));
+      return false;
+    }
+    finally { if (activeDraftIdRef.current === targetDraftId) setBusy(""); }
   }
 
   async function previewPayload() {
+    const targetDraftId = draftId;
     if (!canSave) {
       const errors = marketplaceValidationErrors();
       setPreview({ allowed: false, errors, payload: null });
@@ -1539,6 +1557,7 @@ export function CbtGlobalPublishingPanel({
     // 已保存过配置后改标题/价格/属性而未点保存时，预检也必须用页面当前值。
     setStatus("正在同步并保存当前配置…");
     const ok = await saveConfig();
+    if (activeDraftIdRef.current !== targetDraftId) return;
     if (!ok) {
       // saveConfig 内部已 setStatus 具体缺失项（如"暂不能保存：请填写目标净收益；…"），
       // 这里不覆盖，让用户直接看到缺什么。
@@ -1547,9 +1566,13 @@ export function CbtGlobalPublishingPanel({
     }
     setBusy("preview"); setStatus("");
     try {
-      setPreview(await previewCbtPublishFromDraft(draftId));
-    } catch (error) { setStatus(error instanceof Error ? error.message : "生成官方请求预检失败"); }
-    finally { setBusy(""); }
+      const result = await previewCbtPublishFromDraft(targetDraftId);
+      if (activeDraftIdRef.current !== targetDraftId) return;
+      setPreview(result);
+    } catch (error) {
+      if (activeDraftIdRef.current === targetDraftId) setStatus(error instanceof Error ? error.message : "生成官方请求预检失败");
+    }
+    finally { if (activeDraftIdRef.current === targetDraftId) setBusy(""); }
   }
 
   function pollPublishJob(jobId: number | null | undefined, targetDraftId: number) {
@@ -1601,22 +1624,28 @@ export function CbtGlobalPublishingPanel({
       return;
     }
     publishFlowActiveRef.current = true;
+    const flowToken = ++publishFlowTokenRef.current;
     setPublishQueued(false);
     setPublishFlowRunning(true);
+    const targetDraftId = draftId;
+    const isCurrentFlow = () => publishFlowTokenRef.current === flowToken
+      && activeDraftIdRef.current === targetDraftId;
     try {
       // One click owns the complete save -> preflight -> publish sequence.
       setStatus("正在同步并保存当前配置…");
       const ok = await saveConfig();
+      if (!isCurrentFlow()) return;
       if (!ok) return;
 
       setStatus("正在自动完成发布前检查…");
       setBusy("preview");
       let currentPreview;
       try {
-        currentPreview = await previewCbtPublishFromDraft(draftId);
+        currentPreview = await previewCbtPublishFromDraft(targetDraftId);
+        if (!isCurrentFlow()) return;
         setPreview(currentPreview);
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : "生成官方请求预检失败");
+        if (isCurrentFlow()) setStatus(error instanceof Error ? error.message : "生成官方请求预检失败");
         return;
       }
       if (!currentPreview.allowed) {
@@ -1632,23 +1661,29 @@ export function CbtGlobalPublishingPanel({
       }
       setBusy("execute"); setExecution(null); setStatus("正在提交跨境发布任务…");
       try {
-        const result = await executeCbtPublishFromDraft(draftId);
+        const result = await executeCbtPublishFromDraft(targetDraftId);
+        if (!isCurrentFlow()) return;
         setExecution(result);
         const normalizedStatus = String(result.status || "").toLowerCase();
         if (normalizedStatus === "pending" || normalizedStatus === "validating") {
           setStatus(`已提交发布任务${result.job_id ? `（任务 #${result.job_id}）` : ""}，正在创建美客多商品，请稍候…`);
-          pollPublishJob(result.job_id, draftId);
+          pollPublishJob(result.job_id, targetDraftId);
         } else if (normalizedStatus === "published") {
-          await refreshListingRailAfterPublish(draftId).catch(() => undefined);
+          await refreshListingRailAfterPublish(targetDraftId).catch(() => undefined);
+          if (!isCurrentFlow()) return;
           setStatus(`发布成功${result.item_id ? `，商品 ${result.item_id}` : ""}。`);
         }
         else if (normalizedStatus === "blocked") setStatus(`发布结果待核对${result.job_id ? `（任务 #${result.job_id}）` : ""}，请查看下方逐站点结果。`);
         else setStatus(`发布失败${result.job_id ? `（任务 #${result.job_id}）` : ""}，请查看下方错误明细。`);
-      } catch (error) { setStatus(error instanceof Error ? error.message : "跨境发布请求失败，请查看发布任务记录。"); }
+      } catch (error) {
+        if (isCurrentFlow()) setStatus(error instanceof Error ? error.message : "跨境发布请求失败，请查看发布任务记录。");
+      }
     } finally {
-      setBusy("");
-      publishFlowActiveRef.current = false;
-      setPublishFlowRunning(false);
+      if (publishFlowTokenRef.current === flowToken) {
+        setBusy("");
+        publishFlowActiveRef.current = false;
+        setPublishFlowRunning(false);
+      }
     }
   }
 

@@ -581,8 +581,10 @@ export function DraftsPage({
       }
       setSavedDrafts((items) => items.map((item) => (item.id === draftId ? updated : item)));
     } catch (contentError) {
+      const isVersionConflict = contentError instanceof Error
+        && contentError.message.includes("draft_content_version_conflict");
       const message = readableDraftError(contentError, "保存内容失败");
-      setError(message.includes("draft_content_version_conflict")
+      setError(isVersionConflict
         ? "草稿仍在被后台更新，请稍候一秒后重试；当前页面内容没有丢失。"
         : message);
     } finally {
