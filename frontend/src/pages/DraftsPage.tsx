@@ -27,6 +27,7 @@ import {
   getCategoryPredictions,
   confirmDraftCategory,
   generateDraftContent,
+  getDraft,
   getLatestBehavioralReview,
   getSystemReadiness,
   deleteDraft,
@@ -540,15 +541,31 @@ export function DraftsPage({
     setError("");
     try {
       const selectedImages = selectListingImages(contentForm.image_urls);
-      const updated = await saveDraftContent(draftId, {
+      const payload = {
         ...contentForm,
-        expected_content_version: draft.content_version,
         title: normalizeListingTitle(contentForm.title, sourceBrandFromDraft(draft)),
         brand: UNBRANDED,
         image_urls: selectedImages,
         description: sanitizeUnbrandedDescription(contentForm.description, sourceBrandFromDraft(draft)),
         video_urls: (contentForm.video_urls ?? []).map((url) => url.trim()).filter(Boolean),
-      });
+      };
+      let updated: ProductDraftRead;
+      try {
+        updated = await saveDraftContent(draftId, {
+          ...payload,
+          expected_content_version: draft.content_version,
+        });
+      } catch (saveError) {
+        if (!(saveError instanceof Error) || !saveError.message.includes("draft_content_version_conflict")) {
+          throw saveError;
+        }
+        const latest = await getDraft(draftId);
+        if (currentDraftIdRef.current !== draftId) throw new Error("已切换到其他草稿，本次保存已取消。 ");
+        updated = await saveDraftContent(draftId, {
+          ...payload,
+          expected_content_version: latest.content_version,
+        });
+      }
       onDraftChange(updated);
       setContentForm({
         expected_content_version: updated.content_version,
@@ -566,7 +583,7 @@ export function DraftsPage({
     } catch (contentError) {
       const message = readableDraftError(contentError, "保存内容失败");
       setError(message.includes("draft_content_version_conflict")
-        ? "This draft changed in another operation. Reload it before saving your edits."
+        ? "草稿仍在被后台更新，请稍候一秒后重试；当前页面内容没有丢失。"
         : message);
     } finally {
       setBusy("");

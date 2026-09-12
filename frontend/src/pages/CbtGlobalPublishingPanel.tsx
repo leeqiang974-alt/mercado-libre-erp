@@ -51,6 +51,7 @@ import {
   type CbtPublishingProfile,
   type DraftPricing,
   type DraftPricingInput,
+  type DraftContentUpdate,
   type ProductDraft,
   type ProductDraftRead,
   type PublishExecutionResult,
@@ -212,6 +213,16 @@ function readableVariantDraftError(error: unknown) {
     // Keep the server message when it is not a JSON error response.
   }
   return raw || "建立变体独立草稿失败";
+}
+
+function isDraftContentVersionConflict(error: unknown) {
+  return error instanceof Error && error.message.includes("draft_content_version_conflict");
+}
+
+function readableDraftContentSaveError(error: unknown, fallback: string) {
+  return isDraftContentVersionConflict(error)
+    ? "草稿仍在被后台更新，请稍候一秒后重试；当前页面内容没有丢失。"
+    : error instanceof Error ? error.message : fallback;
 }
 
 function normalizedAttributeKey(value: string) {
@@ -1240,6 +1251,34 @@ export function CbtGlobalPublishingPanel({
     setExecution(null);
   }
 
+  async function saveCurrentDraftContent(
+    values: Omit<DraftContentUpdate, "expected_content_version">,
+  ) {
+    const targetDraftId = draftId;
+    const submit = (expectedContentVersion: number) => saveDraftContent(targetDraftId, {
+      ...values,
+      expected_content_version: expectedContentVersion,
+    });
+    try {
+      return await submit(draft.content_version ?? 1);
+    } catch (error) {
+      if (!isDraftContentVersionConflict(error)) throw error;
+      // Collection and background AI may finish while the operator is editing.
+      // Re-read the authoritative version, then intentionally re-submit the
+      // visible page values once so one-click publish does not require a
+      // second click or discard the operator's current form.
+      const latest = await getDraft(targetDraftId);
+      if (activeDraftIdRef.current !== targetDraftId) {
+        throw new Error("已切换到其他草稿，本次保存已取消。 ");
+      }
+      try {
+        return await submit(latest.content_version);
+      } catch (retryError) {
+        throw new Error(readableDraftContentSaveError(retryError, "保存商品内容失败"));
+      }
+    }
+  }
+
   async function saveProductContent() {
     if (draft.image_urls.length > MAX_PRODUCT_IMAGES) {
       throw new Error(`美客多最多允许发布 ${MAX_PRODUCT_IMAGES} 张图片，请先删除多余图片。`);
@@ -1247,8 +1286,7 @@ export function CbtGlobalPublishingPanel({
     if (videoUrls.length > MAX_PRODUCT_VIDEOS) {
       throw new Error(`当前有 ${videoUrls.length} 个视频，最多保留 ${MAX_PRODUCT_VIDEOS} 个。请在视频区删除 ${videoUrls.length - MAX_PRODUCT_VIDEOS} 个后再保存。`);
     }
-    const updated = await saveDraftContent(draftId, {
-      expected_content_version: draft.content_version ?? 1,
+    const updated = await saveCurrentDraftContent({
       title: normalizeCbtTitle(globalTitle),
       description: sanitizeCbtDescription(description),
       brand: "Unbranded",
@@ -1390,10 +1428,10 @@ export function CbtGlobalPublishingPanel({
     const image_urls = [url, ...draft.image_urls.filter((item) => item !== url)];
     try {
       setBusy("media");
-      const updated = await saveDraftContent(draftId, { expected_content_version: draft.content_version ?? 1, title: normalizeCbtTitle(globalTitle), description: sanitizeCbtDescription(description), brand: "Unbranded", image_urls, video_urls: videoUrls });
+      const updated = await saveCurrentDraftContent({ title: normalizeCbtTitle(globalTitle), description: sanitizeCbtDescription(description), brand: "Unbranded", image_urls, video_urls: videoUrls });
       onDraftChange(updated);
       setStatus("主图已保存。");
-    } catch (error) { setStatus(error instanceof Error ? error.message : "保存图片顺序失败"); }
+    } catch (error) { setStatus(readableDraftContentSaveError(error, "保存图片顺序失败")); }
     finally { setBusy(""); }
   }
 
@@ -1405,10 +1443,10 @@ export function CbtGlobalPublishingPanel({
     const image_urls = draft.image_urls.filter((item) => item !== url);
     try {
       setBusy("media");
-      const updated = await saveDraftContent(draftId, { expected_content_version: draft.content_version ?? 1, title: normalizeCbtTitle(globalTitle), description: sanitizeCbtDescription(description), brand: "Unbranded", image_urls, video_urls: videoUrls });
+      const updated = await saveCurrentDraftContent({ title: normalizeCbtTitle(globalTitle), description: sanitizeCbtDescription(description), brand: "Unbranded", image_urls, video_urls: videoUrls });
       onDraftChange(updated);
       setStatus("图片已移除。");
-    } catch (error) { setStatus(error instanceof Error ? error.message : "删除图片失败"); }
+    } catch (error) { setStatus(readableDraftContentSaveError(error, "删除图片失败")); }
     finally { setBusy(""); }
   }
 
@@ -1422,8 +1460,7 @@ export function CbtGlobalPublishingPanel({
     }
     try {
       setBusy("media");
-      const updated = await saveDraftContent(draftId, {
-        expected_content_version: draft.content_version ?? 1,
+      const updated = await saveCurrentDraftContent({
         title: normalizeCbtTitle(globalTitle),
         description: sanitizeCbtDescription(description),
         brand: "Unbranded",
@@ -1434,7 +1471,7 @@ export function CbtGlobalPublishingPanel({
       setStatus(`视频已保存，当前保留 ${next.length}/${MAX_PRODUCT_VIDEOS} 个。`);
     } catch (error) {
       setVideoUrls(videoUrls);
-      setStatus(error instanceof Error ? error.message : "删除视频失败");
+      setStatus(readableDraftContentSaveError(error, "删除视频失败"));
     } finally { setBusy(""); }
   }
 
@@ -1487,7 +1524,7 @@ export function CbtGlobalPublishingPanel({
         ? `跨境刊登配置已保存；已自动剔除 ${removedSmallImages} 张小于 500×500px 的图片，可直接进行官方请求预检。`
         : "跨境刊登配置已保存，可直接进行官方请求预检。");
       return true;
-    } catch (error) { setStatus(error instanceof Error ? error.message : "保存跨境刊登配置失败"); return false; }
+    } catch (error) { setStatus(readableDraftContentSaveError(error, "保存跨境刊登配置失败")); return false; }
     finally { setBusy(""); }
   }
 

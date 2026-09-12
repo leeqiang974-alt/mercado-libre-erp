@@ -5,6 +5,7 @@
 - One click on “立即发布” must run the current-page save, official preflight, and publish-task creation as one continuous flow; never require one click per stage.
 - If another page operation is busy, do not silently discard the publish click. Show a queued state and continue automatically when that operation finishes.
 - Guard one publish intent synchronously so rapid repeat clicks cannot create duplicate jobs. Verify both the frontend build and that one intent creates only one config update and one publish job.
+- If background collection or AI advances `content_version` while the operator is editing, the one-click flow must re-read the latest version and re-submit the visible page values once. Keep the server optimistic lock, never silently discard the form, and show a Chinese actionable message if the second guarded save also conflicts.
 
 ## Definition of Done
 
