@@ -7,9 +7,11 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
 from app.models.audit_event import AuditEvent
+from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.product_draft import ProductDraft
 from app.models.registry import import_all_models
 from app.workers import ai_content_worker
+from app.services.meli.metadata_cache import category_attributes_key
 
 
 def _session():
@@ -19,9 +21,18 @@ def _session():
     return sessionmaker(bind=engine)()
 
 
+def _add_verified_category(db, category_id: str = "CBT414091"):
+    db.add(MeliMetadataCache(
+        cache_key=category_attributes_key(category_id),
+        payload_json={"verified": True, "attributes": []},
+    ))
+    db.commit()
+
+
 @pytest.mark.asyncio
 async def test_prefill_uses_agnes_then_volcengine_without_partial_frontend_state(monkeypatch):
     db = _session()
+    _add_verified_category(db)
     draft = ProductDraft(
         target_site_id="CBT",
         target_category_id="CBT414091",
@@ -93,6 +104,7 @@ async def test_prefill_skips_draft_with_existing_ai_title_and_description(monkey
 @pytest.mark.asyncio
 async def test_prefill_remaining_counts_all_pending_drafts_beyond_pass_limit(monkeypatch):
     db = _session()
+    _add_verified_category(db)
     drafts = [
         ProductDraft(
             target_site_id="CBT",
@@ -118,3 +130,53 @@ async def test_prefill_remaining_counts_all_pending_drafts_beyond_pass_limit(mon
     summary = await ai_content_worker.run_ai_content_prefill_pass(db, limit=1)
 
     assert summary == {"processed": 1, "completed": 1, "failed": 0, "remaining": 2}
+
+
+def test_eligible_drafts_wait_for_verified_category_metadata():
+    db = _session()
+    draft = ProductDraft(
+        target_site_id="CBT",
+        target_category_id="CBT414091",
+        title="Collected source title",
+        description="Collected source description",
+    )
+    db.add(draft)
+    db.commit()
+
+    assert ai_content_worker._eligible_drafts(db) == []
+
+    db.add(MeliMetadataCache(
+        cache_key=category_attributes_key("CBT414091"),
+        payload_json={"verified": True, "attributes": []},
+    ))
+    db.commit()
+
+    assert [row.id for row in ai_content_worker._eligible_drafts(db)] == [draft.id]
+
+
+def test_category_metadata_wait_does_not_consume_ai_retry_budget():
+    db = _session()
+    draft = ProductDraft(
+        target_site_id="CBT",
+        target_category_id="CBT414091",
+        title="Collected source title",
+        description="Collected source description",
+    )
+    db.add(draft)
+    db.commit()
+    for round_number in range(ai_content_worker.PREFILL_MAX_FAILURE_ROUNDS):
+        db.add(AuditEvent(
+            actor_type="system",
+            actor_id="ai-content-worker",
+            action=ai_content_worker.PREFILL_FAILURE_ACTION,
+            entity_type="product_draft",
+            entity_id=str(draft.id),
+            before_json={},
+            after_json={
+                "failure_round": round_number + 1,
+                "provider_errors": {"agnes": "category_attributes_not_verified"},
+            },
+        ))
+    db.commit()
+
+    assert ai_content_worker._failure_state(db, [draft.id]) == {}

@@ -6,10 +6,12 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models.audit_event import AuditEvent
+from app.models.meli_metadata_cache import MeliMetadataCache
 from app.models.product_draft import ProductDraft
 from app.models.publish_job import PublishJob, PublishJobStatus
 from app.services.ai_content_generation import generate_and_save_draft_content
 from app.services.audit_events import create_audit_event
+from app.services.meli.metadata_cache import category_attributes_key
 
 
 PREFILL_PROVIDERS = ("agnes", "volcengine")
@@ -47,14 +49,22 @@ def _failure_state(db: Session, draft_ids: list[int]) -> dict[int, tuple[int, da
     if not draft_ids:
         return {}
     rows = db.execute(
-        select(AuditEvent.entity_id, AuditEvent.created_at).where(
+        select(AuditEvent.entity_id, AuditEvent.created_at, AuditEvent.after_json).where(
             AuditEvent.entity_type == "product_draft",
             AuditEvent.action == PREFILL_FAILURE_ACTION,
             AuditEvent.entity_id.in_([str(value) for value in draft_ids]),
         ).order_by(AuditEvent.id)
     ).all()
     result: dict[int, tuple[int, datetime | None]] = {}
-    for entity_id, created_at in rows:
+    for entity_id, created_at, after in rows:
+        provider_errors = after.get("provider_errors", {}) if isinstance(after, dict) else {}
+        # Missing verified category metadata is a prerequisite wait, not an AI
+        # attempt. Historical rows with this result must not permanently use
+        # up the retry budget once the metadata becomes available.
+        if provider_errors and set(map(str, provider_errors.values())) <= {
+            "category_attributes_not_verified"
+        }:
+            continue
         try:
             draft_id = int(entity_id)
         except (TypeError, ValueError):
@@ -65,7 +75,7 @@ def _failure_state(db: Session, draft_ids: list[int]) -> dict[int, tuple[int, da
 
 
 def _eligible_drafts(db: Session) -> list[ProductDraft]:
-    return list(db.scalars(
+    drafts = list(db.scalars(
         select(ProductDraft)
         .where(
             ProductDraft.target_site_id == "CBT",
@@ -79,6 +89,22 @@ def _eligible_drafts(db: Session) -> list[ProductDraft]:
         )
         .order_by(ProductDraft.id.desc())
     ).all())
+    cache_keys = {
+        category_attributes_key(draft.target_category_id.strip().upper())
+        for draft in drafts
+    }
+    verified_keys = {
+        row.cache_key
+        for row in db.scalars(
+            select(MeliMetadataCache).where(MeliMetadataCache.cache_key.in_(cache_keys))
+        ).all()
+        if isinstance(row.payload_json, dict) and row.payload_json.get("verified") is True
+    }
+    return [
+        draft
+        for draft in drafts
+        if category_attributes_key(draft.target_category_id.strip().upper()) in verified_keys
+    ]
 
 
 async def run_ai_content_prefill_pass(db: Session, limit: int = 1) -> dict[str, int]:
