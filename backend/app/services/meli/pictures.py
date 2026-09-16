@@ -107,6 +107,7 @@ async def materialize_global_picture_sources(
                 sources.append(picture["source"])
 
     ids_by_source: dict[str, str] = {}
+    skipped_pictures: list[str] = []
     for source in dict.fromkeys(sources):
         try:
             response = await _download_with_retry(source)
@@ -131,22 +132,16 @@ async def materialize_global_picture_sources(
             if not picture_id:
                 raise PictureUploadError("美客多图片上传未返回图片 ID")
             ids_by_source[source] = picture_id
-        except PictureUploadError:
-            raise
-        except httpx.HTTPStatusError as exc:
-            detail = _upload_error_detail(exc.response)
-            raise PictureUploadError(
-                f"图片无法下载或上传（HTTP {exc.response.status_code}{detail}）：{source}"
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise PictureUploadError(f"图片传输失败：{source}") from exc
+        except (PictureUploadError, httpx.HTTPStatusError, httpx.HTTPError):
+            # 【2026-09-16 迭代】单张图片失败/尺寸不合格时跳过该图，不让一条坏图
+            # 拖垮整个发布；剩余合格图片照常提交（美客多允许少于 12 张）。
+            skipped_pictures.append(source)
 
     def replace(pictures: list[dict]) -> list[dict]:
         return [
             {"id": ids_by_source[picture["source"]]}
-            if isinstance(picture, dict) and picture.get("source") in ids_by_source
-            else picture
             for picture in pictures
+            if isinstance(picture, dict) and picture.get("source") in ids_by_source
         ]
 
     payload["pictures"] = replace(payload.get("pictures", []))
