@@ -61,6 +61,8 @@ export type ProductDraftRead = ProductDraft & {
   publication_status: string;
   /** Site IDs created by the latest successful ERP publish job. */
   published_sites: string[];
+  /** Latest publish failure reason (FAILED/BLOCKED jobs). */
+  publication_error: string;
 };
 
 export type DraftContentUpdate = {

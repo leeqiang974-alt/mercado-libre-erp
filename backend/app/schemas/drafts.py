@@ -40,6 +40,7 @@ class ProductDraftRead(ProductDraftCreate):
     content_version: int
     publication_status: str = "unpublished"
     published_sites: list[str] = Field(default_factory=list)
+    publication_error: str = ""
 
 
 class ProductDraftContentUpdate(BaseModel):

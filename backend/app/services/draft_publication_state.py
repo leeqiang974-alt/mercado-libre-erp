@@ -36,7 +36,19 @@ def apply_draft_publication_state(
             continue
         draft.publication_status = effective.status.value
         draft.published_sites = _published_sites(effective)
+        if effective.status in (PublishJobStatus.FAILED, PublishJobStatus.BLOCKED):
+            draft.publication_error = _publication_error(effective)
     return rows
+
+
+def _publication_error(job: PublishJob) -> str:
+    """从最近失败/阻塞任务的响应里提取可读错误（前 2 条，截断 300 字符）。"""
+    summary = job.response_summary_json or {}
+    errors = summary.get("errors") or []
+    if not errors:
+        return job.status.value
+    joined = "; ".join(str(e) for e in errors[:2])
+    return joined[:300]
 
 
 def _effective_job(jobs: list[PublishJob]) -> PublishJob | None:
