@@ -38,6 +38,10 @@ def apply_draft_publication_state(
         draft.published_sites = _published_sites(effective)
         if effective.status in (PublishJobStatus.FAILED, PublishJobStatus.BLOCKED):
             draft.publication_error = _publication_error(effective)
+        elif effective.status == PublishJobStatus.PUBLISHED:
+            partial = _partial_site_error(effective)
+            if partial:
+                draft.publication_error = partial
     return rows
 
 
@@ -104,3 +108,32 @@ def _published_sites(job: PublishJob) -> list[str]:
         if isinstance(row, dict) and row.get("item_id") and row.get("site_id")
     ]
     return list(dict.fromkeys(sites)) or (["CBT"] if job.meli_item_id else [])
+
+
+def _partial_site_error(job: PublishJob) -> str:
+    """【2026-09-16 迭代】发布成功但部分站点被拒时提取站点级错误。
+
+    response_details.site_items 中无 item_id 且带 error 的行即失败站点，
+    拼接“部分站点失败: MLC(消息)/MLA(消息)”供前端展示。
+    """
+    summary = job.response_summary_json or {}
+    details = summary.get("response_details") or {}
+    site_items = details.get("site_items", []) if isinstance(details, dict) else []
+    failed: list[str] = []
+    for row in site_items:
+        if not isinstance(row, dict) or row.get("item_id"):
+            continue
+        err = row.get("error")
+        if not isinstance(err, dict):
+            continue
+        site_id = str(row.get("site_id") or "").strip()
+        causes = err.get("cause") or []
+        message = ""
+        for cause in causes:
+            if isinstance(cause, dict) and str(cause.get("message") or "").strip():
+                message = str(cause.get("message") or "").strip()
+                break
+        failed.append(f"{site_id}({message or 'failed'})" if message else site_id)
+    if not failed:
+        return ""
+    return "部分站点失败: " + "; ".join(failed[:4])
