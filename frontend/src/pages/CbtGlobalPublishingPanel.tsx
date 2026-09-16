@@ -388,10 +388,31 @@ export function CbtGlobalPublishingPanel({
   const [similarSearchBusy, setSimilarSearchBusy] = useState(false);
   const [similarOffers, setSimilarOffers] = useState<Alibaba1688SimilarResult | null>(null);
   const LISTING_PAGE_SIZE = 20;
-  const pendingListingRail = useMemo(
-    () => listingRail.filter((item) => item.publication_status !== "published"),
-    [listingRail],
-  );
+  const pendingListingRail = useMemo(() => {
+    // 变体草稿（source_variant_asin 非空）紧跟其本体（同 source_product_id），
+    // 方便在左侧列表里编辑完变体后直接处理本体；本体保持原有顺序。
+    const pending = listingRail.filter((item) => item.publication_status !== "published");
+    const parents = pending.filter((item) => !item.source_variant_asin);
+    const variantsBySource = new Map<number, ProductDraftRead[]>();
+    for (const item of pending) {
+      if (!item.source_variant_asin) continue;
+      const key = item.source_product_id ?? 0;
+      if (!variantsBySource.has(key)) variantsBySource.set(key, []);
+      variantsBySource.get(key)!.push(item);
+    }
+    const ordered: ProductDraftRead[] = [];
+    for (const parent of parents) {
+      ordered.push(parent);
+      const key = parent.source_product_id ?? 0;
+      const variants = variantsBySource.get(key);
+      if (variants) {
+        ordered.push(...variants);
+        variantsBySource.delete(key);
+      }
+    }
+    for (const variants of variantsBySource.values()) ordered.push(...variants);
+    return ordered;
+  }, [listingRail]);
   const listingPageCount = Math.max(1, Math.ceil(pendingListingRail.length / LISTING_PAGE_SIZE));
   const listingPageItems = pendingListingRail.slice(
     (listingPage - 1) * LISTING_PAGE_SIZE,
