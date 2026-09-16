@@ -146,23 +146,38 @@ async function executeRequestsInBatches(dimensionToAsinMap, request, batchSize =
                             let Size = "";
                             let Color = "";
 
-                            // 查找价格信息
-                            let priceDiv = doc.getElementById('corePriceDisplay_desktop_feature_div');
-                            let priceSpan = priceDiv?.querySelector('span.a-price-whole');
-                            if (priceSpan) {
-                                let allPrice = priceSpan.textContent.replace(/[^0-9]/g, '');
-                                let fractionPriceSpan = priceDiv.querySelector('.a-price-fraction');
-                                if (fractionPriceSpan) {
-                                    allPrice = allPrice + "." + fractionPriceSpan.textContent;
+                            // 查找价格信息（多选择器，覆盖 desktop/mobile/变体页，2026-09-16 迭代）
+                            let priceValue = "0";
+                            const priceSelectors = [
+                                '#corePriceDisplay_desktop_feature_div span.a-price-whole',
+                                '#corePrice_desktop .a-offscreen',
+                                '#corePrice_feature_div .a-offscreen',
+                                '#apex_desktop .a-price .a-offscreen',
+                                '#desktop_buybox .a-price .a-offscreen',
+                                '#buybox .a-price .a-offscreen',
+                                '#price_inside_buybox',
+                                '#priceblock_ourprice',
+                                '#priceblock_dealprice',
+                                '#productTitle + .a-price .a-offscreen',
+                            ];
+                            for (let sel of priceSelectors) {
+                                let node = doc.querySelector(sel);
+                                if (!node) continue;
+                                let raw = node.textContent.trim();
+                                if (sel.endsWith('span.a-price-whole')) {
+                                    let container = node.closest('div');
+                                    let frac = container ? container.querySelector('.a-price-fraction') : null;
+                                    if (frac) raw = raw + '.' + frac.textContent.trim();
                                 }
-                                Price = allPrice;
-                            } else {
-                                let priceDiv2 = doc.getElementById('corePrice_desktop');
-                                let priceSpan2 = priceDiv2.querySelector('.a-offscreen');
-                                if (priceSpan2) {
-                                    Price = priceSpan2.textContent;
+                                let digits = raw.replace(/[^0-9.]/g, '');
+                                let firstDot = digits.indexOf('.');
+                                if (firstDot >= 0) {
+                                    digits = digits.slice(0, firstDot + 1) + digits.slice(firstDot + 1).replace(/\./g, '');
                                 }
+                                let num = parseFloat(digits);
+                                if (!isNaN(num) && num > 0) { priceValue = digits; break; }
                             }
+                            Price = priceValue;
 
                             let twisterContainerDiv = doc.getElementById('twisterContainer');
                             if (twisterContainerDiv) {
