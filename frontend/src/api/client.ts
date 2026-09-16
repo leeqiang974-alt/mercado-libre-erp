@@ -4,6 +4,61 @@ const API_BASE = "";
 // Build a concise, user-safe error message from a failed fetch response.
 // JSON errors (FastAPI) expose a `detail` field that is safe to show; nginx /
 // proxy 5xx responses are full HTML pages that must never be rendered verbatim.
+// API 错误码 → 用户看得懂的中文提示（2026-09-16 迭代）
+const API_ERROR_TRANSLATIONS: Record<string, string> = {
+  source_evidence_stale:
+    "当前变体的素材数据已过期（草稿还停留在父链接的数据上）。请点击列表卡片上的「采」重新采集该变体自己的页面，素材刷新后再继续。",
+  variant_page_collection_required:
+    "这个变体还没有采集过它自己页面的数据，需要先重新采集该变体页面后才能继续。",
+  draft_content_version_conflict:
+    "草稿内容刚被更新过，请刷新页面后再试。",
+  published_or_active_draft_cannot_be_deleted:
+    "该商品已发布或正在发布中，不能删除。",
+  draft_busy_retry:
+    "该商品正在被采集任务占用，请稍等片刻再试。",
+  amazon_snapshot_incomplete:
+    "采集到的 Amazon 页面信息不完整（可能缺少标题、价格或图片），请重新采集或换一个商品。",
+  amazon_navigation_asin_mismatch:
+    "页面跳转后商品与预期不符（ASIN 不匹配），请重新采集。",
+  amazon_challenge_snapshot_rejected:
+    "Amazon 页面触发了人机验证，无法自动采集，请稍后重试或手动打开页面。",
+  amazon_snapshot_identity_mismatch:
+    "采集到的商品与链接不一致（ASIN 不匹配），请确认链接后重试。",
+  extension_capture_incomplete:
+    "插件采集到的信息不完整（缺少标题或图片），请刷新 Amazon 页面后重新采集。",
+  invalid_extension_snapshot:
+    "插件采集返回的数据无效，请刷新页面后重新采集。",
+  oss_image_mirror_failed:
+    "商品图片保存到服务器失败，请检查图片链接或重新采集。",
+  listing_conflict:
+    "美客多已存在相同商品（重复上架）。请修改标题或商品信息后重新提交。",
+  bad_request:
+    "请求被美客多拒绝，请检查商品信息后重试。",
+};
+
+const ERROR_DETAIL_TRANSLATIONS: Record<string, string> = {
+  title_required: "标题不能为空",
+  title_prohibited_marketing: "标题包含美客多禁止的营销用语，请修改",
+  title_too_long: "标题超过 60 个字符",
+  source_price_evidence_required: "缺少 Amazon 源价（参考价），请先点「采」重新采集",
+  pricing_source_price_mismatch: "成本价与源价不一致，请重新填写",
+  invalid_listing_type_id: "刊登类型不受该站点支持，请切换为官方支持的刊登类型",
+  attribute_required: "缺少必填属性，请补全",
+};
+
+function translateApiError(code: string, errors: unknown): string {
+  const known = API_ERROR_TRANSLATIONS[code];
+  if (known) return known;
+  if (Array.isArray(errors)) {
+    const parts = errors.map((item) => {
+      const raw = String(item ?? "").trim();
+      return ERROR_DETAIL_TRANSLATIONS[raw] ?? raw;
+    }).filter(Boolean);
+    if (parts.length) return parts.join("；");
+  }
+  return code;
+}
+
 async function httpError(response: Response): Promise<Error> {
   const status = response.status;
   let text = "";
@@ -16,7 +71,13 @@ async function httpError(response: Response): Promise<Error> {
   if (text) {
     try {
       const parsed = JSON.parse(text) as { detail?: unknown };
-      if (typeof parsed?.detail === "string") detail = parsed.detail;
+      if (typeof parsed?.detail === "string") {
+        detail = parsed.detail;
+      } else if (parsed?.detail && typeof parsed.detail === "object") {
+        const d = parsed.detail as Record<string, unknown>;
+        const code = typeof d.code === "string" ? d.code : "";
+        detail = translateApiError(code, d.errors);
+      }
     } catch {
       /* not JSON */
     }
