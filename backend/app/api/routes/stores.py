@@ -514,9 +514,11 @@ async def get_cbt_marketplace_listing_types(
 @router.get("/{store_id}/items")
 async def list_store_items(
     store_id: int,
-    limit: int = Query(default=30, ge=1, le=50),
+    limit: int = Query(default=30, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     search: str = Query(default="", max_length=200),
+    sort: str = Query(default="DATE_DESC", max_length=20),
+    status: str = Query(default="", max_length=20),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     """List real seller items without exposing store credentials to the browser."""
@@ -535,9 +537,11 @@ async def list_store_items(
         if not access_token:
             raise HTTPException(status_code=409, detail="Store access token is unavailable.")
         client = create_meli_client(access_token)
-        query = f"limit={limit}&offset={offset}"
+        query = f"limit={limit}&offset={offset}&sort={sort}"
         if search.strip():
             query += f"&search={httpx.QueryParams({'search': search.strip()})['search']}"
+        if status.strip():
+            query += f"&status={status}"
         result = await client.get(f"/users/{store.seller_id}/items/search?{query}")
         if not isinstance(result, dict) or not isinstance(result.get("results"), list):
             raise ValueError("invalid_item_search_response")
@@ -574,7 +578,14 @@ async def list_store_items(
     items: list[dict[str, object]] = []
     for item_id, detail in zip(item_ids, details, strict=True):
         if not isinstance(detail, dict):
-            items.append({"id": item_id, "load_error": True})
+            message = str(detail)[:200] if detail else ""
+            items.append(
+                {
+                    "id": item_id,
+                    "load_error": True,
+                    "load_error_message": message or "Mercado Libre detail unavailable",
+                }
+            )
             continue
         pictures = detail.get("pictures") if isinstance(detail.get("pictures"), list) else []
         thumbnail = str(detail.get("thumbnail") or "")

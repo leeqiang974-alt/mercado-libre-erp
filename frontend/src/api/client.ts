@@ -1226,6 +1226,7 @@ export type StoreItem = {
   last_updated?: string;
   has_public_permalink?: boolean;
   load_error?: boolean;
+  load_error_message?: string;
 };
 
 export type StoreItemPriceReference = {
@@ -1248,11 +1249,13 @@ export type StoreItemPriceReference = {
   estimated_after_reference_costs?: number | null;
 };
 
-export async function listStoreItems(storeId: number, options: { limit?: number; offset?: number; search?: string } = {}) {
+export async function listStoreItems(storeId: number, options: { limit?: number; offset?: number; search?: string; sort?: string; status?: string } = {}) {
   const params = new URLSearchParams({
     limit: String(options.limit ?? 30), offset: String(options.offset ?? 0),
+    sort: options.sort ?? "DATE_DESC",
   });
   if (options.search?.trim()) params.set("search", options.search.trim());
+  if (options.status?.trim()) params.set("status", options.status.trim());
   const response = await fetch(`${API_BASE}/api/stores/${storeId}/items?${params}`);
   if (!response.ok) throw await httpError(response);
   return response.json() as Promise<{ store_id: number; site_id: string; items: StoreItem[]; total: number; limit: number; offset: number }>;
