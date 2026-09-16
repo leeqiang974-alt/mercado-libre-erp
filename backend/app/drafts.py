@@ -219,6 +219,7 @@ async def generate_content(
             set(payload.fields),
             set(payload.regenerate_fields),
             timeout_seconds=runtime_settings.ai_content_generation_timeout_seconds,
+            require_verified_category=False,
         )
     except HTTPException as exc:
         # Every attempted paid/manual generation needs an operator-visible

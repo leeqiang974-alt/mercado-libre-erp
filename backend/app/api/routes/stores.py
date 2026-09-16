@@ -269,7 +269,7 @@ async def get_cbt_category_predictions(
             "predictions": predictions,
         }
     cached = get_cached_metadata(db, category_predictions_key("CBT", query))
-    if isinstance(cached, dict) and isinstance(cached.get("predictions"), list) and cached.get("translation_version") == 2:
+    if isinstance(cached, dict) and isinstance(cached.get("predictions"), list) and cached.get("translation_version") == 3:
         return {"store_id": store.id, "query": original_query, "query_en": query, "source": "cache", "predictions": cached["predictions"]}
     try:
         access_token = await resolve_fresh_store_access_token(
@@ -308,14 +308,36 @@ async def get_cbt_category_predictions(
             "domain_name_zh": translate_category_text(item.get("domain_name")),
             "parent_path_zh": translate_category_text(item.get("parent_path")),
         })
+    # Prefer deterministic local labels, then fill only unresolved display
+    # names through the healthy Volcengine provider. Keep this below the API's
+    # global timeout so translation can never hide otherwise valid candidates.
     names = [str(item.get("category_name") or item.get("domain_name") or "") for item in predictions]
-    names += [str(item.get("parent_path") or "") for item in predictions]
-    translations = await translate_category_names_with_ai(names, settings.agnes_api_key, settings.agnes_base_url, settings.agnes_model)
+    names += [str(item.get("domain_name") or "") for item in predictions]
+    names += [
+        part.strip()
+        for item in predictions
+        for part in str(item.get("parent_path") or "").split(">")
+        if part.strip()
+    ]
+    credentials = resolve_integration_credentials(db, settings)
+    translations = await translate_category_names_with_ai(
+        names,
+        credentials.volcengine_api_key,
+        settings.volcengine_base_url,
+        settings.volcengine_model,
+        timeout_seconds=8,
+    )
     for item in predictions:
-        item["category_name_zh"] = translations.get(str(item.get("category_name") or item.get("domain_name") or ""), item.get("category_name_zh", ""))
-        item["domain_name_zh"] = translations.get(str(item.get("domain_name") or ""), item.get("domain_name_zh", ""))
-        item["parent_path_zh"] = " > ".join(translations.get(part.strip(), part.strip()) for part in str(item.get("parent_path") or "").split(">"))
-    upsert_cached_metadata(db, category_predictions_key("CBT", query), {"site_id": "CBT", "query": query, "translation_version": 2, "predictions": predictions})
+        category_name = str(item.get("category_name") or item.get("domain_name") or "")
+        domain_name = str(item.get("domain_name") or "")
+        item["category_name_zh"] = translations.get(category_name, item.get("category_name_zh", ""))
+        item["domain_name_zh"] = translations.get(domain_name, item.get("domain_name_zh", ""))
+        item["parent_path_zh"] = " > ".join(
+            translations.get(part.strip(), translate_category_text(part.strip()))
+            for part in str(item.get("parent_path") or "").split(">")
+            if part.strip()
+        )
+    upsert_cached_metadata(db, category_predictions_key("CBT", query), {"site_id": "CBT", "query": query, "translation_version": 3, "predictions": predictions})
     return {"store_id": store.id, "query": original_query, "query_en": query, "source": "mercado_libre_api", "predictions": predictions}
 
 
@@ -370,11 +392,22 @@ async def get_cbt_category_tree(
         raise HTTPException(status_code=422, detail="CBT category ID is required.")
     cache_key = category_tree_key("CBT", normalized)
     cached = get_cached_metadata(db, cache_key)
+    if isinstance(cached, dict) and isinstance(cached.get("children"), list) and cached.get("translation_version") == 4:
+        return {**cached, "store_id": store.id, "source": "cache"}
     catalog = get_cached_metadata(db, category_catalog_key("CBT"))
     if isinstance(catalog, dict) and catalog.get("complete") is True:
-        return {**browse_category_catalog(catalog, normalized), "store_id": store.id}
-    if isinstance(cached, dict) and isinstance(cached.get("children"), list) and cached.get("translation_version") == 3:
-        return {**cached, "store_id": store.id, "source": "cache"}
+        page = browse_category_catalog(catalog, normalized)
+        credentials = resolve_integration_credentials(db, settings)
+        translated = await translate_category_payload_names(
+            page,
+            credentials.volcengine_api_key,
+            settings.volcengine_base_url,
+            settings.volcengine_model,
+            timeout_seconds=8,
+        )
+        translated["translation_version"] = 4
+        upsert_cached_metadata(db, cache_key, {**translated, "site_id": "CBT"})
+        return {**translated, "store_id": store.id}
     try:
         access_token = await resolve_fresh_store_access_token(
             db=db, store=store, encryption_key=settings.token_encryption_key,

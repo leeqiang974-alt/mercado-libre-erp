@@ -84,6 +84,8 @@ PHRASE_TRANSLATIONS = {
     "Storage and Organization": "收纳与整理",
     "Home Decoration": "家居装饰",
     "Home, Furniture and Garden": "家居、家具与园艺",
+    "Mirror Frames": "镜框",
+    "Mirror Cabinets": "镜柜",
 
     "Bakeware": "烘焙用具",
     # Stable CBT labels that the provider has repeatedly omitted or timed out
@@ -220,7 +222,7 @@ def add_category_translations(payload: dict) -> dict:
 
 
 async def translate_category_payload_names(
-    payload: dict, api_key: str, base_url: str, model: str
+    payload: dict, api_key: str, base_url: str, model: str, *, timeout_seconds: float = 30
 ) -> dict:
     """Add Chinese labels to every category node in a tree/detail payload."""
     names: list[str] = []
@@ -236,7 +238,9 @@ async def translate_category_payload_names(
                 collect(item)
 
     collect(payload)
-    translations = await translate_category_names_with_ai(names, api_key, base_url, model)
+    translations = await translate_category_names_with_ai(
+        names, api_key, base_url, model, timeout_seconds=timeout_seconds
+    )
 
     def apply(value: object) -> object:
         if isinstance(value, dict):
@@ -256,7 +260,8 @@ async def translate_category_payload_names(
 
 
 async def translate_category_names_with_ai(
-    values: list[str], api_key: str, base_url: str, model: str, *, force: bool = False
+    values: list[str], api_key: str, base_url: str, model: str, *, force: bool = False,
+    timeout_seconds: float = 30,
 ) -> dict[str, str]:
     names = list(dict.fromkeys(" ".join(str(value or "").split()).strip() for value in values if str(value or "").strip()))
     result = {name: translate_category_text(name) for name in names}
@@ -273,8 +278,12 @@ async def translate_category_names_with_ai(
         return result
     prompt = ("你是电商分类翻译专家。将下面每个 Mercado Libre 分类名称翻译成简洁的简体中文。\n""硬性规则：\n""1. 必须翻译成中文，不得保留任何英文/西班牙文/葡萄牙文单词，即使是专业术语、缩写、行业词或品牌通用词也要翻译。\n""2. 餐具、厨具、家居、餐饮、派对类词汇用中文电商常用说法。\n""3. 返回 JSON 对象，key 保持原文完全不变，value 只能是中文翻译。\n""示例：{\"Trays\": \"托盘\", \"Furniture and Garden\": \"家具与园艺\", \"Housewares\": \"家居用品\", \"Bandejas\": \"托盘\"}\n""待翻译：\n" + json.dumps(pending, ensure_ascii=False))
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(base_url.rstrip("/") + "/chat/completions", headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"}, json={"model": model, "temperature": 0, "messages": [{"role": "user", "content": prompt}]})
+        payload = {"model": model, "temperature": 0, "messages": [{"role": "user", "content": prompt}]}
+        if "volces.com" in base_url.casefold():
+            payload["thinking"] = {"type": "disabled"}
+            payload["max_tokens"] = min(1600, max(256, len(pending) * 36))
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            response = await client.post(base_url.rstrip("/") + "/chat/completions", headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"}, json=payload)
             response.raise_for_status()
             raw = response.json()["choices"][0]["message"]["content"]
             cleaned = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", str(raw).strip(), flags=re.IGNORECASE)

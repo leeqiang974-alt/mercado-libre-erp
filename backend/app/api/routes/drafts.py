@@ -1,10 +1,13 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import delete, select, update
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.product_draft import ProductDraft
-from app.models.collection_job import CollectionJob
+from app.models.collection_job import CollectionJob, CollectionJobStatus
 from app.models.cbt_listing_config import CbtListingConfig
 from app.models.draft_listing_config import DraftListingConfig
 from app.models.draft_pricing_config import DraftPricingConfig
@@ -79,7 +82,18 @@ def read_draft(
 
 @router.delete("/{product_draft_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_draft(product_draft_id: int, db: Session = Depends(get_db)) -> Response:
-    draft = db.get(ProductDraft, product_draft_id)
+    # Lock the draft before touching dependent rows. NOWAIT prevents timed-out
+    # HTTP requests from continuing in a worker thread and forming a queue of
+    # transactions behind a long AI/OSS operation on the same draft.
+    try:
+        draft = db.scalar(
+            select(ProductDraft)
+            .where(ProductDraft.id == product_draft_id)
+            .with_for_update(nowait=True)
+        )
+    except OperationalError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="draft_busy_retry") from exc
     if draft is None:
         raise HTTPException(status_code=404, detail="Product draft not found.")
     active_publish = db.scalar(
@@ -104,6 +118,50 @@ def delete_draft(product_draft_id: int, db: Session = Depends(get_db)) -> Respon
         "image_count": len(draft.image_urls_json or []),
         "video_count": len(draft.video_urls_json or []),
     }
+
+    # A queued/running collection callback must not recreate a draft that the
+    # operator intentionally removed. Keep the job as history, but close it as
+    # skipped in the same transaction as the deletion.
+    cancelled_collection_jobs: list[int] = []
+    if draft.source_product_id is not None:
+        try:
+            active_collection_jobs = db.scalars(
+                select(CollectionJob)
+                .where(
+                    CollectionJob.source_product_id == draft.source_product_id,
+                    CollectionJob.status.in_([
+                        CollectionJobStatus.PENDING,
+                        CollectionJobStatus.RUNNING,
+                    ]),
+                )
+                .with_for_update(nowait=True)
+            ).all()
+        except OperationalError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="draft_busy_retry") from exc
+        for job in active_collection_jobs:
+            previous_status = job.status.value
+            job.status = CollectionJobStatus.SKIPPED
+            job.message = "草稿已由操作员删除；采集任务已终止，禁止自动重建。"
+            job.completed_at = datetime.now(UTC)
+            job.claimed_by = None
+            job.claimed_at = None
+            cancelled_collection_jobs.append(job.id)
+            create_audit_event(
+                db=db,
+                actor_type="human",
+                actor_id="operator",
+                action="collection_job.skipped_after_draft_delete",
+                entity_type="collection_job",
+                entity_id=str(job.id),
+                before={"status": previous_status},
+                after={
+                    "status": CollectionJobStatus.SKIPPED.value,
+                    "source_product_id": draft.source_product_id,
+                    "deleted_draft_id": product_draft_id,
+                },
+                commit=False,
+            )
 
     # Collection jobs are source-history records.  Keep the history but detach
     # the optional draft reference so deleting an unpublished draft cannot
@@ -132,7 +190,7 @@ def delete_draft(product_draft_id: int, db: Session = Depends(get_db)) -> Respon
         entity_type="product_draft",
         entity_id=str(product_draft_id),
         before=before,
-        after={"deleted": True},
+        after={"deleted": True, "cancelled_collection_job_ids": cancelled_collection_jobs},
         commit=False,
     )
     db.delete(draft)
@@ -155,14 +213,27 @@ async def mirror_draft_images_to_oss(
     db: Session = Depends(get_db),
 ) -> ProductDraftRead:
     """Persist stable, verified OSS image URLs before Global Selling publishing."""
-    draft = db.scalar(select(ProductDraft).where(ProductDraft.id == product_draft_id).with_for_update())
+    # Never hold a draft row lock while downloading/uploading remote images.
+    # AI/manual saves and publish preflight must remain responsive while OSS is
+    # slow. Re-lock only for the final compare-and-write below.
+    draft = db.get(ProductDraft, product_draft_id)
     if draft is None:
         raise HTTPException(status_code=404, detail="Product draft not found.")
+    original_urls = list(draft.image_urls_json or [])
     try:
-        mirrored_urls = await mirror_images_to_oss(draft.image_urls_json or [], get_settings())
+        mirrored_urls = await mirror_images_to_oss(original_urls, get_settings())
     except OssMirrorError as exc:
         raise HTTPException(status_code=422, detail=f"oss_image_mirror_failed: {exc}") from exc
-    original_urls = draft.image_urls_json or []
+    draft = db.scalar(
+        select(ProductDraft)
+        .where(ProductDraft.id == product_draft_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Product draft not found.")
+    if list(draft.image_urls_json or []) != original_urls:
+        raise HTTPException(status_code=409, detail="draft_images_changed_during_mirror")
     if mirrored_urls == original_urls:
         return to_draft_read(draft)
     previous_version = draft.content_version
@@ -219,6 +290,7 @@ async def generate_content(
             set(payload.fields),
             set(payload.regenerate_fields),
             timeout_seconds=runtime_settings.ai_content_generation_timeout_seconds,
+            require_verified_category=False,
         )
     except HTTPException as exc:
         # Every attempted paid/manual generation needs an operator-visible
