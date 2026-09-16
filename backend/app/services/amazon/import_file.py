@@ -42,6 +42,8 @@ def parse_amazon_url_file(filename: str, content: bytes) -> list[str]:
         rows = _csv_rows(content)
     elif suffix == ".xlsx":
         rows = _xlsx_rows(content)
+    elif suffix == ".xls":
+        rows = _xls_rows(content)
     else:
         raise ValueError("import_file_type_unsupported")
 
@@ -88,6 +90,19 @@ def _xlsx_rows(content: bytes) -> Iterable[Sequence[object]]:
     except (BadZipFile, InvalidFileException, OSError, ParseError, ValueError, KeyError) as exc:
         workbook.close()
         raise ValueError("import_file_invalid") from exc
+
+
+def _xls_rows(content: bytes) -> Iterable[Sequence[object]]:
+    """解析老版 Excel .xls（BIFF）文件；用 xlrd 读取第一个工作表。"""
+    import xlrd
+
+    book = xlrd.open_workbook(file_contents=content)
+    sheet = book.sheet_by_index(0)
+    for row_idx in range(min(sheet.nrows, MAX_SCANNED_ROWS)):
+        yield [
+            sheet.cell_value(row_idx, col_idx)
+            for col_idx in range(min(sheet.ncols, MAX_SCANNED_COLUMNS))
+        ]
 
 
 def _extract_url_column(rows: Iterable[Sequence[object]]) -> list[str]:
