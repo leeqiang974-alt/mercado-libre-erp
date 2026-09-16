@@ -1414,7 +1414,7 @@ export function CbtGlobalPublishingPanel({
       const message = rawMessage.includes("ai_content_already_generated")
         ? "标题和描述已有 AI 成品，系统未重复调用。需要重构时，请先清空对应输入框。"
         : rawMessage.includes("generated_content_invalid")
-          ? "AI 已自动重试，但该商品源数据缺少可用信息（如描述为占位符），未能生成合格成品；建议点击「采」重新采集后再试，或手动填写标题/描述。"
+          ? `${rawMessage}请精简/完善后重试，或手动填写标题/描述。`
           : rawMessage || "AI 自动重试后仍生成失败，本次没有写入任何半成品。";
       setAiFeedback({ target: feedbackTarget, error: true, message });
     } finally {

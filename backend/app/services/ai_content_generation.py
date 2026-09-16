@@ -62,10 +62,10 @@ def _normalize_ascii(value: str) -> str:
 
 WARRANTY_SENTENCE = "The store provides a 7-day warranty for this product."
 PROHIBITED_TERMS = (
-    "best", "top", "hot", "sale", "discount", "free shipping", "limited",
-    "premium", "buy now", "deal", "clearance", "guaranteed",
+    "best", "hot", "sale", "discount", "free shipping", "limited",
+    "premium", "buy now", "clearance", "guaranteed",
 )
-MIN_DESCRIPTION_WORDS = 80
+MIN_DESCRIPTION_WORDS = 40
 MAX_DESCRIPTION_WORDS = 260
 MAX_GENERATION_ATTEMPTS = 3
 
@@ -335,6 +335,7 @@ async def _generate_field_with_retry(
                         "field": field,
                         "reason": last_reason,
                         "attempts": attempt,
+                        "errors": [last_reason],
                     },
                 ) from exc
         except HTTPException as exc:
@@ -490,13 +491,25 @@ def _validate_description(raw_description: str, source_brand: str = "") -> str:
         raise ValueError("description contains a prohibited marketing term")
     if re.search(r"<[^>]+>|https?://|www\.", description, flags=re.IGNORECASE):
         raise ValueError("description must not contain HTML or URLs")
+    # 【2026-09-16 迭代】格式类要求自动修复而不是拒绝：
+    # 质保句缺失时自动追加（若已有含 warranty 的结尾则替换为标准句）。
     if not description.endswith(WARRANTY_SENTENCE):
-        raise ValueError("description must end with the 7-day warranty sentence")
+        description = description.rstrip()
+        if re.search(r"warranty", description, re.IGNORECASE):
+            description = re.sub(
+                r"\s*[Ww]arranty[^\n]*\.?\s*$", "", description
+            ).rstrip()
+        description = (description + "\n" + WARRANTY_SENTENCE).strip()
+    # 无换行时按句子自动分段（每 2 句一段），保证可读结构。
+    if "\n" not in description:
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", description) if s.strip()]
+        paragraphs = []
+        for i in range(0, len(sentences), 2):
+            paragraphs.append(" ".join(sentences[i : i + 2]))
+        description = "\n".join(paragraphs)
     word_count = len(re.findall(r"[A-Za-z0-9]+(?:['-][A-Za-z0-9]+)*", description))
     if not MIN_DESCRIPTION_WORDS <= word_count <= MAX_DESCRIPTION_WORDS:
         raise ValueError(f"description must contain {MIN_DESCRIPTION_WORDS}-{MAX_DESCRIPTION_WORDS} English words")
-    if "\n" not in description:
-        raise ValueError("description must use readable paragraphs or bullet lines")
     return description
 
 

@@ -34,6 +34,8 @@ const API_ERROR_TRANSLATIONS: Record<string, string> = {
     "美客多已存在相同商品（重复上架）。请修改标题或商品信息后重新提交。",
   bad_request:
     "请求被美客多拒绝，请检查商品信息后重试。",
+  generated_content_invalid:
+    "AI 生成内容未通过校验（已自动重试 3 次），本次未写入任何半成品：",
 };
 
 const ERROR_DETAIL_TRANSLATIONS: Record<string, string> = {
@@ -44,6 +46,15 @@ const ERROR_DETAIL_TRANSLATIONS: Record<string, string> = {
   pricing_source_price_mismatch: "成本价与源价不一致，请重新填写",
   invalid_listing_type_id: "刊登类型不受该站点支持，请切换为官方支持的刊登类型",
   attribute_required: "缺少必填属性，请补全",
+  "description must contain 40-260 English words": "描述需包含 40-260 个英文单词（生成内容过短或过长）",
+  "description must be English": "描述必须全英文（含非英文字符）",
+  "description must not contain HTML or URLs": "描述不能包含链接或 HTML",
+  "description contains a prohibited marketing term": "描述包含美客多禁止的营销用语",
+  "description contains the source brand": "描述包含源商品品牌名",
+  "title must be English": "标题必须全英文",
+  "title must be 1-60 characters": "标题不能为空",
+  "title contains a prohibited marketing term": "标题包含美客多禁止的营销用语",
+  "title contains the source brand": "标题包含源商品品牌名",
 };
 
 function translateApiError(code: string, errors: unknown): string {
@@ -76,7 +87,19 @@ async function httpError(response: Response): Promise<Error> {
       } else if (parsed?.detail && typeof parsed.detail === "object") {
         const d = parsed.detail as Record<string, unknown>;
         const code = typeof d.code === "string" ? d.code : "";
-        detail = translateApiError(code, d.errors);
+        const translated = translateApiError(code, d.errors);
+        const errors = Array.isArray(d.errors) ? d.errors : [];
+        if (errors.length) {
+          const parts = errors
+            .map((item) => {
+              const raw = String(item ?? "").trim();
+              return ERROR_DETAIL_TRANSLATIONS[raw] ?? raw;
+            })
+            .filter(Boolean);
+          detail = parts.length ? `${translated}${parts.join("；")}` : translated;
+        } else {
+          detail = translated;
+        }
       }
     } catch {
       /* not JSON */
