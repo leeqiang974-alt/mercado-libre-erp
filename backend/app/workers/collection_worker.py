@@ -34,7 +34,7 @@ async def run_pending_collection_jobs(
             CollectionJob.status == CollectionJobStatus.PENDING,
             or_(
                 CollectionJob.collector_kind.is_(None),
-                ~CollectionJob.collector_kind.in_(["browser_extension", "browser_recollect"]),
+                ~CollectionJob.collector_kind.in_(["browser_extension", "browser_recollect", "browser_search"]),
             ),
             or_(
                 CollectionJob.next_attempt_at.is_(None),
