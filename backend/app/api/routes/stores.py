@@ -609,8 +609,15 @@ async def list_store_items(
             "shipping_logistic_type": str((detail.get("shipping") or {}).get("logistic_type") or ""),
             "free_shipping": bool((detail.get("shipping") or {}).get("free_shipping")),
             "last_updated": str(detail.get("last_updated") or ""),
+            "date_created": str(detail.get("date_created") or detail.get("start_time") or ""),
             "has_public_permalink": bool(detail.get("permalink")),
         })
+    # 美客多 items/search 的 sort 参数对 CBT 不生效（实测 DATE_DESC/START_TIME_DESC 等同序），
+    # 统一按详情发布时间本地倒序：最新发布排最前。
+    items.sort(
+        key=lambda item: str(item.get("date_created") or item.get("last_updated") or ""),
+        reverse=True,
+    )
     paging = result.get("paging") if isinstance(result.get("paging"), dict) else {}
     return {
         "store_id": store.id,
