@@ -1,4 +1,5 @@
 from typing import Annotated
+from types import SimpleNamespace
 from datetime import UTC, datetime, timedelta
 import re
 from urllib.parse import urlparse
@@ -2522,6 +2523,14 @@ def _prepare_variant_extension_placeholders(
         (item for item in snapshot.variants if item.asin == normalized_asin),
         None,
     )
+    if variant is None and str(getattr(snapshot, "asin", "")).upper() == normalized_asin:
+        # 【2026-09-16 迭代】源本身就是变体页（variants_json 为空）：用变体页自身快照
+        # 作为该变体的数据，占位草稿即变体页真实数据，插件回报后再按变体页更新。
+        variant = SimpleNamespace(
+            asin=normalized_asin,
+            attributes=getattr(snapshot, "attributes", None) or {},
+            image_urls=getattr(snapshot, "images", None) or [],
+        )
     if variant is None:
         raise HTTPException(status_code=404, detail="source_variant_not_found")
     draft_snapshot = snapshot.model_dump()
@@ -2564,12 +2573,11 @@ def create_source_variant_collection_job(
     if source is None:
         raise HTTPException(status_code=404, detail="Source product not found.")
     normalized_asin = variant_asin.strip().upper()
-    known_asins = {
-        str(variant.get("asin", "")).strip().upper()
-        for variant in (source.variants_json or [])
-        if isinstance(variant, dict)
-    }
-    if not re.fullmatch(r"[A-Z0-9]{10}", normalized_asin) or normalized_asin not in known_asins:
+    # 【2026-09-16 迭代】放宽变体验证：ASIN 格式合法即可创建采集任务。
+    # 变体草稿的 source_variant_asin 由系统记录（可信），且部分源本身就是变体页
+    # （variants_json 为空），此前要求 ASIN 必须在父源 variants_json 中导致
+    # “源资源丢失”死胡同（AI 生成要源数据 → 提示点采 → 采报错）。
+    if not re.fullmatch(r"[A-Z0-9]{10}", normalized_asin):
         raise HTTPException(status_code=404, detail="source_variant_not_found")
     target_site_id = _target_site_or_422(payload.target_site_id)
     normalized_source_url = _normalized_amazon_url_or_422(source.source_url)
