@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ChevronLeft,
@@ -1321,9 +1321,9 @@ export function CbtGlobalPublishingPanel({
     setStatus("");
     const targetDraftId = draftId;
     try {
-      const reconstructionFields: Array<"title" | "description"> = [];
-      if (requestedFields.includes("title") && !globalTitle.trim()) reconstructionFields.push("title");
-      if (requestedFields.includes("description") && !description.trim()) reconstructionFields.push("description");
+      // 用户点击“AI 生成”即视为主动要求重新生成：请求的字段全部强制重生成，
+      // 不再因已有成品返回 409（每次点击只发起一次后端调用，审计仍保留）。
+      const reconstructionFields: Array<"title" | "description"> = requestedFields.slice();
       // One backend operation generates only the requested fields. A combined
       // request runs both calls together, retries only the failed field, and
       // persists nothing until every requested field is valid.
