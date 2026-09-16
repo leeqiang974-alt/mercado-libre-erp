@@ -16,6 +16,7 @@ from app.services.audit_events import create_audit_event
 from app.services.drafts import sanitize_unbranded_description
 
 
+from app.services.llm_provider import get_current_provider
 WARRANTY_SENTENCE = "The store provides a 7-day warranty for this product."
 PROHIBITED_TERMS = (
     "best", "top", "hot", "sale", "discount", "free shipping", "limited",
@@ -31,6 +32,9 @@ async def generate_and_save_draft_content(
     fields: set[str] | None = None,
     timeout_seconds: float = 90,
 ) -> tuple[ProductDraft, GeneratedListingContent, str]:
+    # doubao-seed-2.1-turbo（推理模型）在大描述生成时实测需 60-160s+；
+    # 生产默认 90s 会频繁超时，这里强制下限 180s（2026-09-16 迭代）。
+    timeout_seconds = max(float(timeout_seconds), 180.0)
     draft = db.get(ProductDraft, product_draft_id)
     if draft is None:
         raise HTTPException(status_code=404, detail="Product draft not found.")
@@ -47,9 +51,9 @@ async def generate_and_save_draft_content(
     # The selected provider is runtime configuration, while the credential
     # resolver owns only encrypted/fallback secret values.  Do not read a
     # provider selector from ResolvedIntegrationCredentials.
-    provider = settings.content_generation_provider
+    provider = get_current_provider(db, settings)
     if provider not in {"deepseek", "volcengine"}:
-        provider = "deepseek"
+        provider = "volcengine"
     api_key = credentials.deepseek_api_key if provider == "deepseek" else credentials.volcengine_api_key
     if not api_key:
         raise HTTPException(status_code=503, detail=f"{provider}_api_key_required")
