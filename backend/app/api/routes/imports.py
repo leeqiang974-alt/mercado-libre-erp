@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import exists, func, or_, select, text
+from sqlalchemy import and_, exists, func, or_, select, text
 from sqlalchemy.orm import Session, aliased
 from starlette.concurrency import run_in_threadpool
 
@@ -21,7 +21,7 @@ from app.services.amazon.collector import (
 from app.services.amazon.parser import _extract_measurements
 from app.services.amazon.normalizer import normalize_amazon_product
 from app.services.amazon.import_file import MAX_IMPORT_FILE_BYTES, parse_amazon_url_file
-from app.services.amazon.discovery import discover_amazon_products
+from app.services.amazon.discovery import build_amazon_search_url, discover_amazon_products
 from app.services.amazon.throttle import record_domain_outcome, reserve_domain_request
 from app.services.drafts import create_product_draft, to_draft_read, update_draft_content
 from app.services.amazon.media import merge_listing_images, select_listing_images, select_product_video_urls
@@ -34,6 +34,7 @@ from app.services.source_products import (
     to_source_product_read,
 )
 from app.models.source_product import SourceProduct, SourceProductStatus
+from app.models.audit_event import AuditEvent
 from app.models.product_draft import ProductDraft
 from app.models.cbt_listing_config import CbtListingConfig
 from app.services.collection_jobs import (
@@ -69,6 +70,29 @@ CONTINUOUS_QUEUE_LOW_WATERMARK = 50
 CONTINUOUS_QUEUE_REFILL_SIZE = 200
 CONTINUOUS_FAILURE_PAUSE_WINDOW = 10
 RECOLLECT_COLLECTOR_KIND = "browser_recollect"
+SEARCH_COLLECTOR_KIND = "browser_search"
+EXTENSION_COLLECTOR_KIND = "browser_extension"
+AMAZON_BROWSER_COLLECTOR_KINDS = (
+    EXTENSION_COLLECTOR_KIND,
+    RECOLLECT_COLLECTOR_KIND,
+    SEARCH_COLLECTOR_KIND,
+)
+CONTINUOUS_SEARCH_PAGE_SPAN = 7
+CONTINUOUS_SEARCH_SORTS = ("", "price-asc-rank", "review-rank", "date-desc-rank")
+
+
+def _source_has_deleted_draft(db: Session, source_product_id: int) -> bool:
+    """Return whether this source has an operator deletion tombstone.
+
+    Audit JSON is intentionally inspected in Python for SQLite/PostgreSQL
+    parity. The event set is small and deletion history is authoritative.
+    """
+    rows = db.query(AuditEvent.before_json).filter(AuditEvent.action == "draft.deleted").all()
+    return any(
+        isinstance(before, dict)
+        and str(before.get("source_product_id") or "") == str(source_product_id)
+        for (before,) in rows
+    )
 
 
 class AmazonHtmlImport(BaseModel):
@@ -104,6 +128,7 @@ class AmazonExtensionJobResult(BaseModel):
     status: str = Field(default="collected", pattern="^(collected|needs_manual_action|failed)$")
     message: str = Field(default="", max_length=2000)
     snapshot: dict = Field(default_factory=dict)
+    product_urls: list[AmazonProductUrl] = Field(default_factory=list, max_length=100)
 
 
 def _extension_capture_quality(
@@ -236,7 +261,19 @@ class KeywordCampaignRead(BaseModel):
     queued_count: int
     duplicate_count: int
     message: str
+    bound_worker_id: str | None = None
+    bound_browser_name: str | None = None
+    bound_browser_version: str | None = None
+    bound_extension_version: str | None = None
     keywords: list[dict[str, int | str]] = []
+
+
+class ExtensionContinuousControl(BaseModel):
+    worker_id: str = Field(min_length=1, max_length=120)
+    browser_name: str = Field(min_length=1, max_length=80)
+    browser_version: str = Field(default="", max_length=40)
+    extension_version: str = Field(min_length=1, max_length=40)
+    campaign_id: int | None = Field(default=None, ge=1)
 
 
 class RecollectFailure(BaseModel):
@@ -279,7 +316,65 @@ def _campaign_read(row: KeywordCollectionCampaign, db: Session) -> KeywordCampai
         keyword_count=len(keywords), pages_per_keyword=row.pages_per_keyword, status=row.status,
         current_keyword=current, current_page=row.current_page, discovered_count=row.discovered_count,
         queued_count=row.queued_count, duplicate_count=row.duplicate_count, message=row.message,
+        bound_worker_id=row.bound_worker_id, bound_browser_name=row.bound_browser_name,
+        bound_browser_version=row.bound_browser_version, bound_extension_version=row.bound_extension_version,
         keywords=list(progress.values()))
+
+
+def _preferred_extension_campaign(
+    campaigns: list[KeywordCollectionCampaign],
+) -> KeywordCollectionCampaign | None:
+    """Pick the endless campaign instead of an unrelated newer one-off batch."""
+    eligible = [row for row in campaigns if row.keywords_json]
+    return max(
+        eligible,
+        key=lambda row: (
+            3 if row.status == CONTINUOUS_CAMPAIGN_STATUS else 0,
+            2
+            if row.status == KeywordCampaignStatus.PAUSED.value
+            and (int(row.discovered_count or 0) > 0 or int(row.queued_count or 0) > 0)
+            else 0,
+            row.id,
+        ),
+        default=None,
+    )
+
+
+def _continuous_search_position(campaign: KeywordCollectionCampaign) -> tuple[int, int, str, str]:
+    """Return the durable cursor and local-browser search URL for an endless campaign."""
+    keywords = campaign.keywords_json or []
+    if not keywords:
+        raise ValueError("keyword_campaign_requires_keywords")
+    keyword_index = max(0, int(campaign.current_keyword_index or 0))
+    virtual_page = max(1, int(campaign.current_page or 1))
+    if keyword_index >= len(keywords):
+        keyword_index = 0
+        virtual_page += 1
+    keyword = keywords[keyword_index]
+    actual_page = ((virtual_page - 1) % CONTINUOUS_SEARCH_PAGE_SPAN) + 1
+    sort_index = ((virtual_page - 1) // CONTINUOUS_SEARCH_PAGE_SPAN) % len(CONTINUOUS_SEARCH_SORTS)
+    search_url = build_amazon_search_url(campaign.domain, keyword, actual_page)
+    sort_value = CONTINUOUS_SEARCH_SORTS[sort_index]
+    if sort_value:
+        search_url = f"{search_url}&s={sort_value}"
+    return keyword_index, virtual_page, keyword, search_url
+
+
+def _advance_continuous_search_cursor(campaign: KeywordCollectionCampaign) -> None:
+    keywords = campaign.keywords_json or []
+    if not keywords:
+        return
+    keyword_index = max(0, int(campaign.current_keyword_index or 0))
+    virtual_page = max(1, int(campaign.current_page or 1))
+    if keyword_index >= len(keywords):
+        keyword_index = 0
+        virtual_page += 1
+    keyword_index += 1
+    if keyword_index >= len(keywords):
+        keyword_index = 0
+        virtual_page += 1
+    campaign.current_keyword_index = keyword_index
+    campaign.current_page = virtual_page
 
 
 def _maintain_continuous_extension_queue(db: Session) -> None:
@@ -324,7 +419,7 @@ def _maintain_continuous_extension_queue(db: Session) -> None:
         db.query(CollectionJob)
         .filter(
             CollectionJob.campaign_id == campaign.id,
-            CollectionJob.collector_kind == RECOLLECT_COLLECTOR_KIND,
+            CollectionJob.collector_kind.in_(AMAZON_BROWSER_COLLECTOR_KINDS),
             CollectionJob.status.in_([
                 CollectionJobStatus.COMPLETED,
                 CollectionJobStatus.SKIPPED,
@@ -362,6 +457,7 @@ def _maintain_continuous_extension_queue(db: Session) -> None:
         db.query(func.count(CollectionJob.id))
         .filter(
             CollectionJob.campaign_id == campaign.id,
+            CollectionJob.collector_kind.in_([EXTENSION_COLLECTOR_KIND, RECOLLECT_COLLECTOR_KIND]),
             CollectionJob.status.in_([CollectionJobStatus.PENDING, CollectionJobStatus.RUNNING]),
         )
         .scalar()
@@ -400,17 +496,58 @@ def _maintain_continuous_extension_queue(db: Session) -> None:
         if len(selected) >= CONTINUOUS_QUEUE_REFILL_SIZE:
             break
     if not selected:
-        campaign.status = KeywordCampaignStatus.COMPLETED.value
-        campaign.message = "持续挂机候选池已耗尽，任务自动结束。"
+        search_exists = (
+            db.query(CollectionJob.id)
+            .filter(
+                CollectionJob.campaign_id == campaign.id,
+                CollectionJob.collector_kind == SEARCH_COLLECTOR_KIND,
+                CollectionJob.status.in_([CollectionJobStatus.PENDING, CollectionJobStatus.RUNNING]),
+            )
+            .first()
+        )
+        if search_exists is not None:
+            db.commit()
+            return
+        try:
+            keyword_index, virtual_page, keyword, search_url = _continuous_search_position(campaign)
+        except ValueError:
+            campaign.status = KeywordCampaignStatus.PAUSED.value
+            campaign.message = "持续采集缺少关键词，已自动暂停。"
+            db.commit()
+            return
+        campaign.current_keyword_index = keyword_index
+        campaign.current_page = virtual_page
+        search_job = CollectionJob(
+            source_url=search_url,
+            source_identity=f"continuous-search:{campaign.id}:{virtual_page}:{keyword_index}",
+            target_site_id=campaign.target_site_id,
+            campaign_id=campaign.id,
+            campaign_keyword=keyword,
+            collector_kind=SEARCH_COLLECTOR_KIND,
+            message="等待本机插件发现 Amazon 搜索结果。",
+        )
+        db.add(search_job)
+        db.flush()
         create_audit_event(
             db,
             actor_type="system",
-            actor_id="continuous-collection-refill",
-            action="keyword_campaign.continuous_exhausted",
-            entity_type="keyword_campaign",
-            entity_id=str(campaign.id),
-            after={"reason": "eligible_candidate_pool_exhausted"},
+            actor_id="continuous-search-refill",
+            action="collection_job.created",
+            entity_type="collection_job",
+            entity_id=str(search_job.id),
+            after={
+                "status": CollectionJobStatus.PENDING.value,
+                "campaign_id": campaign.id,
+                "campaign_keyword": keyword,
+                "virtual_page": virtual_page,
+                "collector_kind": SEARCH_COLLECTOR_KIND,
+                "reason": "continuous_local_search_discovery",
+            },
             commit=False,
+        )
+        campaign.message = (
+            f"持续采集运行中；本机插件正在发现“{keyword}”第 {virtual_page} 轮候选，"
+            "不会因当前候选池为空而结束。"
         )
         db.commit()
         return
@@ -422,7 +559,7 @@ def _maintain_continuous_extension_queue(db: Session) -> None:
             target_site_id=row.target_site_id,
             campaign_id=campaign.id,
             campaign_keyword=row.campaign_keyword,
-            collector_kind=RECOLLECT_COLLECTOR_KIND,
+            collector_kind=EXTENSION_COLLECTOR_KIND,
         )
         for row in selected
     ]
@@ -712,6 +849,145 @@ def list_keyword_campaigns(db: Session = Depends(get_db)) -> list[KeywordCampaig
     return [_campaign_read(row, db) for row in db.query(KeywordCollectionCampaign).order_by(KeywordCollectionCampaign.id.desc()).limit(30).all()]
 
 
+@router.get("/amazon-search/extension-control/status")
+def extension_continuous_status(
+    worker_id: str = Query(..., min_length=1, max_length=120),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    campaign = _preferred_extension_campaign(db.query(KeywordCollectionCampaign).all())
+    if campaign is None:
+        return {"active": False, "owns_active": False, "campaign": None}
+    return {
+        "active": campaign.status == CONTINUOUS_CAMPAIGN_STATUS,
+        "owns_active": (
+            campaign.status == CONTINUOUS_CAMPAIGN_STATUS
+            and campaign.bound_worker_id == worker_id.strip()
+        ),
+        "campaign": {
+            "id": campaign.id,
+            "name": campaign.name,
+            "status": campaign.status,
+            "message": campaign.message,
+            "bound_worker_id": campaign.bound_worker_id,
+            "bound_browser_name": campaign.bound_browser_name,
+            "bound_browser_version": campaign.bound_browser_version,
+            "bound_extension_version": campaign.bound_extension_version,
+        },
+    }
+
+
+@router.post("/amazon-search/extension-control/start", response_model=KeywordCampaignRead)
+def start_extension_continuous_campaign(
+    payload: ExtensionContinuousControl,
+    db: Session = Depends(get_db),
+) -> KeywordCampaignRead:
+    campaigns = db.query(KeywordCollectionCampaign).with_for_update().all()
+    campaign = next(
+        (
+            row
+            for row in campaigns
+            if payload.campaign_id is not None and row.id == payload.campaign_id
+        ),
+        None,
+    )
+    if payload.campaign_id is None:
+        campaign = _preferred_extension_campaign(campaigns)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="keyword_campaign_not_found")
+    for row in campaigns:
+        if row.id != campaign.id and row.status == CONTINUOUS_CAMPAIGN_STATUS:
+            row.status = KeywordCampaignStatus.PAUSED.value
+            row.message = f"已由持续挂机任务 #{campaign.id} 接替。"
+    before = {
+        "status": campaign.status,
+        "bound_worker_id": campaign.bound_worker_id,
+        "bound_browser_name": campaign.bound_browser_name,
+    }
+    campaign.status = CONTINUOUS_CAMPAIGN_STATUS
+    campaign.bound_worker_id = payload.worker_id.strip()
+    campaign.bound_browser_name = payload.browser_name.strip()
+    campaign.bound_browser_version = payload.browser_version.strip() or None
+    campaign.bound_extension_version = payload.extension_version.strip()
+    campaign.bound_at = datetime.now(UTC)
+    if campaign.keywords_json and campaign.current_keyword_index >= len(campaign.keywords_json):
+        campaign.current_keyword_index = 0
+        campaign.current_page = max(1, int(campaign.current_page or 1)) + 1
+    browser_label = campaign.bound_browser_name
+    if campaign.bound_browser_version:
+        browser_label = f"{browser_label} {campaign.bound_browser_version}"
+    campaign.message = f"持续筛选采集已绑定到 {browser_label}；仅该插件实例可以领取任务。"
+    create_audit_event(
+        db,
+        actor_type="extension",
+        actor_id=payload.worker_id.strip(),
+        action="keyword_campaign.extension_continuous_started",
+        entity_type="keyword_campaign",
+        entity_id=str(campaign.id),
+        before=before,
+        after={
+            "status": campaign.status,
+            "browser_name": campaign.bound_browser_name,
+            "browser_version": campaign.bound_browser_version,
+            "extension_version": campaign.bound_extension_version,
+            "worker_id": campaign.bound_worker_id,
+            "unbounded": True,
+        },
+        commit=False,
+    )
+    db.commit()
+    db.refresh(campaign)
+    return _campaign_read(campaign, db)
+
+
+@router.post("/amazon-search/extension-control/stop")
+def stop_extension_continuous_campaign(
+    payload: ExtensionContinuousControl,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    query = db.query(KeywordCollectionCampaign)
+    if payload.campaign_id is not None:
+        query = query.filter(KeywordCollectionCampaign.id == payload.campaign_id)
+    campaigns = query.with_for_update().all()
+    campaign = (
+        campaigns[0]
+        if payload.campaign_id is not None and campaigns
+        else _preferred_extension_campaign(campaigns)
+    )
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="keyword_campaign_not_found")
+    if (
+        campaign.status == CONTINUOUS_CAMPAIGN_STATUS
+        and campaign.bound_worker_id
+        and campaign.bound_worker_id != payload.worker_id.strip()
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=f"continuous_campaign_owned_by_{campaign.bound_browser_name or 'another_browser'}",
+        )
+    before = {
+        "status": campaign.status,
+        "bound_worker_id": campaign.bound_worker_id,
+        "bound_browser_name": campaign.bound_browser_name,
+    }
+    campaign.status = KeywordCampaignStatus.PAUSED.value
+    campaign.message = (
+        f"持续筛选采集已由 {payload.browser_name.strip()} 停止；当前任务允许收尾，不再领取新任务。"
+    )
+    create_audit_event(
+        db,
+        actor_type="extension",
+        actor_id=payload.worker_id.strip(),
+        action="keyword_campaign.extension_continuous_stopped",
+        entity_type="keyword_campaign",
+        entity_id=str(campaign.id),
+        before=before,
+        after={"status": campaign.status, "browser_name": payload.browser_name.strip()},
+        commit=False,
+    )
+    db.commit()
+    return {"ok": True, "campaign_id": campaign.id, "status": campaign.status, "message": campaign.message}
+
+
 @router.post("/amazon-search/campaigns/{campaign_id}/continuous", response_model=KeywordCampaignRead)
 def start_continuous_keyword_campaign(campaign_id: int, db: Session = Depends(get_db)) -> KeywordCampaignRead:
     campaigns = db.query(KeywordCollectionCampaign).with_for_update().all()
@@ -723,19 +999,15 @@ def start_continuous_keyword_campaign(campaign_id: int, db: Session = Depends(ge
             row.status = KeywordCampaignStatus.PAUSED.value
             row.message = f"已由持续挂机任务 #{campaign.id} 接替。"
     campaign.status = CONTINUOUS_CAMPAIGN_STATUS
-    converted_count = (
-        db.query(CollectionJob)
-        .filter(
-            CollectionJob.campaign_id == campaign.id,
-            CollectionJob.status == CollectionJobStatus.PENDING,
-            CollectionJob.collector_kind == "browser_extension",
-        )
-        .update(
-            {CollectionJob.collector_kind: RECOLLECT_COLLECTOR_KIND},
-            synchronize_session=False,
-        )
-    )
-    campaign.message = "持续挂机已启用；批量任务复用上架库绿色“采”流程，队列不足时自动补充。"
+    campaign.bound_worker_id = None
+    campaign.bound_browser_name = None
+    campaign.bound_browser_version = None
+    campaign.bound_extension_version = None
+    campaign.bound_at = None
+    if campaign.keywords_json and campaign.current_keyword_index >= len(campaign.keywords_json):
+        campaign.current_keyword_index = 0
+        campaign.current_page = max(1, int(campaign.current_page or 1)) + 1
+    campaign.message = "持续采集已启用；本机插件将循环发现搜索结果并去重，不设总量上限。"
     create_audit_event(
         db,
         actor_type="operator",
@@ -745,8 +1017,10 @@ def start_continuous_keyword_campaign(campaign_id: int, db: Session = Depends(ge
         entity_id=str(campaign.id),
         after={
             "status": CONTINUOUS_CAMPAIGN_STATUS,
-            "protocol": "meli-amazon-recollect",
-            "converted_pending_jobs": converted_count,
+            "protocol": "browser_extension_first_capture",
+            "discovery_protocol": "local_extension_amazon_search",
+            "unbounded": True,
+            "converted_pending_jobs": 0,
         },
         commit=False,
     )
@@ -919,7 +1193,7 @@ def claim_next_listing_recollect_job(
     if db.get_bind().dialect.name == "postgresql":
         db.execute(
             text("SELECT pg_advisory_xact_lock(hashtext(:name))"),
-            {"name": "amazon_listing_recollect_claim"},
+            {"name": "amazon_browser_global_claim"},
         )
     now = datetime.now(UTC)
     stale_before = now - timedelta(seconds=settings.job_stale_after_seconds)
@@ -953,7 +1227,7 @@ def claim_next_listing_recollect_job(
     active_job = (
         db.query(CollectionJob.id)
         .filter(
-            CollectionJob.collector_kind == RECOLLECT_COLLECTOR_KIND,
+            CollectionJob.collector_kind.in_(AMAZON_BROWSER_COLLECTOR_KINDS),
             CollectionJob.status == CollectionJobStatus.RUNNING,
         )
         .first()
@@ -1076,6 +1350,7 @@ def fail_listing_recollect_job(
 @router.get("/amazon-extension/next")
 def claim_next_amazon_extension_job(
     worker_id: str = Query(..., min_length=1, max_length=120),
+    continuous_enabled: bool = Query(default=False),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     """Atomically give the local browser extension one CBT Amazon job.
@@ -1085,12 +1360,18 @@ def claim_next_amazon_extension_job(
     retry loop against Amazon.
     """
     _maintain_continuous_extension_queue(db)
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:name))"),
+            {"name": "amazon_browser_global_claim"},
+        )
     now = datetime.now(UTC)
     stale_before = now - timedelta(seconds=settings.job_stale_after_seconds)
     stale_jobs = (
         db.query(CollectionJob)
         .filter(
             CollectionJob.status == CollectionJobStatus.RUNNING,
+            CollectionJob.collector_kind.in_([EXTENSION_COLLECTOR_KIND, SEARCH_COLLECTOR_KIND]),
             CollectionJob.claimed_by.is_not(None),
             CollectionJob.claimed_at.is_not(None),
             CollectionJob.claimed_at < stale_before,
@@ -1115,18 +1396,43 @@ def claim_next_amazon_extension_job(
             after={"status": CollectionJobStatus.PENDING.value, "message": stale.message},
             commit=False,
         )
+    active_job = (
+        db.query(CollectionJob.id)
+        .filter(
+            CollectionJob.collector_kind.in_(AMAZON_BROWSER_COLLECTOR_KINDS),
+            CollectionJob.status == CollectionJobStatus.RUNNING,
+        )
+        .first()
+    )
+    if active_job is not None:
+        db.commit()
+        return {"job": None}
     query = (
         db.query(CollectionJob)
         .filter(
             CollectionJob.status == CollectionJobStatus.PENDING,
-            CollectionJob.collector_kind == "browser_extension",
+            CollectionJob.collector_kind.in_([EXTENSION_COLLECTOR_KIND, SEARCH_COLLECTOR_KIND]),
             or_(CollectionJob.next_attempt_at.is_(None), CollectionJob.next_attempt_at <= now),
             or_(
                 CollectionJob.campaign_id.is_(None),
-                ~CollectionJob.campaign_id.in_(
+                CollectionJob.campaign_id.in_(
                     select(KeywordCollectionCampaign.id).where(
-                        KeywordCollectionCampaign.status == KeywordCampaignStatus.PAUSED.value
+                        KeywordCollectionCampaign.status.not_in(
+                            [KeywordCampaignStatus.PAUSED.value, CONTINUOUS_CAMPAIGN_STATUS]
+                        )
                     )
+                ),
+                and_(
+                    continuous_enabled,
+                    CollectionJob.campaign_id.in_(
+                        select(KeywordCollectionCampaign.id).where(
+                            KeywordCollectionCampaign.status == CONTINUOUS_CAMPAIGN_STATUS,
+                            or_(
+                                KeywordCollectionCampaign.bound_worker_id.is_(None),
+                                KeywordCollectionCampaign.bound_worker_id == worker_id.strip(),
+                            ),
+                        )
+                    ),
                 ),
             ),
         )
@@ -1157,17 +1463,147 @@ def claim_next_amazon_extension_job(
         commit=False,
     )
     db.commit()
+    is_search = job.collector_kind == SEARCH_COLLECTOR_KIND
     return {
         "job": {
             "id": job.id,
-            "kind": "meli_amazon_product",
+            "kind": "meli_amazon_search" if is_search else "meli_amazon_product",
             "url": job.source_url,
             "sourceUrl": job.source_url,
             "targetSiteId": job.target_site_id,
             "collectorKind": job.collector_kind,
             "campaignId": job.campaign_id,
             "campaignKeyword": job.campaign_keyword,
+            "maxProducts": 60 if is_search else None,
         }
+    }
+
+
+def _receive_continuous_search_result(
+    db: Session,
+    job: CollectionJob,
+    payload: AmazonExtensionJobResult,
+) -> dict[str, object]:
+    if payload.source_url.strip() != job.source_url.strip():
+        raise HTTPException(status_code=409, detail="collection_job_source_mismatch")
+    campaign = db.get(KeywordCollectionCampaign, job.campaign_id) if job.campaign_id else None
+    before_status = job.status.value
+    now = datetime.now(UTC)
+    if payload.status != "collected":
+        job.status = (
+            CollectionJobStatus.NEEDS_MANUAL_ACTION
+            if payload.status == "needs_manual_action"
+            else CollectionJobStatus.FAILED
+        )
+        job.message = payload.message or (
+            "Amazon 搜索页需要人工验证。"
+            if payload.status == "needs_manual_action"
+            else "本机插件未能读取 Amazon 搜索结果。"
+        )
+        job.completed_at = now
+        job.claimed_by = None
+        job.claimed_at = None
+        if campaign is not None:
+            if job.status == CollectionJobStatus.NEEDS_MANUAL_ACTION:
+                campaign.status = KeywordCampaignStatus.PAUSED.value
+                campaign.message = "Amazon 搜索页需要人工验证，持续采集已暂停。"
+            else:
+                _advance_continuous_search_cursor(campaign)
+                campaign.message = "一次 Amazon 搜索发现失败；已记录并继续下一轮。"
+        create_audit_event(
+            db,
+            actor_type="extension",
+            actor_id=payload.worker_id.strip(),
+            action="collection_job.extension_finished",
+            entity_type="collection_job",
+            entity_id=str(job.id),
+            before={"status": before_status},
+            after={"status": job.status.value, "message": job.message},
+            commit=False,
+        )
+        db.commit()
+        return {"ok": True, "job_id": job.id, "status": job.status.value, "created_count": 0}
+
+    normalized_urls: list[str] = []
+    seen: set[str] = set()
+    for candidate in payload.product_urls:
+        normalized = _try_normalize_amazon_url(candidate)
+        if normalized is None or normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_urls.append(normalized)
+    existing = _existing_collection_jobs(db, job.target_site_id, set(normalized_urls))
+    new_urls = [url for url in normalized_urls if url not in existing]
+    created_jobs = [
+        CollectionJob(
+            source_url=url,
+            source_identity=url,
+            target_site_id=job.target_site_id,
+            campaign_id=job.campaign_id,
+            campaign_keyword=job.campaign_keyword,
+            collector_kind=EXTENSION_COLLECTOR_KIND,
+            message="等待本机插件采集 Amazon 详情页。",
+        )
+        for url in new_urls
+    ]
+    db.add_all(created_jobs)
+    db.flush()
+    for created in created_jobs:
+        create_audit_event(
+            db,
+            actor_type="system",
+            actor_id="continuous-search-discovery",
+            action="collection_job.created",
+            entity_type="collection_job",
+            entity_id=str(created.id),
+            after={
+                "status": CollectionJobStatus.PENDING.value,
+                "source_url": created.source_url,
+                "target_site_id": created.target_site_id,
+                "campaign_id": created.campaign_id,
+                "campaign_keyword": created.campaign_keyword,
+                "collector_kind": created.collector_kind,
+                "reason": "local_extension_search_result",
+            },
+            commit=False,
+        )
+    duplicate_count = len(normalized_urls) - len(new_urls)
+    job.status = CollectionJobStatus.COMPLETED
+    job.message = f"搜索页发现 {len(normalized_urls)} 个商品；新增 {len(new_urls)} 个，去重 {duplicate_count} 个。"
+    job.completed_at = now
+    job.claimed_by = None
+    job.claimed_at = None
+    if campaign is not None:
+        campaign.discovered_count += len(normalized_urls)
+        campaign.queued_count += len(new_urls)
+        campaign.duplicate_count += duplicate_count
+        _advance_continuous_search_cursor(campaign)
+        campaign.message = (
+            f"持续采集运行中；最近发现 {len(normalized_urls)} 个候选，新增 {len(new_urls)} 个详情任务。"
+        )
+    create_audit_event(
+        db,
+        actor_type="extension",
+        actor_id=payload.worker_id.strip(),
+        action="collection_job.amazon_search_finished",
+        entity_type="collection_job",
+        entity_id=str(job.id),
+        before={"status": before_status},
+        after={
+            "status": job.status.value,
+            "discovered_count": len(normalized_urls),
+            "created_count": len(new_urls),
+            "duplicate_count": duplicate_count,
+        },
+        commit=False,
+    )
+    db.commit()
+    return {
+        "ok": True,
+        "job_id": job.id,
+        "status": job.status.value,
+        "created_count": len(new_urls),
+        "duplicate_count": duplicate_count,
     }
 
 
@@ -1198,6 +1634,8 @@ def receive_amazon_extension_job_result(
         return {"ok": True, "job_id": job.id, "status": job.status.value, "draft_id": job.draft_id, "idempotent": True}
     if job.claimed_by and job.claimed_by != payload.worker_id.strip():
         raise HTTPException(status_code=409, detail="collection_job_claimed_by_another_worker")
+    if job.collector_kind == SEARCH_COLLECTOR_KIND:
+        return _receive_continuous_search_result(db, job, payload)
     source_url = _normalized_amazon_url_or_422(payload.source_url)
     if source_url != _normalized_amazon_url_or_422(job.source_url):
         raise HTTPException(status_code=409, detail="collection_job_source_mismatch")
@@ -1801,6 +2239,55 @@ def capture_source_product_from_extension(
     drafts, quality = _apply_extension_snapshot_to_source(
         db, source, snapshot, video_urls
     )
+    if not drafts and _source_has_deleted_draft(db, source.id):
+        skipped_job_ids: list[int] = []
+        for job in related_jobs:
+            previous_status = job.status.value
+            job.status = CollectionJobStatus.SKIPPED
+            job.message = "原草稿已由操作员删除；补采结果仅更新 source，不重建上架库草稿。"
+            job.completed_at = datetime.now(UTC)
+            job.claimed_by = None
+            job.claimed_at = None
+            skipped_job_ids.append(job.id)
+            create_audit_event(
+                db,
+                actor_type="extension",
+                actor_id="listing-recollect-driver",
+                action="collection_job.recreate_blocked_by_draft_delete",
+                entity_type="collection_job",
+                entity_id=str(job.id),
+                before={"status": previous_status},
+                after={
+                    "status": CollectionJobStatus.SKIPPED.value,
+                    "source_product_id": source.id,
+                    "protocol": "meli-amazon-recollect",
+                },
+                commit=False,
+            )
+        create_audit_event(
+            db,
+            actor_type="extension",
+            actor_id="browser-extension",
+            action="source_product.recollect_draft_recreation_blocked",
+            entity_type="source_product",
+            entity_id=str(source.id),
+            after={
+                "draft_count": 0,
+                "quality": quality,
+                "skipped_collection_job_ids": skipped_job_ids,
+            },
+            commit=False,
+        )
+        db.commit()
+        return {
+            "ok": True,
+            "source_product_id": source.id,
+            "draft_count": 0,
+            "quality": quality,
+            "completed_collection_job_ids": [],
+            "skipped": True,
+            "reason": "draft_deleted",
+        }
     if not drafts:
         target_site_id = related_jobs[0].target_site_id if related_jobs else "CBT"
         draft_payload = normalize_amazon_product(snapshot.model_dump(), target_site_id)
