@@ -864,6 +864,10 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 @keyframes draft-recollect-spin { to { transform: rotate(360deg); } }
 .draft-rail-item:hover { background: #fff7ed; border-color: #fed7aa; }
 .draft-rail-item.selected { background: #fff7ed; border-color: #ea580c; box-shadow: inset 3px 0 #ea580c; }
+.draft-rail-item.draft-rail-failed { border-color: #f87171; background: #fef2f2; }
+.draft-rail-item.draft-rail-failed strong { color: #b91c1c; }
+.draft-rail-item.draft-rail-failed small { color: #dc2626; }
+.draft-rail-item.draft-rail-failed.selected { border-color: #dc2626; box-shadow: inset 3px 0 #dc2626; }
 .draft-rail-item .product-image { width: 44px; height: 44px; object-fit: contain; background: #fafaf9; }
 .draft-rail-item > span { display: grid; gap: 2px; min-width: 0; }
 .draft-rail-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }

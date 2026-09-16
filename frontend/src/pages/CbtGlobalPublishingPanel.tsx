@@ -350,6 +350,7 @@ export function CbtGlobalPublishingPanel({
   const [listingPageInput, setListingPageInput] = useState("1");
   const [listingPageEditing, setListingPageEditing] = useState(false);
   const [listingSearch, setListingSearch] = useState("");
+  const [listingStatusFilter, setListingStatusFilter] = useState("");
   const [storeId, setStoreId] = useState("");
   const [profile, setProfile] = useState<CbtPublishingProfile | null>(null);
   const [profileReloadKey, setProfileReloadKey] = useState(0);
@@ -418,8 +419,17 @@ export function CbtGlobalPublishingPanel({
       }
     }
     for (const variants of variantsBySource.values()) ordered.push(...variants);
+    if (listingStatusFilter === "failed") {
+      return ordered.filter((item) => ["failed", "blocked"].includes(item.publication_status || ""));
+    }
+    if (listingStatusFilter === "pending") {
+      return ordered.filter((item) => ["pending", "validating"].includes(item.publication_status || ""));
+    }
+    if (listingStatusFilter === "draft") {
+      return ordered.filter((item) => !["failed", "blocked", "pending", "validating", "published"].includes(item.publication_status || ""));
+    }
     return ordered;
-  }, [listingRail]);
+  }, [listingRail, listingStatusFilter]);
   const listingPageCount = Math.max(1, Math.ceil(pendingListingRail.length / LISTING_PAGE_SIZE));
   const listingPageItems = pendingListingRail.slice(
     (listingPage - 1) * LISTING_PAGE_SIZE,
@@ -1814,10 +1824,10 @@ export function CbtGlobalPublishingPanel({
       <aside className="drafts-sidebar surface wf-listing-rail">
         <div className="drafts-sidebar-heading"><h3>待上架库</h3><span>{pendingListingRail.length} 个</span></div>
         <p className="section-note">选择商品后，在右侧完成分类、素材、售价和站点配置。</p>
-        <label className="listing-search"><Search size={14} /><input value={listingSearch} placeholder="定位商品编号或标题" onChange={(event) => setListingSearch(event.target.value)} /></label>
+        <label className="listing-search"><Search size={14} /><input value={listingSearch} placeholder="定位商品编号或标题" onChange={(event) => setListingSearch(event.target.value)} /></label><label className="listing-status-filter">状态<select value={listingStatusFilter} onChange={(event) => { setListingStatusFilter(event.target.value); setListingPage(1); setListingPageInput("1"); }}><option value="">全部</option><option value="draft">未发布</option><option value="pending">发布中</option><option value="failed">发布失败</option></select></label>
         {listingSearch.trim() && <p className="listing-search-result">{pendingListingRail.some((item) => String(item.id) === listingSearch.trim()) || pendingListingRail.some((item) => String(item.title ?? "").toLowerCase().includes(listingSearch.trim().toLowerCase())) ? "已定位，保留前后商品" : "未找到，当前显示原列表"}</p>}
         {status && <p className="draft-rail-status" role="status">{status}</p>}
-        <div className="draft-rail-list" ref={draftRailListRef}>{listingPageItems.map((item) => <button className={`draft-rail-item ${item.id === draftId ? "selected" : ""}`} key={item.id} onClick={() => onSelectDraft?.(item)}>
+        <div className="draft-rail-list" ref={draftRailListRef}>{listingPageItems.map((item) => <button className={`draft-rail-item ${item.id === draftId ? "selected" : ""} ${["failed", "blocked"].includes(item.publication_status || "") ? "draft-rail-failed" : ""}`} key={item.id} onClick={() => onSelectDraft?.(item)}>
           {!['published', 'pending', 'validating'].includes(item.publication_status || '') && <><span className="draft-delete-wrap"><span className="draft-delete-icon" aria-hidden="true">×</span><span className="draft-delete-tooltip">删除商品</span><span role="button" tabIndex={0} className="draft-delete-hit" aria-label={`删除 ${item.title || "未命名商品"}`} onClick={(event) => void removeListingDraft(event, item)} /></span>{item.source_product_id && <span className="draft-recollect-wrap"><span className="draft-recollect-icon" aria-hidden="true">采</span><span className="draft-recollect-tooltip">重新采集素材</span><span role="button" tabIndex={0} className="draft-recollect-hit" aria-label={`重新采集 ${item.title || "未命名商品"}`} onClick={(event) => void recollectListingDraft(event, item)} />{recollectBusy === item.id && <span className="draft-recollect-spinner" aria-label="正在重新采集" />}</span>}</>}
           <img className="product-image" src={item.image_urls[0] || ""} alt="" /><span><strong>{item.title || "未命名商品"}</strong><small>#{item.id} · {item.target_site_id}{item.source_price ? ` · Amazon 参考价 ${formatSourcePrice(item.source_price, item.source_currency)}` : ""}</small><small>{item.publication_status === "published" ? `已发布：${item.published_sites.join("、") || "CBT"}${item.publication_error?.startsWith("部分站点") ? `；${item.publication_error}` : ""}` : item.publication_status === "pending" || item.publication_status === "validating" ? "发布中" : item.publication_status === "failed" || item.publication_status === "blocked" ? `发布失败：${item.publication_error || "可修改后重试"}` : "未发布"}</small>{item.publication_status === "failed" || item.publication_status === "blocked" ? (<span role="button" tabIndex={0} aria-label={`自动校正分类 ${item.title || ""}`} onClick={(event) => void autoFixListingCategory(event, item)} style={{ display: "inline-block", marginLeft: 6, padding: "0 8px", border: "1px solid #d97706", borderRadius: 4, color: "#b45309", fontSize: 11, cursor: "pointer", lineHeight: "18px", whiteSpace: "nowrap" }}>重配分类{autoFixBusy === item.id ? "…" : ""}</span>) : null}</span></button>)}</div>
         <div className="listing-pagination" aria-label="上架库分页">
