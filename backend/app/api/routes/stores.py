@@ -256,10 +256,13 @@ async def get_cbt_category_predictions(
     catalog = get_cached_metadata(db, category_catalog_key("CBT"))
     if mode == "manual":
         predictions = search_category_catalog(catalog or {}, original_query)
+        if not predictions and query != original_query:
+            # 中文关键词未命中时，再用翻译后的英文关键词搜索本地分类目录。
+            predictions = search_category_catalog(catalog or {}, query)
         if not predictions:
             raise HTTPException(
                 status_code=409,
-                detail="分类全量缓存尚未完成，或缓存中没有匹配结果。",
+                detail="关键词未命中分类目录，请尝试英文关键词（如 filter / drain），或改用「按标题智能匹配」。",
             )
         return {
             "store_id": store.id,
