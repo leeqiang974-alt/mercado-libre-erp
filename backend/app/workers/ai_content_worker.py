@@ -14,7 +14,10 @@ from app.services.audit_events import create_audit_event
 from app.services.meli.metadata_cache import category_attributes_key
 
 
-PREFILL_PROVIDERS = ("agnes", "volcengine")
+# Agnes currently black-holes HTTPS connections from the production host.
+# Prefer the healthy provider so editor prefill does not wait through an
+# avoidable 90-second timeout before trying Volcengine.
+PREFILL_PROVIDERS = ("volcengine", "agnes")
 PREFILL_FAILURE_ACTION = "draft.ai_content_prefill_failed"
 PREFILL_SUCCESS_ACTION = "draft.ai_content_prefill_completed"
 PREFILL_MAX_FAILURE_ROUNDS = 6
@@ -193,9 +196,9 @@ async def run_ai_content_prefill_pass(db: Session, limit: int = 1) -> dict[str, 
                 # Category and draft validation failures are deterministic and
                 # provider-independent; fallback would only repeat the same
                 # local gate. Fall back only after an actual provider/output
-                # failure from Agnes.
-                if provider == "agnes" and not (
-                    normalized_code.startswith("agnes_")
+                # failure.
+                if not (
+                    normalized_code.startswith(f"{provider}_")
                     or normalized_code == "generated_content_invalid"
                 ):
                     break

@@ -5,7 +5,7 @@ import re
 import httpx
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
@@ -79,22 +79,27 @@ async def generate_and_save_draft_content(
     regenerate_fields: set[str] | None = None,
     timeout_seconds: float = 90,
     provider_override: str | None = None,
+    require_verified_category: bool = True,
 ) -> tuple[ProductDraft, GeneratedListingContent, str, dict[str, object]]:
-    # Serialize manual and background generation for one draft. A second
-    # caller rechecks AI history after the first transaction commits instead
-    # of paying for duplicate output or overwriting a newer result.
+    # Serialize AI generation without locking the draft row during the remote
+    # provider call.  Holding SELECT FOR UPDATE for up to 90 seconds used to
+    # block ordinary saves and the publish preflight until the API's 20-second
+    # guard returned request_timeout.
+    get_bind = getattr(db, "get_bind", None)
+    if get_bind is not None and get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_name))"),
+            {"lock_name": f"ai_content:{product_draft_id}"},
+        )
     draft = db.scalar(
         select(ProductDraft)
         .where(ProductDraft.id == product_draft_id)
-        .with_for_update()
         .execution_options(populate_existing=True)
     )
     if draft is None:
         raise HTTPException(status_code=404, detail="Product draft not found.")
     normalized_category = category_id.strip().upper() or draft.target_category_id.strip().upper()
-    if not normalized_category:
-        raise HTTPException(status_code=409, detail="category_confirmation_required")
-    if not normalized_category.startswith(draft.target_site_id.strip().upper()):
+    if normalized_category and not normalized_category.startswith(draft.target_site_id.strip().upper()):
         raise HTTPException(status_code=422, detail="category_site_mismatch")
     selected_fields = fields or {"title", "description"}
     if not selected_fields <= {"title", "description"}:
@@ -109,9 +114,17 @@ async def generate_and_save_draft_content(
             status_code=409,
             detail={"code": "ai_content_already_generated", "fields": sorted(already_generated)},
         )
-    metadata = get_cached_metadata(db, category_attributes_key(normalized_category))
-    if not metadata or metadata.get("verified") is not True:
-        raise HTTPException(status_code=409, detail="category_attributes_not_verified")
+    metadata = (
+        get_cached_metadata(db, category_attributes_key(normalized_category))
+        if normalized_category
+        else None
+    )
+    category_verified = bool(metadata and metadata.get("verified") is True)
+    if require_verified_category:
+        if not normalized_category:
+            raise HTTPException(status_code=409, detail="category_confirmation_required")
+        if not category_verified:
+            raise HTTPException(status_code=409, detail="category_attributes_not_verified")
 
     credentials = resolve_integration_credentials(db, settings)
     # The selected provider is runtime configuration, while the credential
@@ -139,15 +152,22 @@ async def generate_and_save_draft_content(
         model = settings.agnes_model
 
     source = db.get(SourceProduct, draft.source_product_id) if draft.source_product_id else None
+    original_title = draft.title
+    original_description = draft.description
     draft_evidence_description_length = len(draft.description or "")
-    prompt = _build_prompt(draft, source, normalized_category)
+    # Manual generation may run before category selection. Only pass category
+    # context to the model when the official metadata is verified; otherwise
+    # generate strictly from collected Amazon/draft evidence. Background
+    # prefill keeps require_verified_category=True.
+    prompt_category = normalized_category if category_verified else ""
+    prompt = _build_prompt(draft, source, prompt_category)
     source_brand = str(source.brand or "") if source else ""
     # Generate title and description independently.  The provider calls run in
     # parallel, and only the field that fails validation/transport is retried.
     # Nothing is written until every requested field has a final valid value.
     per_attempt_timeout = max(5.0, timeout_seconds / MAX_GENERATION_ATTEMPTS - 1.0)
     ordered_fields = sorted(fields_to_generate)
-    results = await asyncio.gather(*(
+    requests = [
         _generate_field_with_retry(
             field=field,
             base_url=base_url,
@@ -159,7 +179,20 @@ async def generate_and_save_draft_content(
             timeout_seconds=per_attempt_timeout,
         )
         for field in ordered_fields
-    ), return_exceptions=True)
+    ]
+    if provider == "volcengine":
+        # The coding endpoint occasionally returns malformed/truncated JSON
+        # when two generations for the same draft are started concurrently.
+        # Sequential field calls are still fast with thinking disabled and
+        # avoid consuming retries on an otherwise healthy provider.
+        results = []
+        for request in requests:
+            try:
+                results.append(await request)
+            except BaseException as exc:
+                results.append(exc)
+    else:
+        results = await asyncio.gather(*requests, return_exceptions=True)
     generated_values: dict[str, str] = {}
     attempt_counts: dict[str, int] = {}
     field_outcomes: dict[str, str] = {}
@@ -191,15 +224,40 @@ async def generate_and_save_draft_content(
     description = generated_values.get("description", draft.description or "")
     if "description" in generated_values:
         description = sanitize_unbranded_description(description, source_brand)
-    content = GeneratedListingContent(title=title, description=description, brand="Unbranded")
+    # Re-lock only for the short final write.  Preserve any field the operator
+    # changed while the provider was responding, while still saving the other
+    # generated field independently.
+    draft = db.scalar(
+        select(ProductDraft)
+        .where(ProductDraft.id == product_draft_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Product draft not found.")
+    applied_fields: list[str] = []
+    preserved_concurrent_fields: list[str] = []
     if "title" in generated_values:
-        draft.title = title
+        if draft.title == original_title:
+            draft.title = title
+            applied_fields.append("title")
+        else:
+            preserved_concurrent_fields.append("title")
     if "description" in generated_values:
-        draft.description = description
-    draft.brand = "Unbranded"
-    draft.target_category_id = normalized_category
-    draft.content_version += 1
-    draft.risk_status = "unreviewed"
+        if draft.description == original_description:
+            draft.description = description
+            applied_fields.append("description")
+        else:
+            preserved_concurrent_fields.append("description")
+    if applied_fields:
+        draft.brand = "Unbranded"
+        draft.content_version += 1
+        draft.risk_status = "unreviewed"
+    content = GeneratedListingContent(
+        title=draft.title or "",
+        description=draft.description or "",
+        brand="Unbranded",
+    )
     create_audit_event(
         db=db,
         actor_type="system",
@@ -212,9 +270,11 @@ async def generate_and_save_draft_content(
             "model": model,
             "provider": provider,
             "category_id": normalized_category,
+            "category_context_verified": category_verified,
             "title_length": len(content.title),
             "description_length": len(content.description),
-            "updated_fields": sorted(fields_to_generate),
+            "updated_fields": sorted(applied_fields),
+            "preserved_concurrent_fields": sorted(preserved_concurrent_fields),
             "preserved_generated_fields": sorted(already_generated),
             "attempt_counts": attempt_counts,
             "explicit_regenerate_fields": sorted(explicit_regenerate_fields),
@@ -230,8 +290,9 @@ async def generate_and_save_draft_content(
     db.commit()
     db.refresh(draft)
     return draft, content, model, {
-        "updated_fields": ordered_fields,
+        "updated_fields": sorted(applied_fields),
         "preserved_fields": sorted(already_generated),
+        "preserved_concurrent_fields": sorted(preserved_concurrent_fields),
         "attempt_counts": attempt_counts,
         "field_outcomes": field_outcomes,
     }
@@ -261,6 +322,7 @@ async def _generate_field_with_retry(
                 api_key=api_key,
                 prompt=prompt,
                 timeout_seconds=timeout_seconds,
+                field=field,
             )
             return _validate_generated_field(field, generated, source_brand), attempt
         except ValueError as exc:
@@ -305,6 +367,7 @@ async def _request_content(
     api_key: str,
     prompt: str,
     timeout_seconds: float,
+    field: str | None = None,
 ) -> dict[str, object]:
     url = f"{base_url.rstrip('/')}/chat/completions"
     payload = {
@@ -315,6 +378,15 @@ async def _request_content(
             {"role": "user", "content": prompt},
         ],
     }
+    if provider == "volcengine":
+        # Listing copy does not require chain-of-thought. Doubao Seed can spend
+        # most of the request window reasoning unless thinking is explicitly
+        # disabled. Bound output as well so a short JSON field returns quickly.
+        payload["thinking"] = {"type": "disabled"}
+        # Seed sometimes returns the complete listing JSON even for a
+        # title-only field task. Use the same bounded budget for both fields
+        # so that otherwise valid JSON is not truncated before parsing.
+        payload["max_tokens"] = 480
     try:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             response = await client.post(
@@ -385,7 +457,13 @@ def _validate_generated(value: dict[str, object], source_brand: str = "") -> Gen
 
 def _validate_title(raw_title: str, source_brand: str = "") -> str:
     title = _normalize_ascii(" ".join(raw_title.split()))
-    if len(title) == 0 or len(title) > 60:
+    if len(title) > 60:
+        # Models occasionally ignore the requested title limit by only a few
+        # words. Compact deterministically at a word boundary instead of
+        # paying for three identical retries or cutting a word in half.
+        shortened = title[:61].rsplit(" ", 1)[0].rstrip(" -,:;/")
+        title = shortened or title[:60].rstrip(" -,:;/")
+    if len(title) == 0:
         raise ValueError("title must be 1-60 characters")
     if re.search(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0e00-\u0e7f]", title):
         raise ValueError("title must be English")
@@ -477,7 +555,12 @@ def _build_prompt(draft: ProductDraft, source: SourceProduct | None, category_id
     measurements = (source.measurements_json or {}) if source else {}
     variants = (source.variants_json or []) if source else []
     draft_variant_attributes = draft.source_variant_attributes_json or {}
-    return f"""Create English Mercado Libre listing content for confirmed category {category_id}.
+    category_instruction = (
+        f"for verified category {category_id}"
+        if category_id
+        else "from the collected product evidence; no marketplace category has been confirmed yet"
+    )
+    return f"""Create English Mercado Libre listing content {category_instruction}.
 Rules:
 - JSON object only with keys title, description, brand.
 - title must be at most 50 characters counting spaces and punctuation (keep it short and precise; full detail belongs in the description), factual, and contain no brand or marketing language.
