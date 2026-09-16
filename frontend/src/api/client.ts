@@ -710,6 +710,22 @@ export async function getCbtCategoryPredictions(storeId: number, query: string, 
   return response.json() as Promise<{ store_id: number; query: string; query_en?: string; source?: string; predictions: Record<string, unknown>[] }>;
 }
 
+export async function autoFixDraftCategory(productDraftId: number, storeId: number) {
+  const response = await fetch(`${API_BASE}/api/drafts/${productDraftId}/auto-fix-category`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ store_id: storeId }),
+  });
+  if (!response.ok) throw await httpError(response);
+  return response.json() as Promise<{
+    draft_id: number;
+    category_id: string;
+    changed: boolean;
+    predictions: { category_id: string; category_name: string; domain_name: string }[];
+    note: string;
+  }>;
+}
+
 export async function getCbtCategoryTree(storeId: number, categoryId = "") {
   const query = categoryId ? `?category_id=${encodeURIComponent(categoryId)}` : "";
   const response = await fetch(`${API_BASE}/api/stores/${storeId}/cbt/category-tree${query}`);

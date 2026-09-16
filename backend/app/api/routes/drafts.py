@@ -1,4 +1,17 @@
 from datetime import UTC, datetime
+import asyncio
+
+import httpx
+from pydantic import BaseModel, Field
+from urllib.parse import quote
+
+from app.core.config import get_settings
+from app.models.store import Store
+from app.services.integration_credentials import resolve_integration_credentials
+from app.services.meli.client import MercadoLibreClient
+from app.services.meli.oauth import MercadoLibreOAuthClient
+from app.services.meli.token_vault import resolve_fresh_store_access_token
+
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import delete, select, update
@@ -482,3 +495,124 @@ def approve_draft(
     db: Session = Depends(get_db),
 ) -> DraftApprovalRead:
     return to_approval_read(approve_product_draft(db, product_draft_id, payload))
+
+
+
+def _draft_create_meli_client(access_token: str, timeout: float = 15) -> MercadoLibreClient:
+    return MercadoLibreClient(access_token=access_token, timeout=timeout)
+
+
+def _draft_create_oauth_client(db: Session) -> MercadoLibreOAuthClient:
+    settings = get_settings()
+    credentials = resolve_integration_credentials(db, settings)
+    return MercadoLibreOAuthClient(
+        client_id=credentials.meli_client_id,
+        client_secret=credentials.meli_client_secret,
+        redirect_uri=settings.meli_redirect_uri,
+    )
+
+
+class DraftAutoFixCategoryRequest(BaseModel):
+    store_id: int
+    candidate_category_id: str = ""
+
+
+@router.post("/{draft_id}/auto-fix-category")
+async def auto_fix_draft_category(
+    draft_id: int,
+    payload: DraftAutoFixCategoryRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    """【2026-09-16 迭代】发布失败分类自动校正。
+
+    按草稿标题调美客多 CBT 分类预测（/marketplace/domain_discovery/search），
+    自动更新草稿 target_category_id；同步清空 listing config 的分类与属性
+    （分类变更后属性必须重选，避免用旧分类属性发布报错）。不自动重发，
+    由前端展示新分类与候选后用户确认再发布。
+    """
+    settings = get_settings()
+    draft = db.get(ProductDraft, draft_id)
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Product draft not found.")
+    store = db.get(Store, payload.store_id)
+    if store is None or store.site_id.strip().upper() != "CBT":
+        raise HTTPException(
+            status_code=422, detail="A connected CBT Global Selling store is required."
+        )
+    if store.oauth_status != "connected":
+        raise HTTPException(status_code=409, detail="Store is not connected.")
+    query = " ".join((draft.title or "").split())
+    if not query:
+        raise HTTPException(
+            status_code=409, detail="Draft title is empty; cannot predict a category."
+        )
+    access_token = await resolve_fresh_store_access_token(
+        db=db,
+        store=store,
+        encryption_key=settings.token_encryption_key,
+        oauth_client=_draft_create_oauth_client(db),
+    )
+    if not access_token:
+        raise HTTPException(status_code=409, detail="Store access token is unavailable.")
+    try:
+        data = await _draft_create_meli_client(access_token, timeout=15).get(
+            f"/marketplace/domain_discovery/search?q={quote(query, safe='')}"
+        )
+    except (httpx.HTTPError, asyncio.TimeoutError) as exc:
+        raise HTTPException(
+            status_code=502, detail="CBT category prediction is unavailable."
+        ) from exc
+    predictions: list[dict] = []
+    for item in data if isinstance(data, list) else []:
+        if not isinstance(item, dict):
+            continue
+        category_id = str(item.get("category_id") or "").strip().upper()
+        if not category_id.startswith("CBT"):
+            continue
+        predictions.append(
+            {
+                "category_id": category_id,
+                "category_name": str(
+                    item.get("category_name") or item.get("domain_name") or ""
+                ).strip(),
+                "domain_name": str(item.get("domain_name") or "").strip(),
+                "parent_path": str(item.get("parent_path") or "").strip(),
+            }
+        )
+    if not predictions:
+        raise HTTPException(
+            status_code=409, detail="No CBT category suggested by title."
+        )
+    candidate = payload.candidate_category_id.strip().upper()
+    if candidate:
+        if candidate not in [p["category_id"] for p in predictions]:
+            raise HTTPException(
+                status_code=422, detail="Candidate category is not in suggestions."
+            )
+        selected = candidate
+    else:
+        current = (draft.target_category_id or "").strip().upper()
+        chosen = next(
+            (p for p in predictions if p["category_id"] != current),
+            predictions[0],
+        )
+        selected = chosen["category_id"]
+    changed = selected != (draft.target_category_id or "").strip().upper()
+    draft.target_category_id = selected
+    config = db.execute(
+        select(CbtListingConfig).where(
+            CbtListingConfig.product_draft_id == draft_id
+        )
+    ).scalar_one_or_none()
+    if config is not None:
+        config.category_id = selected
+        config.attributes_json = []
+    db.commit()
+    return {
+        "draft_id": draft_id,
+        "category_id": selected,
+        "changed": changed,
+        "predictions": predictions[:6],
+        "auto_applied": True,
+        "note": "分类已按标题建议校正；属性已清空，需重新加载属性后再发布。",
+    }
