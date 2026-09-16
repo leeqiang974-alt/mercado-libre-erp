@@ -828,13 +828,14 @@ export async function createSourceVariantCollectionJob(
   variantAsin: string,
   targetSiteId: string,
   collectorKind: "server" | "browser_extension" = "server",
+  draftId?: number,
 ) {
   const response = await fetch(
     `${API_BASE}/api/imports/source-products/${sourceProductId}/variants/${variantAsin}/collection-job`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target_site_id: targetSiteId, collector_kind: collectorKind }),
+      body: JSON.stringify({ target_site_id: targetSiteId, collector_kind: collectorKind, draft_id: draftId }),
     },
   );
   if (!response.ok) throw await httpError(response);

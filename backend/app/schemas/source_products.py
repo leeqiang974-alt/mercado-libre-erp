@@ -91,3 +91,5 @@ class SourceVariantCollectionCreate(BaseModel):
     # server = 服务器采集（阿里云 IP 直连 Amazon 易超时）；browser_extension =
     # 复用本机插件采集（与上架列表“采”按钮同一协议），采集变体页真实数据。
     collector_kind: str = Field(default="server", pattern="^(server|browser_extension)$")
+    # 【2026-09-16 迭代】复用现有变体草稿：采集完成后刷新当前草稿素材（不新建草稿）
+    draft_id: int | None = None

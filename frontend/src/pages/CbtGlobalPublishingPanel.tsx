@@ -1063,16 +1063,18 @@ export function CbtGlobalPublishingPanel({
         // 沿用“编辑此变体”协议——后端建 browser_extension 采集任务（预建变体占位
         // source+草稿），再让本机插件打开变体页采集回报，完成后自动切到变体草稿。
         const job = await createSourceVariantCollectionJob(
-          item.source_product_id, item.source_variant_asin, item.target_site_id || "CBT", "browser_extension",
+          item.source_product_id, item.source_variant_asin, item.target_site_id || "CBT", "browser_extension", item.id,
         );
-        if (!job.draft_id || !job.source_product_id) throw new Error("变体采集任务预建失败，请稍后重试");
+        if (!job.source_product_id) throw new Error("变体采集任务预建失败，请稍后重试");
         const variantResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
           let settled = false;
           let timer = 0;
+          let poll = 0;
           const finishVariant = (value: { ok: boolean; error?: string }) => {
             if (settled) return;
             settled = true;
             window.clearTimeout(timer);
+            window.clearInterval(poll);
             window.removeEventListener("meli-amazon-recollect-result", variantHandler);
             resolve(value);
           };
@@ -1088,18 +1090,22 @@ export function CbtGlobalPublishingPanel({
           window.dispatchEvent(new CustomEvent("meli-amazon-recollect", {
             detail: { sourceProductId: job.source_product_id, sourceUrl: job.source_url },
           }));
+          // Fallback: poll the current draft until the variant-page re-collection
+          // lands, so the flow refreshes this draft without creating a new one.
+          poll = window.setInterval(async () => {
+            try {
+              const draft = await getDraft(item.id);
+              if (draft.content_version > item.content_version) finishVariant({ ok: true });
+            } catch { /* keep polling until the timeout decides */ }
+          }, 1500);
         });
-        let updated = await getDraft(job.draft_id);
-        for (let attempt = 0; attempt < 5 && updated.content_version < 2; attempt += 1) {
-          await new Promise((resolve) => window.setTimeout(resolve, 800));
-          updated = await getDraft(job.draft_id);
-        }
+        const updated = await getDraft(item.id);
         setListingRail((current) => uniqueDrafts([...current.filter((row) => row.id !== updated.id), updated]));
         onDraftChange(updated);
         onSelectDraft?.(updated);
         setStatus(variantResult.ok
-          ? `已采集 ${item.source_variant_asin} 变体页真实数据，打开草稿 #${updated.id}（原草稿 #${item.id} 是父页数据，可删除）。`
-          : `本机插件未响应，草稿 #${updated.id} 暂用父页数据，可稍后在草稿里重试“采”。`);
+          ? `已按变体 ${item.source_variant_asin} 页真实数据刷新当前草稿素材（父页 2pcs 等差异已纠正）。`
+          : `本机插件未响应，当前草稿暂用原数据，可稍后再点“采”重试。`);
         return;
       }
       const result = await new Promise<{ ok: boolean; error?: string; quality?: { complete?: boolean; issues?: string[]; image_count?: number; video_count?: number; variant_count?: number; technical_detail_count?: number } | null }>((resolve) => {

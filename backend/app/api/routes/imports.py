@@ -1994,6 +1994,26 @@ def create_source_product_from_extension(
     )
     if pending is not None:
         source, draft = pending
+        # 【2026-09-16 迭代】draft_id 复用：把绑定采集任务的现有草稿先切到变体 source，
+        # 让 _apply_extension_snapshot_to_source 用变体页真实数据刷新它（不新建草稿）
+        rebind_jobs = (
+            db.query(CollectionJob)
+            .filter(
+                CollectionJob.target_site_id == target_site_id,
+                CollectionJob.source_identity == source_url,
+                CollectionJob.status.in_([
+                    CollectionJobStatus.PENDING,
+                    CollectionJobStatus.RUNNING,
+                ]),
+            )
+            .all()
+        )
+        for rebind in rebind_jobs:
+            if rebind.draft_id is None:
+                continue
+            cur = db.get(ProductDraft, rebind.draft_id)
+            if cur is not None and cur.source_product_id != source.id:
+                cur.source_product_id = source.id
         drafts, quality = _apply_extension_snapshot_to_source(
             db, source, snapshot, video_urls
         )
@@ -2580,6 +2600,20 @@ def create_source_variant_collection_job(
             existing.collector_kind = "browser_extension"
             db.commit()
             db.refresh(existing)
+        if payload.draft_id is not None and existing.draft_id != payload.draft_id:
+            # 【2026-09-16 迭代】复用当前草稿：把任务绑定切到现有草稿，避免“采”后新建草稿
+            stale = db.get(ProductDraft, existing.draft_id) if existing.draft_id else None
+            existing.draft_id = payload.draft_id
+            existing.collector_kind = "browser_extension"
+            # 只删“其他占位草稿”，绝不删正在刷新的当前草稿
+            if (
+                stale is not None
+                and stale.id != payload.draft_id
+                and stale.source_product_id == existing.source_product_id
+            ):
+                db.delete(stale)
+            db.commit()
+            db.refresh(existing)
         existing_source = (
             db.get(SourceProduct, existing.source_product_id)
             if existing.source_product_id is not None
@@ -2590,6 +2624,21 @@ def create_source_variant_collection_job(
         placeholder, draft = _prepare_variant_extension_placeholders(
             db, source, normalized_asin, variant_url, target_site_id
         )
+        if payload.draft_id is not None:
+            # 【2026-09-16 迭代】复用当前草稿：占位草稿删除，回报后当前草稿切到变体 source 并刷新
+            current = db.get(ProductDraft, payload.draft_id)
+            if current is None:
+                raise HTTPException(status_code=404, detail="Product draft not found.")
+            # 占位草稿可能恰好就是当前草稿（变体页已采集过、exact 命中时），此时不删
+            if draft.id != current.id:
+                db.delete(draft)
+                db.flush()
+            job = create_collection_job(db, variant_url, target_site_id, collector_kind="browser_extension")
+            job.source_product_id = placeholder.id
+            job.draft_id = current.id
+            db.commit()
+            db.refresh(job)
+            return to_collection_job_read(job)
         job = create_collection_job(db, variant_url, target_site_id, collector_kind="browser_extension")
         job.source_product_id = placeholder.id
         job.draft_id = draft.id
