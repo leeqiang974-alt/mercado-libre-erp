@@ -180,6 +180,7 @@ def delete_draft(product_draft_id: int, db: Session = Depends(get_db)) -> Respon
         DraftPricingConfig,
         ReviewJob,
         ReviewResult,
+        PublishJob,
     ):
         db.execute(delete(model).where(model.product_draft_id == product_draft_id))
     create_audit_event(
