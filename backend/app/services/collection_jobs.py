@@ -141,6 +141,9 @@ def recover_stale_collection_jobs(db: Session, stale_after_seconds: int) -> int:
         db.query(CollectionJob)
         .filter(
             CollectionJob.status == CollectionJobStatus.RUNNING,
+            # 浏览器任务由 recover_stale_browser_jobs 放回 PENDING（可被插件重领），
+            # 这里只恢复 worker 自己跑的 server 任务。
+            ~CollectionJob.collector_kind.in_(["browser_extension", "browser_recollect", "browser_search"]),
             CollectionJob.started_at.is_not(None),
             CollectionJob.started_at < cutoff,
         )
@@ -158,6 +161,56 @@ def recover_stale_collection_jobs(db: Session, stale_after_seconds: int) -> int:
             actor_type="system",
             actor_id="collection-recovery",
             action="collection_job.stale_recovered",
+            entity_type="collection_job",
+            entity_id=str(job.id),
+            before=before,
+            after={"status": job.status.value, "message": job.message},
+            commit=False,
+        )
+    if jobs:
+        db.commit()
+    return len(jobs)
+
+
+def recover_stale_browser_jobs(db: Session, stale_after_seconds: int) -> int:
+    """Worker-side safety net for browser-claimed jobs.
+
+    The extension claim endpoint only releases stale jobs when the browser
+    extension keeps polling. If the browser is closed mid-job, that running job
+    blocks every subsequent claim (a global concurrency gate), freezing the
+    whole campaign. This function is called by the server worker on its own
+    cadence, so a lost extension can no longer deadlock the queue: jobs claimed
+    longer than ``stale_after_seconds`` are returned to PENDING for the next
+    healthy extension to pick up.
+    """
+    cutoff = datetime.now(UTC) - timedelta(seconds=stale_after_seconds)
+    jobs = (
+        db.query(CollectionJob)
+        .filter(
+            CollectionJob.status == CollectionJobStatus.RUNNING,
+            CollectionJob.collector_kind.in_(["browser_extension", "browser_recollect", "browser_search"]),
+            CollectionJob.claimed_at.is_not(None),
+            CollectionJob.claimed_at < cutoff,
+        )
+        .all()
+    )
+    for job in jobs:
+        before = {
+            "status": job.status.value,
+            "claimed_by": job.claimed_by,
+            "claimed_at": job.claimed_at.isoformat() if job.claimed_at else None,
+        }
+        job.status = CollectionJobStatus.PENDING
+        job.message = "浏览器插件连接中断，已由服务器自动放回队列。"
+        job.started_at = None
+        job.completed_at = None
+        job.claimed_by = None
+        job.claimed_at = None
+        create_audit_event(
+            db,
+            actor_type="system",
+            actor_id="collection-recovery",
+            action="collection_job.browser_stale_released",
             entity_type="collection_job",
             entity_id=str(job.id),
             before=before,

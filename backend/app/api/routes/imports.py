@@ -1360,6 +1360,10 @@ def claim_next_amazon_extension_job(
     require an explicit retry, so an overnight browser cannot create a hot
     retry loop against Amazon.
     """
+    # 【2026-09-17 迭代】配置化黑名单：被禁用的插件实例（如已弃用但仍在轮询、
+    # 领取任务却不完成的僵尸实例）直接返回空，不再抢占任务。
+    if worker_id.strip() in get_settings().disabled_extension_worker_ids:
+        return {"job": None}
     _maintain_continuous_extension_queue(db)
     if db.get_bind().dialect.name == "postgresql":
         db.execute(

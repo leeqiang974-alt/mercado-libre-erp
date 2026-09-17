@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     aliyun_oss_endpoint: str = "oss-cn-shanghai.aliyuncs.com"
     aliyun_oss_bucket: str = "ozonshanghai"
     aliyun_oss_prefix: str = "mercado-libre-erp/source-images"
+    # 【2026-09-17 迭代】被禁用的浏览器插件实例（僵尸实例），配置在 .env 的 DISABLED_EXTENSION_WORKER_IDS（逗号分隔）
+    # 默认屏蔽已弃用的僵尸插件实例（可被 .env 的 DISABLED_EXTENSION_WORKER_IDS 覆盖）
+    disabled_extension_worker_ids: list[str] = ["cw_1789439552437_vxk5fg_meli"]
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

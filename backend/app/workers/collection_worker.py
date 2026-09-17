@@ -10,6 +10,7 @@ from app.models.collection_job import CollectionJob, CollectionJobStatus
 from app.services.amazon.collector import CollectionResult, collect_amazon_page
 from app.services.collection_jobs import (
     Collector,
+    recover_stale_browser_jobs,
     recover_stale_collection_jobs,
     run_collection_job,
 )
@@ -25,7 +26,11 @@ async def run_pending_collection_jobs(
     collector: Collector = collect_amazon_page,
 ) -> WorkerSummary:
     campaign_summary = await run_one_keyword_campaign_step(db)
-    recovered = recover_stale_collection_jobs(db, get_settings().job_stale_after_seconds)
+    # 【2026-09-17 迭代】worker 侧保险：浏览器任务失联超时由服务器自动放回队列，
+    # 不再依赖插件轮询触发，避免卡死的 running 任务挡住所有后续派单。
+    # 先恢复浏览器任务（放回 PENDING 可被插件重领），再处理 worker 自身任务。
+    recovered = recover_stale_browser_jobs(db, get_settings().job_stale_after_seconds)
+    recovered += recover_stale_collection_jobs(db, get_settings().job_stale_after_seconds)
     settings = get_settings()
     now = datetime.now(UTC)
     jobs = db.scalars(
