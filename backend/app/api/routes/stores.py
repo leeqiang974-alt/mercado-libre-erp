@@ -395,7 +395,10 @@ async def get_cbt_category_tree(
         raise HTTPException(status_code=422, detail="CBT category ID is required.")
     cache_key = category_tree_key("CBT", normalized)
     cached = get_cached_metadata(db, cache_key)
-    if isinstance(cached, dict) and isinstance(cached.get("children"), list) and cached.get("translation_version") == 4:
+    # 【2026-09-17 迭代】放宽版本门槛：>=3 的旧缓存直接命中。
+    # 此前要求必须 ==4，导致库里已有的 v3 缓存永不命中，每个层级都要
+    # 重新请求 Meli + LLM 翻译，点一下等好几秒。
+    if isinstance(cached, dict) and isinstance(cached.get("children"), list) and int(cached.get("translation_version") or 0) >= 3:
         return {**cached, "store_id": store.id, "source": "cache"}
     catalog = get_cached_metadata(db, category_catalog_key("CBT"))
     if isinstance(catalog, dict) and catalog.get("complete") is True:
