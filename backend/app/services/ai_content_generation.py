@@ -572,10 +572,100 @@ _METRIC_FACTORS: dict[str, tuple[str, float]] = {
 }
 
 
+def _metric_parts(value: float, unit: str) -> tuple[str, str] | None:
+    """Return (number_text, metric_unit) for an imperial value/unit, e.g.
+    (25.4, cm) for 10 inches, or None when the unit is not convertible."""
+    factor = _METRIC_FACTORS.get(unit.strip().lower())
+    if factor is None:
+        return None
+    metric_unit, multiplier = factor
+    metric_value = value * multiplier
+    if abs(metric_value - round(metric_value)) < 0.05:
+        return str(int(round(metric_value))), metric_unit
+    return f"{metric_value:.1f}".rstrip("0").rstrip("."), metric_unit
+
+
+def _metric_convert(value: float, unit: str) -> str:
+    """Return the metric equivalent (e.g. '25.4 cm') for an imperial value/unit,
+    or '' when the unit is not imperial or not convertible."""
+    parts = _metric_parts(value, unit)
+    if parts is None:
+        return ""
+    number_text, metric_unit = parts
+    return f"{number_text} {metric_unit}"
+
+
+# Matches multi-value imperial measurements such as "8.8 x 5.5 x 1.9 inch"
+# or "34 x 22 x 0.1 inches".  Supports the plain unit word as well as the
+# quote forms used by Amazon ("14.2"D x 10.6"W x 11"H").
+_DIM_UNIT_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)(?:\s*[xX×]\s*(\d+(?:\.\d+)?))?"
+    r"\s*(inches?|inch|in|feet?|foot|ft|ounces?|oz|pounds?|lb|lbs)(?![a-z])",
+    re.IGNORECASE,
+)
+_QUOTED_DIM_RE = re.compile(
+    r"(\d+(?:\.\d+)?)(?:''|\")\s*[DWHL]?\s*[xX×]\s*(\d+(?:\.\d+)?)(?:''|\")\s*[DWHL]?"
+    r"(?:\s*[xX×]\s*(\d+(?:\.\d+)?)(?:''|\")\s*[DWHL]?)?",
+    re.IGNORECASE,
+)
+# Matches single-value imperial measurements such as "1.94 pounds" or "8 inches".
+# The trailing lookahead skips values that were already annotated by the
+# dimension pass above ("0.1 inches (0.3 cm)" must not be re-annotated).
+_SINGLE_UNIT_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(inches?|inch|in|feet?|foot|ft|ounces?|oz|pounds?|lb|lbs)(?![a-z])(?!\s*\()",
+    re.IGNORECASE,
+)
+
+
+def _convert_imperial_text(text: str) -> str:
+    """Append metric equivalents in parentheses to every imperial measurement
+    found in a text string, e.g. '8.8 x 5.5 x 1.9 inch' ->
+    '8.8 x 5.5 x 1.9 inch (22.4 x 14 x 4.8 cm)'.  Values that are already
+    metric (cm/g) are left untouched."""
+    if not text:
+        return text
+
+    def dim_repl(match):
+        values = [float(match.group(1)), float(match.group(2))]
+        if match.group(3):
+            values.append(float(match.group(3)))
+        unit = match.group(4).lower()
+        parts = [_metric_parts(v, unit) for v in values]
+        if not parts or any(p is None for p in parts):
+            return match.group(0)
+        numbers = " x ".join(p[0] for p in parts)
+        metric_unit = parts[0][1]
+        return f"{match.group(0)} ({numbers} {metric_unit})"
+
+    def quoted_repl(match):
+        values = [float(match.group(1)), float(match.group(2))]
+        if match.group(3):
+            values.append(float(match.group(3)))
+        parts = [_metric_parts(v, "inch") for v in values]
+        if not parts or any(p is None for p in parts):
+            return match.group(0)
+        numbers = " x ".join(p[0] for p in parts)
+        metric_unit = parts[0][1]
+        return f"{match.group(0)} ({numbers} {metric_unit})"
+
+    def single_repl(match):
+        metric = _metric_convert(float(match.group(1)), match.group(2))
+        if not metric:
+            return match.group(0)
+        return f"{match.group(0)} ({metric})"
+
+    text = _QUOTED_DIM_RE.sub(quoted_repl, text)
+    text = _DIM_UNIT_RE.sub(dim_repl, text)
+    text = _SINGLE_UNIT_RE.sub(single_repl, text)
+    return text
+
+
 def _annotate_metric_measurements(measurements: dict) -> dict:
     """Return a copy of measurements with metric equivalents appended to the
     raw text (e.g. '10 inches' -> '10 inches (25.4 cm)') when the source unit
-    is imperial. Values already metric or with unknown units are unchanged."""
+    is imperial.  Handles both single values (item_weight) and multi-value
+    dimensions (package_dimensions/product_dimensions with length/width/height).
+    Values already metric or with unknown units are unchanged."""
     converted: dict = {}
     for key, entry in measurements.items():
         if not isinstance(entry, dict):
@@ -583,23 +673,47 @@ def _annotate_metric_measurements(measurements: dict) -> dict:
             continue
         raw = str(entry.get("raw") or "").strip()
         unit = str(entry.get("unit") or "").strip().lower()
+        # Multi-value dimensions: {"length": 8.58, "width": 3.58, "height": 1.65, "unit": "in", ...}
+        if ("length" in entry or "width" in entry or "height" in entry) and unit in _METRIC_FACTORS:
+            dims: list[float] = []
+            ok = True
+            for dim in ("length", "width", "height"):
+                value = entry.get(dim)
+                if value is None:
+                    continue
+                try:
+                    dims.append(float(value))
+                except (TypeError, ValueError):
+                    ok = False
+                    break
+            if ok and dims:
+                parts = [_metric_parts(v, unit) for v in dims]
+                if parts and all(p is not None for p in parts):
+                    numbers = " x ".join(p[0] for p in parts)
+                    metric_unit = parts[0][1]
+                    converted[key] = {**entry, "raw": f"{raw} ({numbers} {metric_unit})"}
+                    continue
+        # Single value: {"value": 4.0, "unit": "lb", ...}
         try:
             value = float(entry.get("value"))
         except (TypeError, ValueError):
             converted[key] = entry
             continue
-        factor = _METRIC_FACTORS.get(unit)
-        if factor is None:
+        metric = _metric_convert(value, unit)
+        if not metric:
             converted[key] = entry
             continue
-        metric_unit, multiplier = factor
-        metric_value = value * multiplier
-        if abs(metric_value - round(metric_value)) < 0.05:
-            metric_text = str(int(round(metric_value)))
-        else:
-            metric_text = f"{metric_value:.1f}".rstrip("0").rstrip(".")
-        converted[key] = {**entry, "raw": f"{raw} ({metric_text} {metric_unit})"}
+        converted[key] = {**entry, "raw": f"{raw} ({metric})"}
     return converted
+
+
+def _annotate_technical_details(details: dict) -> dict:
+    """Return a copy of technical details with metric equivalents appended to
+    every imperial measurement inside string values (e.g. the value
+    '34 x 22 x 0.1 inches' becomes '34 x 22 x 0.1 inches (86.4 x 55.9 x 0.3 cm)')."""
+    if not isinstance(details, dict):
+        return details
+    return {key: _convert_imperial_text(str(value)) if isinstance(value, str) else value for key, value in details.items()}
 
 
 def _build_prompt(draft: ProductDraft, source: SourceProduct | None, category_id: str) -> str:
@@ -613,7 +727,7 @@ def _build_prompt(draft: ProductDraft, source: SourceProduct | None, category_id
     source_description = str(source.description or "") if source else ""
     draft_description = str(draft.description or "")
     bullets = (source.bullets_json or []) if source else []
-    details = (source.technical_details_json or {}) if source else {}
+    details = _annotate_technical_details((source.technical_details_json or {}) if source else {})
     measurements = _annotate_metric_measurements((source.measurements_json or {}) if source else {})
     variants = (source.variants_json or []) if source else []
     draft_variant_attributes = draft.source_variant_attributes_json or {}
