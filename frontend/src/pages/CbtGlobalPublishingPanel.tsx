@@ -362,9 +362,10 @@ export function CbtGlobalPublishingPanel({
   const [predictions, setPredictions] = useState<Record<string, unknown>[]>([]);
   // 分层浏览：当前在预测结果树中的层级路径（每层 {id, name}），从第一层逐层下钻到最底层
   const [categoryLevelPath, setCategoryLevelPath] = useState<Array<{ id: string; name: string }>>([]);
-  const [categoryTree, setCategoryTree] = useState<Record<string, unknown>[]>([]);
-  const [categoryTreePath, setCategoryTreePath] = useState("");
+  const [categoryTree, setCategoryTree] = useState<Record<string, unknown>[][]>([]);
+  const [categoryTreePath, setCategoryTreePath] = useState<Array<{ id: string; name: string }>>([]);
   const [showCategoryTree, setShowCategoryTree] = useState(false);
+  const [treeBusyCol, setTreeBusyCol] = useState(-1);
   const [globalTitle, setGlobalTitle] = useState(normalizeCbtTitle(draft.title));
   // Amazon 源商品完整原标题（不做60截断，作为分类匹配/AI 参考的完整信息源）
   const [sourceTitle, setSourceTitle] = useState("");
@@ -1012,9 +1013,9 @@ export function CbtGlobalPublishingPanel({
   }, [storeId, profileReloadKey, configLoaded, hasSavedConfig]);
 
   useEffect(() => {
-    if (!storeId) { setCategoryTree([]); setCategoryTreePath(""); return; }
+    if (!storeId) { setCategoryTree([]); setCategoryTreePath([]); return; }
     getCbtCategoryTree(Number(storeId))
-      .then((result) => { setCategoryTree(result.children); setCategoryTreePath("CBT 全部分类"); })
+      .then((result) => { setCategoryTree([result.children]); setCategoryTreePath([]); })
       .catch(() => setCategoryTree([]));
   }, [storeId]);
 
@@ -1054,32 +1055,78 @@ export function CbtGlobalPublishingPanel({
     } finally { setBusy(""); }
   }
 
+  // 【2026-09-17 迭代】分类目录改为 Ozon 式三栏/多栏联动：
+  // 左栏一级 → 点一级中栏出二级 → 点二级右栏出三级…，各栏同时可见，可随时点击任意栏回跳。
+  // 每一栏只负责“当前层”，选中的项在本栏高亮，其子级出现在下一栏；到达最底层自动确认。
   async function browseCategoryTree(nextCategoryId = "") {
     if (!storeId) return;
     setBusy("category-tree"); setStatus("");
     try {
+      if (!nextCategoryId) {
+        const root = await getCbtCategoryTree(Number(storeId), "");
+        setCategoryTree([root.children]);
+        setCategoryTreePath([]);
+        return;
+      }
+      // 若目录尚未打开（例如从预测结果点父级进入），先补上根分类一栏
+      if (categoryTree.length === 0) {
+        const root = await getCbtCategoryTree(Number(storeId), "");
+        setCategoryTree([root.children]);
+      }
       const result = await getCbtCategoryTree(Number(storeId), nextCategoryId);
-      setCategoryTree(result.children);
-      const detail = result.category;
-      const path = detail?.path_from_root_zh ?? detail?.path_from_root
-        ?? detail?.path_names_zh ?? detail?.path_names;
-      setCategoryTreePath(Array.isArray(path) ? path.map((item) => {
-        if (typeof item === "string") return item;
-        const row = item as Record<string, unknown>;
-        return String(row.name_zh ?? row.name ?? "");
-      }).filter(Boolean).join(" > ") : "CBT 全部分类");
-      if (nextCategoryId && result.children.length === 0) {
-        await selectCategory(nextCategoryId, detail as Record<string, unknown>);
+      const target = result.category as Record<string, unknown> | null;
+      const name = String((target?.name_zh ?? target?.name) || nextCategoryId);
+      setCategoryTreePath((prev) => {
+        const next = prev.findIndex((seg) => seg.id === nextCategoryId);
+        if (next >= 0) return prev.slice(0, next + 1);
+        return [...prev, { id: nextCategoryId, name }];
+      });
+      setCategoryTree((cols) => {
+        const next = cols.slice();
+        next.push(result.children);
+        return next;
+      });
+      if (result.children.length === 0) {
+        await selectCategory(nextCategoryId, (target ?? {}) as Record<string, unknown>);
       }
     } catch (error) { setStatus(error instanceof Error ? error.message : "读取 CBT 分类目录失败"); }
     finally { setBusy(""); }
+  }
+
+  // 点击某一栏里的分类：更新该栏选中项，并把子级加载到下一栏；若该分类已是叶子则直接确认。
+  async function treeSelect(colIndex: number, item: Record<string, unknown>) {
+    const id = categoryTreeNodeId(item);
+    if (!id || !storeId) return;
+    if (busy === "category-tree") return;
+    const name = String(item.name_zh ?? item.name ?? id);
+    setBusy("category-tree"); setTreeBusyCol(colIndex); setStatus("");
+    try {
+      const result = await getCbtCategoryTree(Number(storeId), id);
+      // 无论叶子与否，本栏选中项确定；后续栏清空
+      setCategoryTreePath((prev) => prev.slice(0, colIndex).concat([{ id, name }]));
+      setCategoryTree((cols) => {
+        const next = cols.slice(0, colIndex + 1);
+        next[colIndex + 1] = result.children;
+        return next;
+      });
+      if (result.children.length === 0) {
+        await selectCategory(id, (result.category as Record<string, unknown> | null) ?? item);
+      }
+    } catch (error) { setStatus(error instanceof Error ? error.message : "读取 CBT 分类目录失败"); }
+    finally { setBusy(""); setTreeBusyCol(-1); }
+  }
+
+  // 点击面包屑回跳到某一层（-1 表示回到根层），后续已展开的栏保留可继续浏览
+  function treeJumpTo(level: number) {
+    setCategoryTreePath((prev) => (level < 0 ? [] : prev.slice(0, level + 1)));
+    setCategoryTree((cols) => cols.slice(0, level + 2));
   }
 
   function choosePrediction(value: string) {
     const prediction = predictions.find((item) => String(item.category_id ?? "") === value);
     if (!prediction) return;
     if (prediction.is_leaf === true) void selectCategory(value, prediction);
-    else void browseCategoryTree(value);
+    else { setShowCategoryTree(true); void browseCategoryTree(value); }
   }
 
   // 分层浏览：根据已选层级路径，从预测结果中聚合出当前层的去重节点列表。
@@ -1887,8 +1934,26 @@ export function CbtGlobalPublishingPanel({
           {currentCategoryLevelNodes().length === 0 && <p className="section-note">没有可下钻的下级分类，请换关键词或返回上一级。</p>}
           {currentCategoryLevelNodes().map((node) => { const isSelected = node.id === categoryId; const matched = predictions.find((item) => String(item.category_id ?? "") === node.id); return <button type="button" className={isSelected ? "selected" : node.isLeaf ? "leaf" : ""} key={node.id} onClick={() => { if (node.isLeaf) void selectCategory(node.id, matched); else setCategoryLevelPath((cur) => [...cur, { id: node.id, name: node.name }]); }}><strong>{node.name}{node.isLeaf ? " · 最底层" : " →"}</strong><small>{node.id} · {isSelected ? "已确认并加载属性" : node.isLeaf ? "点击后自动确认该分类" : "点击查看下级分类"}</small></button>; })}
         </div>}
-        <div className="section-note">搜索结果不合适？<button className="tiny-button" type="button" onClick={() => { setShowCategoryTree((value) => !value); if (!showCategoryTree && !categoryTree.length) void browseCategoryTree(); }}>{showCategoryTree ? "收起分类目录" : "浏览完整分类目录"}</button></div>
-        {showCategoryTree && <div className="prediction-list"><div className="section-note"><strong>官方 CBT 分类目录</strong> · {categoryTreePath || "正在读取"} <button className="tiny-button" type="button" onClick={() => browseCategoryTree()} disabled={busy === "category-tree"}>返回根分类</button></div>{categoryTree.map((item) => { const id = categoryTreeNodeId(item); const name = String(item.name_zh ?? item.name ?? id); return <button key={id} type="button" disabled={!id || busy === "category-tree"} onClick={() => void browseCategoryTree(id)}><strong>{name} →</strong><small>{id} · 点击进入下一级；到达最底层后自动确认</small></button>; })}</div>}
+        <div className="section-note">搜索结果不合适？<button className="tiny-button" type="button" onClick={() => { setShowCategoryTree((value) => !value); if (!showCategoryTree && categoryTree.length === 0) void browseCategoryTree(); }}>{showCategoryTree ? "收起分类目录" : "浏览完整分类目录"}</button></div>
+        {showCategoryTree && <div className="category-tree-panel">
+          <div className="section-note"><strong>官方 CBT 分类目录</strong> · 左栏一级 → 逐级联动，到达最底层后自动确认
+            <span className="category-breadcrumb">
+              {categoryTreePath.length > 0 && <button className="tiny-button" type="button" onClick={() => treeJumpTo(-1)}>全部一级分类</button>}
+              {categoryTreePath.map((seg, i) => <button key={seg.id} className="tiny-button" type="button" onClick={() => treeJumpTo(i)}>{seg.name}</button>)}
+            </span>
+          </div>
+          <div className="category-tree-cols">
+            {categoryTree.map((col, colIndex) => (
+              <div className="category-tree-col" key={colIndex}>
+                <div className="category-tree-col-title">{colIndex === 0 ? "一级分类" : (categoryTreePath[colIndex - 1]?.name ?? `第 ${colIndex + 1} 级`)}</div>
+                <div className="category-tree-col-list">
+                  {col.map((item) => { const id = categoryTreeNodeId(item); const name = String(item.name_zh ?? item.name ?? id); const selected = categoryTreePath[colIndex]?.id === id; return <button key={id} type="button" className={selected ? "selected" : ""} disabled={!id || busy === "category-tree"} onClick={() => void treeSelect(colIndex, item)}><span className="category-tree-col-name">{name}</span><small>{id}{selected ? " · 已选" : ""}</small></button>; })}
+                  {col.length === 0 && <p className="category-tree-empty">该层没有下级分类</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>}
       </section>
 
       <section id="basic" className="surface wf-section"><div className="wf-section-title"><span>2</span><div><h3>产品基本信息</h3><p>标题强制英文不超过 60 字符；品牌固定为无品牌。</p></div></div><div className="form-grid two-col"><label>Parent SKU / 产品族名称 *<input value={familyName} placeholder="例如 SKU02761" onChange={(event) => { const value = event.target.value; setFamilyName(value); setAttributes((current) => ({ ...current, MODEL: value })); setSaved(null); setPreview(null); }} /></label><label>可售库存 *<input type="number" min="1" step="1" value={quantity} onChange={(event) => { setQuantity(event.target.value); setSaved(null); setPreview(null); }} /></label></div><label><span className="wf-field-label-row">英文标题 *<button type="button" className="tiny-button wf-ai-button" disabled={busy.startsWith("ai-")} onClick={() => void generateAiContent()}><Sparkles size={13} />{busy === "ai-content" ? "标题与描述生成中…" : "AI 生成标题与描述"}</button></span><div className="wf-title-input"><input disabled={busy === "ai-content"} value={globalTitle} onChange={(event) => updateGlobalTitle(event.target.value)} /><small>{globalTitle.length}/60</small></div>{aiFeedback && aiFeedback.target !== "description" && <small className={`wf-ai-feedback ${aiFeedback.error ? "error" : "success"}`} role="status">{aiFeedback.message}</small>}{globalTitle.length > 60 && <small className="inline-warning">标题超过 60 字符：不会自动截断，请使用 AI 重新生成或手动精简。</small>}</label><label>品牌（固定）<input disabled value="Unbranded（无品牌）" /></label></section>

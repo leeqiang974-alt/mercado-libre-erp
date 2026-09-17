@@ -504,6 +504,18 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .category-breadcrumb { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .category-breadcrumb .tiny-button { border-color: #b2ccff; background: #eef5ff; color: #1d4ed8; }
 .category-breadcrumb .tiny-button:hover { border-color: #1d4ed8; }
+/* 【2026-09-17 迭代】分类目录三栏联动式（类 Ozon） */
+.category-tree-panel { margin-top: 10px; border: 1px solid #e4e7eb; border-radius: 8px; padding: 10px; background: #fafafa; }
+.category-tree-cols { display: flex; gap: 8px; overflow-x: auto; align-items: stretch; margin-top: 8px; }
+.category-tree-col { flex: 1 1 0; min-width: 200px; max-width: 300px; display: flex; flex-direction: column; border: 1px solid #e4e7eb; border-radius: 6px; background: #fff; overflow: hidden; }
+.category-tree-col-title { padding: 8px 10px; font-size: 12px; font-weight: 600; color: #475467; background: #f3f4f6; border-bottom: 1px solid #e4e7eb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.category-tree-col-list { max-height: 320px; overflow-y: auto; padding: 4px; display: grid; gap: 2px; }
+.category-tree-col-list button { display: grid; gap: 2px; text-align: left; padding: 6px 8px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #1f2933; cursor: pointer; }
+.category-tree-col-list button:hover { background: #f2f5f9; border-color: #d5dce3; }
+.category-tree-col-list button.selected { border-color: #12b76a; background: #ecfdf3; }
+.category-tree-col-name { font-size: 13px; line-height: 1.3; }
+.category-tree-col-list small { color: #697586; font-size: 11px; }
+.category-tree-empty { color: #98a2b3; font-size: 12px; padding: 8px; }
 .attribute-grid { border-top: 1px solid #e4e8ed; margin-top: 16px; padding-top: 4px; }
 .attribute-mapping { margin-top: 16px; border-top: 1px solid #d7dee8; border-bottom: 1px solid #d7dee8; }
 .attribute-mapping-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; }
