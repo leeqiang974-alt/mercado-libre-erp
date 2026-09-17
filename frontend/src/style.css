@@ -498,7 +498,12 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .prediction-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
 .prediction-list button { display: grid; justify-content: start; text-align: left; background: white; color: #1f2933; border: 1px solid #ccd2da; }
 .prediction-list button.selected { border-color: #ea580c; background: #eef5ff; }
+.prediction-list button.leaf { border-color: #12b76a; background: #ecfdf3; }
 .prediction-list small { color: #697586; }
+.prediction-list .section-note { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0; }
+.category-breadcrumb { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.category-breadcrumb .tiny-button { border-color: #b2ccff; background: #eef5ff; color: #1d4ed8; }
+.category-breadcrumb .tiny-button:hover { border-color: #1d4ed8; }
 .attribute-grid { border-top: 1px solid #e4e8ed; margin-top: 16px; padding-top: 4px; }
 .attribute-mapping { margin-top: 16px; border-top: 1px solid #d7dee8; border-bottom: 1px solid #d7dee8; }
 .attribute-mapping-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; }

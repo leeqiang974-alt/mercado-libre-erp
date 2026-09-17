@@ -553,6 +553,55 @@ def _already_generated_fields(
     )
 
 
+# Imperial -> metric conversion factors used to annotate source measurements
+# with their metric equivalents (e.g. "10 inches" -> "10 inches (25.4 cm)").
+_METRIC_FACTORS: dict[str, tuple[str, float]] = {
+    "in": ("cm", 2.54),
+    "inch": ("cm", 2.54),
+    "inches": ("cm", 2.54),
+    "ft": ("cm", 30.48),
+    "foot": ("cm", 30.48),
+    "feet": ("cm", 30.48),
+    "oz": ("g", 28.3495),
+    "ounce": ("g", 28.3495),
+    "ounces": ("g", 28.3495),
+    "lb": ("g", 453.592),
+    "lbs": ("g", 453.592),
+    "pound": ("g", 453.592),
+    "pounds": ("g", 453.592),
+}
+
+
+def _annotate_metric_measurements(measurements: dict) -> dict:
+    """Return a copy of measurements with metric equivalents appended to the
+    raw text (e.g. '10 inches' -> '10 inches (25.4 cm)') when the source unit
+    is imperial. Values already metric or with unknown units are unchanged."""
+    converted: dict = {}
+    for key, entry in measurements.items():
+        if not isinstance(entry, dict):
+            converted[key] = entry
+            continue
+        raw = str(entry.get("raw") or "").strip()
+        unit = str(entry.get("unit") or "").strip().lower()
+        try:
+            value = float(entry.get("value"))
+        except (TypeError, ValueError):
+            converted[key] = entry
+            continue
+        factor = _METRIC_FACTORS.get(unit)
+        if factor is None:
+            converted[key] = entry
+            continue
+        metric_unit, multiplier = factor
+        metric_value = value * multiplier
+        if abs(metric_value - round(metric_value)) < 0.05:
+            metric_text = str(int(round(metric_value)))
+        else:
+            metric_text = f"{metric_value:.1f}".rstrip("0").rstrip(".")
+        converted[key] = {**entry, "raw": f"{raw} ({metric_text} {metric_unit})"}
+    return converted
+
+
 def _build_prompt(draft: ProductDraft, source: SourceProduct | None, category_id: str) -> str:
     # A source row can be present while its optional text blocks are still
     # empty (Amazon often renders these sections after the title and gallery).
@@ -565,7 +614,7 @@ def _build_prompt(draft: ProductDraft, source: SourceProduct | None, category_id
     draft_description = str(draft.description or "")
     bullets = (source.bullets_json or []) if source else []
     details = (source.technical_details_json or {}) if source else {}
-    measurements = (source.measurements_json or {}) if source else {}
+    measurements = _annotate_metric_measurements((source.measurements_json or {}) if source else {})
     variants = (source.variants_json or []) if source else []
     draft_variant_attributes = draft.source_variant_attributes_json or {}
     category_instruction = (
@@ -580,6 +629,7 @@ Rules:
 - brand must be exactly Unbranded.
 - description must be a complete, useful listing description, not a one-sentence summary. Use this exact plain-text structure: an overview paragraph; a `Key details:` section with factual bullet lines; a `Suitable uses:` paragraph; then the warranty sentence as the final line. Preserve every supported fact from the source and existing draft. It must be 80-260 English words, use plain ASCII punctuation, and contain line breaks; do not pad sparse evidence with guesses.
 - description must be factual and based only on the source data or existing draft evidence. Do not invent certifications, guarantees, materials, dimensions, compatibility, or features.
+- When the source data includes dimensions or weight in imperial units, keep the original unit and append the metric equivalent in parentheses, e.g. "10 inches (25.4 cm)" or "4 pounds (1.8 kg)". Conversion factors: 1 inch = 2.54 cm, 1 foot = 30.48 cm, 1 ounce = 28.35 g, 1 pound = 453.59 g. Only convert measurements that are actually present in the source data; never invent a dimension or weight.
 - never mention the source brand in the title or description; the listing brand is always exactly Unbranded.
 - End the description with exactly this sentence: {WARRANTY_SENTENCE}
 - Do not include HTML, URLs, emojis, price, or shipping promises.

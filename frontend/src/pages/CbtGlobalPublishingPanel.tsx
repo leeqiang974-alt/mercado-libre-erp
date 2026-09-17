@@ -360,6 +360,8 @@ export function CbtGlobalPublishingPanel({
   const [categoryActionStatus, setCategoryActionStatus] = useState("");
   const [categorySearchQuery, setCategorySearchQuery] = useState(normalizeCbtTitle(draft.title));
   const [predictions, setPredictions] = useState<Record<string, unknown>[]>([]);
+  // 分层浏览：当前在预测结果树中的层级路径（每层 {id, name}），从第一层逐层下钻到最底层
+  const [categoryLevelPath, setCategoryLevelPath] = useState<Array<{ id: string; name: string }>>([]);
   const [categoryTree, setCategoryTree] = useState<Record<string, unknown>[]>([]);
   const [categoryTreePath, setCategoryTreePath] = useState("");
   const [showCategoryTree, setShowCategoryTree] = useState(false);
@@ -593,6 +595,7 @@ export function CbtGlobalPublishingPanel({
     setCategoryPath("");
     setCategoryActionStatus("");
     setPredictions([]);
+    setCategoryLevelPath([]);
     setAttributeDefinitions([]);
     setSourceVariants([]);
     setAttributes({ BRAND: "Unbranded", ITEM_CONDITION: "new", SELLER_SKU: defaultSku(draftId), MODEL: defaultSku(draftId) });
@@ -1031,10 +1034,20 @@ export function CbtGlobalPublishingPanel({
         if (!id) return prediction;
         try {
           const details = await getCategoryDetails(id);
-          return { ...prediction, parent_path_zh: (details.path_from_root_zh ?? details.path_from_root).map((item) => item.name_zh || item.name).filter(Boolean).join(" > "), is_leaf: details.leaf };
+          const pathChain = ((details.path_from_root_zh ?? details.path_from_root) || []).map((item) => ({
+            id: String((item as Record<string, unknown>).id ?? ""),
+            name: String((item as Record<string, unknown>).name_zh || (item as Record<string, unknown>).name || ""),
+          })).filter((seg) => seg.id && seg.name);
+          return {
+            ...prediction,
+            parent_path_zh: pathChain.map((seg) => seg.name).join(" > "),
+            path_chain: pathChain,
+            is_leaf: details.leaf === true,
+          };
         } catch { return prediction; }
       }));
       setPredictions(enriched);
+      setCategoryLevelPath([]);
     } catch (error) {
       setPredictions([]);
       setStatus(error instanceof Error ? error.message : "CBT 类目预测失败");
@@ -1067,6 +1080,26 @@ export function CbtGlobalPublishingPanel({
     if (!prediction) return;
     if (prediction.is_leaf === true) void selectCategory(value, prediction);
     else void browseCategoryTree(value);
+  }
+
+  // 分层浏览：根据已选层级路径，从预测结果中聚合出当前层的去重节点列表。
+  // 命中分类的 1层/2层/3层/4层 会逐层展示，一直下钻到最子级（叶子可确认）。
+  function currentCategoryLevelNodes(): Array<{ id: string; name: string; isLeaf: boolean }> {
+    const prefix = categoryLevelPath;
+    const nodes = new Map<string, { id: string; name: string; isLeaf: boolean }>();
+    for (const p of predictions) {
+      const chain = (Array.isArray(p.path_chain) ? p.path_chain : []) as Array<{ id: string; name: string }>;
+      if (chain.length <= prefix.length) continue;
+      const matches = prefix.every((seg, i) => chain[i]?.id === seg.id);
+      if (!matches) continue;
+      const level = chain[prefix.length];
+      if (!level?.id || !level.name) continue;
+      const existing = nodes.get(level.id);
+      const isLeaf = p.is_leaf === true && chain.length === prefix.length + 1;
+      if (!existing) nodes.set(level.id, { id: level.id, name: level.name, isLeaf });
+      else if (isLeaf) existing.isLeaf = true;
+    }
+    return Array.from(nodes.values());
   }
 
   async function recollectListingDraft(event: { stopPropagation: () => void }, item: ProductDraftRead) {
@@ -1846,7 +1879,14 @@ export function CbtGlobalPublishingPanel({
           <div className="wf-category-line"><label>分类关键词搜索<small>标题智能匹配保留；也可输入中文或英文关键词，候选不合适时逐级浏览分类。</small><input value={categorySearchQuery} placeholder="例如：淋浴喷头 / shower head" onChange={(event) => setCategorySearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void predictCategory(); }} /></label><button type="button" onClick={() => void predictCategory(sourceTitle || globalTitle)} disabled={busy === "category" || busy === "attributes"}><Search size={16} /> {busy === "category" ? "匹配中…" : "按标题智能匹配"}</button><button type="button" onClick={() => void predictCategory()} disabled={busy === "category" || busy === "attributes"}><Search size={16} /> {busy === "category" ? "搜索中…" : "搜索关键词"}</button></div><label>搜索匹配分类<select className="category-prediction-select" value="" onChange={(event) => choosePrediction(event.target.value)} disabled={predictions.length === 0 || busy === "attributes"}><option value="">{predictions.length ? "选择一个匹配分类" : "输入关键词后搜索"}</option>{predictions.map((item) => { const id = String(item.category_id ?? ""); const name = String(item.category_name_zh ?? item.category_name ?? item.domain_name ?? id); const isLeaf = item.is_leaf === true; return <option key={id} value={id}>{name} · {isLeaf ? "最底层，点击即确认" : "父级，点击进入下一级"}</option>; })}</select></label><label>已选最终 CBT 分类 *<input readOnly value={categoryId} placeholder="选择最底层分类后自动确认" /></label>
         {categoryPath && <p className="category-path-label">{categoryPath}{categoryId ? ` · ${categoryLeafVerified ? "最终 CBT 最底层分类已确认" : "待确认最终 CBT 分类"}` : " · 请在上方选择对应的 CBT 最底层分类"}</p>}
         {categoryActionStatus && <p className={`category-action-status ${categoryLeafVerified ? "success" : "error"}`} role="status">{categoryActionStatus}</p>}
-        {predictions.length > 0 && <div className="prediction-list">{predictions.map((item) => { const id = String(item.category_id ?? ""); const name = String(item.category_name_zh ?? item.category_name ?? item.domain_name ?? id); const isSelected = id === categoryId; const isLeaf = item.is_leaf === true; return <button type="button" className={isSelected ? "selected" : ""} key={id} onClick={(event) => { event.preventDefault(); event.stopPropagation(); if (isLeaf) void selectCategory(id, item); else void browseCategoryTree(id); }}><strong>{name}{isLeaf ? " · 最底层" : " · 进入下一级"}</strong><small>{String(item.parent_path_zh ?? item.parent_path ?? "正在读取母级分类路径")}</small><small>{id} · {isSelected ? "已确认并加载属性" : isLeaf ? "点击后自动确认" : "点击进入子分类"}</small></button>; })}</div>}
+        {predictions.length > 0 && <div className="prediction-list">
+          <div className="section-note"><strong>命中分类（逐层下钻，直到最子级）</strong>
+            {categoryLevelPath.length > 0 && <span className="category-breadcrumb">{categoryLevelPath.map((seg, i) => (<button key={seg.id} className="tiny-button" type="button" onClick={() => setCategoryLevelPath((cur) => cur.slice(0, i + 1))}>{seg.name}</button>))}<button className="tiny-button" type="button" onClick={() => setCategoryLevelPath([])}>顶层</button></span>}
+            <button className="tiny-button" type="button" onClick={() => setCategoryLevelPath((cur) => cur.slice(0, -1))} disabled={categoryLevelPath.length === 0}>返回上一级</button>
+          </div>
+          {currentCategoryLevelNodes().length === 0 && <p className="section-note">没有可下钻的下级分类，请换关键词或返回上一级。</p>}
+          {currentCategoryLevelNodes().map((node) => { const isSelected = node.id === categoryId; const matched = predictions.find((item) => String(item.category_id ?? "") === node.id); return <button type="button" className={isSelected ? "selected" : node.isLeaf ? "leaf" : ""} key={node.id} onClick={() => { if (node.isLeaf) void selectCategory(node.id, matched); else setCategoryLevelPath((cur) => [...cur, { id: node.id, name: node.name }]); }}><strong>{node.name}{node.isLeaf ? " · 最底层" : " →"}</strong><small>{node.id} · {isSelected ? "已确认并加载属性" : node.isLeaf ? "点击后自动确认该分类" : "点击查看下级分类"}</small></button>; })}
+        </div>}
         <div className="section-note">搜索结果不合适？<button className="tiny-button" type="button" onClick={() => { setShowCategoryTree((value) => !value); if (!showCategoryTree && !categoryTree.length) void browseCategoryTree(); }}>{showCategoryTree ? "收起分类目录" : "浏览完整分类目录"}</button></div>
         {showCategoryTree && <div className="prediction-list"><div className="section-note"><strong>官方 CBT 分类目录</strong> · {categoryTreePath || "正在读取"} <button className="tiny-button" type="button" onClick={() => browseCategoryTree()} disabled={busy === "category-tree"}>返回根分类</button></div>{categoryTree.map((item) => { const id = categoryTreeNodeId(item); const name = String(item.name_zh ?? item.name ?? id); return <button key={id} type="button" disabled={!id || busy === "category-tree"} onClick={() => void browseCategoryTree(id)}><strong>{name} →</strong><small>{id} · 点击进入下一级；到达最底层后自动确认</small></button>; })}</div>}
       </section>
