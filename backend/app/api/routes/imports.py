@@ -1005,6 +1005,24 @@ def start_continuous_keyword_campaign(campaign_id: int, db: Session = Depends(ge
     campaign.bound_browser_version = None
     campaign.bound_extension_version = None
     campaign.bound_at = None
+    # 【2026-09-18 迭代】恢复持续采集时清空"连续失败自动暂停"的计数窗口：
+    # 将最近 CONTINUOUS_FAILURE_PAUSE_WINDOW 个 failed / needs_manual_action
+    # 任务标记为 skipped（保留在库中可追溯），避免恢复后守卫立刻再次自动暂停，
+    # 形成"恢复→立即暂停"的死循环。
+    stale_failures = (
+        db.query(CollectionJob)
+        .filter(
+            CollectionJob.campaign_id == campaign.id,
+            CollectionJob.collector_kind.in_(AMAZON_BROWSER_COLLECTOR_KINDS),
+            CollectionJob.status.in_([CollectionJobStatus.FAILED, CollectionJobStatus.NEEDS_MANUAL_ACTION]),
+        )
+        .order_by(CollectionJob.id.desc())
+        .limit(CONTINUOUS_FAILURE_PAUSE_WINDOW)
+        .all()
+    )
+    for job in stale_failures:
+        job.status = CollectionJobStatus.SKIPPED.value
+        job.message = (job.message or "") + " [恢复持续采集时清除失败计数]"
     if campaign.keywords_json and campaign.current_keyword_index >= len(campaign.keywords_json):
         campaign.current_keyword_index = 0
         campaign.current_page = max(1, int(campaign.current_page or 1)) + 1
