@@ -560,11 +560,17 @@ export function CbtGlobalPublishingPanel({
   useEffect(() => {
     let cancelled = false;
     let refreshing = false;
-    const refreshListingRail = () => listDrafts().then((items) => {
+    // 【2026-09-18 迭代】首次加载偶发 502（HTTP2/瞬时繁忙）导致列表空：
+    // 失败后自动重试 2 次，避免"打开页面列表 0 个"。
+    const refreshListingRail = (attempt = 0) => listDrafts().then((items) => {
       if (cancelled) return;
       const uniqueItems = uniqueDrafts(items);
       setListingRail(uniqueItems);
-    }).catch(() => undefined).finally(() => { refreshing = false; });
+    }).catch(() => {
+      if (attempt < 2 && !cancelled) {
+        window.setTimeout(() => refreshListingRail(attempt + 1), 2000);
+      }
+    }).finally(() => { refreshing = false; });
     const requestListingRailRefresh = () => {
       if (refreshing) return;
       refreshing = true;
@@ -635,21 +641,31 @@ export function CbtGlobalPublishingPanel({
     if (updated && activeDraftIdRef.current === targetDraftId) onDraftChange(updated);
   }
 
-  // 【2026-09-18 迭代】回查美客多发布状态：并发回查最近发布任务，
-  // 写回 item_status（已暂停/审核中/已下架）后刷新待上架库列表。
+  // 【2026-09-18 迭代】检查所有已发布商品在美客多的真实状态：
+  // 分页（每批30）循环回查全部已发布+被阻断任务，写回 item_status
+  // （已暂停/审核中/已下架）后刷新待上架库列表。
   async function refreshMeliStatus() {
     if (syncingMeli) return;
     setSyncingMeli(true);
     try {
-      const result = await syncPublishJobStatus();
-      const checked = typeof result?.checked === "number" ? result.checked : 0;
+      const BATCH = 30;
+      let offset = 0;
+      let checked = 0;
+      let total = 0;
+      do {
+        const result = await syncPublishJobStatus(BATCH, offset);
+        total = typeof result?.total === "number" ? result.total : total;
+        checked += typeof result?.checked === "number" ? result.checked : 0;
+        offset += typeof result?.checked === "number" ? result.checked : 0;
+        setStatus(`正在检查已发布商品状态 ${Math.min(offset, total || offset)}/${total || "?"}…`);
+      } while (offset < total);
       const refreshed = uniqueDrafts(await listDrafts());
       setListingRail(refreshed);
       const updated = refreshed.find((item) => item.id === draftId);
       if (updated) onDraftChange(updated);
-      setStatus(checked > 0 ? `已回查 ${checked} 个发布任务的真实状态` : "暂无待回查的发布任务");
+      setStatus(`已检查 ${checked} 个已发布商品状态`);
     } catch (syncError) {
-      setStatus(syncError instanceof Error ? `回查失败：${syncError.message}` : "回查美客多状态失败");
+      setStatus(syncError instanceof Error ? `检查失败：${syncError.message}` : "检查美客多状态失败");
     } finally {
       setSyncingMeli(false);
     }
@@ -1951,7 +1967,7 @@ export function CbtGlobalPublishingPanel({
             disabled={syncingMeli}
             onClick={() => void refreshMeliStatus()}
           >
-            <RefreshCw className={syncingMeli ? "spin" : ""} size={13} /> 刷新美客多状态
+            <RefreshCw className={syncingMeli ? "spin" : ""} size={13} /> 检查已发布状态
           </button>
         </div>
         <p className="section-note">选择商品后，在右侧完成分类、素材、售价和站点配置。</p>
@@ -1970,7 +1986,7 @@ export function CbtGlobalPublishingPanel({
       <main className="wf-editor-main">
       {needsPublishFeedback && (
         <section className="surface wf-section publish-feedback-section">
-          <div className="wf-section-title"><span>!</span><div><h3>发布反馈</h3><p>发布后美客多返回的真实状态；修正下方资料后可直接重新发布。</p></div><button type="button" className="tiny-button" onClick={() => void refreshMeliStatus()} disabled={syncingMeli}>重新回查</button></div>
+          <div className="wf-section-title"><span>!</span><div><h3>发布反馈</h3><p>发布后美客多返回的真实状态；修正下方资料后可直接重新发布。</p></div><button type="button" className="tiny-button" onClick={() => void refreshMeliStatus()} disabled={syncingMeli}>检查已发布状态</button></div>
           <p className="publish-feedback-status">{activePublishState === "failed" || activePublishState === "blocked" ? "发布失败，可修改后重试" : activePublishState === "paused" ? "美客多已暂停该商品" : activePublishState === "under_review" ? "美客多审核中" : activePublishState === "closed" ? "美客多已下架" : "已发布，但部分站点未成功"}</p>
           {activeDraftMeta?.publication_error && <p className="publish-feedback-error">{activeDraftMeta.publication_error}</p>}
           <p className="section-note">按上方提示修正（类目/属性/价格/图片等）后重新发布。若美客多已创建商品（已暂停/审核中），建议按提示修正后重试，避免重复创建。</p>

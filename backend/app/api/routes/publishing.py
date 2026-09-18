@@ -10,7 +10,7 @@ from urllib.parse import quote
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -1841,26 +1841,33 @@ def cancel_pending_publish_job(
 @router.get("/jobs/sync-status")
 async def sync_publish_job_status(
     limit: int = Query(default=30, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> dict:
     """回查已发布 job 的美客多 item 状态并写回 response_summary_json。
 
     美客多可能随时暂停 listing（标题/图片不匹配、违规等），ERP 不会自动收到
     通知；此接口让前端可以一键回查真实状态（active/paused/under_review +
-    审核子状态 + 当前标题）。【2026-09-18 迭代】默认只回查最近 limit 个
-    （按 job id 倒序），并发限 5，避免几十个 job 串行调用美客多 API 导致
-    网关 504 超时。
+    审核子状态 + 当前标题）。【2026-09-18 迭代】支持分页全量回查：
+    一次最多 limit 个（默认 30、按 job id 倒序），返回 total 总数，
+    前端循环 offset 直到把全部已发布+被阻断任务回查完；并发限 8，
+    避免几十个 job 串行调用美客多 API 导致网关 504 超时。
     """
+    base_where = (
+        # 已发布 + 被阻断但确实创建出了美客多商品（如发布后状态未知/后台审核弹回）
+        PublishJob.status.in_(
+            [PublishJobStatus.PUBLISHED, PublishJobStatus.BLOCKED]
+        ),
+        PublishJob.meli_item_id != "",
+    )
+    total = db.scalar(
+        select(func.count()).select_from(PublishJob).where(*base_where)
+    ) or 0
     jobs = db.scalars(
         select(PublishJob)
-        .where(
-            # 已发布 + 被阻断但确实创建出了美客多商品（如发布后状态未知/后台审核弹回）
-            PublishJob.status.in_(
-                [PublishJobStatus.PUBLISHED, PublishJobStatus.BLOCKED]
-            ),
-            PublishJob.meli_item_id != "",
-        )
+        .where(*base_where)
         .order_by(PublishJob.id.desc())
+        .offset(offset)
         .limit(limit)
     ).all()
     if not jobs:
@@ -1915,7 +1922,7 @@ async def sync_publish_job_status(
             entry["error"] = f"{type(exc).__name__}: {str(exc)[:200]}"
         return entry
 
-    sem = asyncio.Semaphore(5)
+    sem = asyncio.Semaphore(8)
 
     async def _limited(job: PublishJob) -> dict:
         async with sem:
@@ -1923,7 +1930,7 @@ async def sync_publish_job_status(
 
     results = await asyncio.gather(*(_limited(job) for job in jobs))
     db.commit()
-    return {"checked": len(jobs), "results": results}
+    return {"checked": len(jobs), "total": total, "results": results}
 
 
 @router.post("/jobs/{job_id}/reconcile", response_model=PublishExecutionResult)

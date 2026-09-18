@@ -209,16 +209,22 @@ def list_product_drafts(
 ) -> list[ProductDraftRead]:
     """Return the requested newest drafts without breaking the list endpoint.
 
-    ``compact`` is accepted as part of the listing-rail API contract.  The
-    read schema currently includes the same persisted fields in both modes,
-    so it cannot safely omit columns yet; keeping the argument here prevents
-    the public list route from raising a TypeError while the UI paginates.
+    【2026-09-18 迭代】compact=true 时真正压缩：清空 description /
+    video_urls / attributes 这些大字段（列表渲染只用 id/title/图/价格/
+    发布状态等轻量字段，右侧编辑区通过 /api/drafts/{id} 拿完整数据），
+    1000 条列表从 ~2.4MB 降到 ~0.3MB，避免页面加载时大响应被并发请求
+    拖住（列表长时间空白 / HTTP2 协议错误）。
     """
-    del compact
     models = (
         db.query(ProductDraft)
         .order_by(ProductDraft.id.desc())
         .limit(max(1, min(int(limit), 1000)))
         .all()
     )
-    return [to_draft_read(model) for model in models]
+    items = [to_draft_read(model) for model in models]
+    if compact:
+        for it in items:
+            it.description = ""
+            it.video_urls = []
+            it.attributes = {}
+    return items

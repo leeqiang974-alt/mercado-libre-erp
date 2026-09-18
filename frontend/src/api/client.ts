@@ -1398,11 +1398,12 @@ export async function listPublishJobs(limit = 100, offset = 0) {
   return response.json() as Promise<PublishJobRecord[]>;
 }
 
-export async function syncPublishJobStatus() {
-  const response = await fetch(`${API_BASE}/api/publishing/jobs/sync-status`);
+export async function syncPublishJobStatus(limit = 30, offset = 0) {
+  const response = await fetch(`${API_BASE}/api/publishing/jobs/sync-status?limit=${limit}&offset=${offset}`);
   if (!response.ok) throw await httpError(response);
   return response.json() as Promise<{
     checked: number;
+    total?: number;
     results: Array<{
       job_id: number;
       draft_id: number;

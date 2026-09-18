@@ -249,20 +249,29 @@ export function DraftsPage({
       );
   }, []);
 
-  // 【2026-09-18 迭代】上架库直接回查美客多发布状态：并发回查最近发布任务，
-  // 写回 item_status（已暂停/审核中/已下架）后刷新草稿列表展示。
+  // 【2026-09-18 迭代】检查所有已发布商品在美客多的真实状态：
+  // 分页（每批30）循环回查全部已发布+被阻断任务，写回 item_status
+  // （已暂停/审核中/已下架）后刷新草稿列表展示。
   async function refreshMeliStatus() {
     if (syncingMeli) return;
     setSyncingMeli(true);
     setError("");
     try {
-      const result = await syncPublishJobStatus();
-      const checked = typeof result?.checked === "number" ? result.checked : 0;
+      const BATCH = 30;
+      let offset = 0;
+      let checked = 0;
+      let total = 0;
+      do {
+        const result = await syncPublishJobStatus(BATCH, offset);
+        total = typeof result?.total === "number" ? result.total : total;
+        checked += typeof result?.checked === "number" ? result.checked : 0;
+        offset += typeof result?.checked === "number" ? result.checked : 0;
+      } while (offset < total);
       const drafts = await listDrafts();
       setSavedDrafts(drafts);
-      setError(checked > 0 ? `已回查 ${checked} 个发布任务的真实状态` : "暂无待回查的发布任务");
+      setError(checked > 0 ? `已检查 ${checked} 个已发布商品状态` : "暂无已发布的商品需要检查");
     } catch (syncError) {
-      setError(syncError instanceof Error ? syncError.message : "回查美客多状态失败");
+      setError(syncError instanceof Error ? syncError.message : "检查美客多状态失败");
     } finally {
       setSyncingMeli(false);
     }
@@ -773,7 +782,7 @@ export function DraftsPage({
               disabled={syncingMeli}
               onClick={() => void refreshMeliStatus()}
             >
-              <RefreshCw className={syncingMeli ? "spin" : ""} size={13} /> 刷新美客多状态
+              <RefreshCw className={syncingMeli ? "spin" : ""} size={13} /> 检查已发布状态
             </button>
           </div>
           <p className="section-note">选择商品后，在右侧完成分类、素材、售价和站点配置。</p>
