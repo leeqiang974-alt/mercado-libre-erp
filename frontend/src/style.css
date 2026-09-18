@@ -852,6 +852,11 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .drafts-sidebar-heading span { color: #697586; font-size: 12px; }
 /* 【2026-09-18 迭代】上架库"刷新美客多状态"按钮 */
 .drafts-sidebar-heading .meli-status-sync { margin-left: auto; font-size: 11px; padding: 3px 7px; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+/* 【2026-09-18 迭代】右侧编辑区发布反馈 */
+.publish-feedback-section { border-left: 3px solid #dc2626; background: #fff7f5; }
+.publish-feedback-section .wf-section-title { border-bottom-color: #fecaca; }
+.publish-feedback-status { color: #b91c1c; font-weight: 600; font-size: 13px; margin: 4px 0; }
+.publish-feedback-error { color: #b42318; font-size: 12px; margin: 2px 0 6px; white-space: pre-wrap; word-break: break-word; }
 .draft-rail-status { margin: 8px 0 6px; padding: 6px 8px; border-radius: 5px; background: #eff6ff; color: #1d4ed8; font-size: 11px; line-height: 1.35; }
 .draft-rail-list { display: grid; gap: 6px; max-height: calc(100vh - 160px); overflow-y: auto; }
 .draft-rail-item {

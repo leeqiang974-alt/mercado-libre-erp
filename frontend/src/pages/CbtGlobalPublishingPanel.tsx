@@ -43,6 +43,7 @@ import {
   saveDraftPricing,
   saveCbtListingConfig,
   searchAlibaba1688SimilarOffers,
+  syncPublishJobStatus,
   type Alibaba1688SimilarResult,
   type AmazonSourceVariant,
   type CbtFamilyDraft,
@@ -395,6 +396,7 @@ export function CbtGlobalPublishingPanel({
   const [busy, setBusy] = useState("");
   const [recollectBusy, setRecollectBusy] = useState<number | null>(null);
   const [autoFixBusy, setAutoFixBusy] = useState<number | null>(null);
+  const [syncingMeli, setSyncingMeli] = useState(false);
   const [variantDraftBusy, setVariantDraftBusy] = useState<string | null>(null);
   const [similarSearchBusy, setSimilarSearchBusy] = useState(false);
   const [similarOffers, setSimilarOffers] = useState<Alibaba1688SimilarResult | null>(null);
@@ -428,8 +430,18 @@ export function CbtGlobalPublishingPanel({
     if (listingStatusFilter === "pending") {
       return ordered.filter((item) => ["pending", "validating"].includes(item.publication_status || ""));
     }
+    // 【2026-09-18 迭代】美客多后台反馈筛选：暂停/审核中/已下架
+    if (listingStatusFilter === "meli_paused") {
+      return ordered.filter((item) => item.publication_status === "paused");
+    }
+    if (listingStatusFilter === "meli_review") {
+      return ordered.filter((item) => item.publication_status === "under_review");
+    }
+    if (listingStatusFilter === "meli_closed") {
+      return ordered.filter((item) => item.publication_status === "closed");
+    }
     if (listingStatusFilter === "draft") {
-      return ordered.filter((item) => !["failed", "blocked", "pending", "validating", "published"].includes(item.publication_status || ""));
+      return ordered.filter((item) => !["failed", "blocked", "pending", "validating", "published", "paused", "under_review", "closed"].includes(item.publication_status || ""));
     }
     return ordered;
   }, [listingRail, listingStatusFilter]);
@@ -621,6 +633,26 @@ export function CbtGlobalPublishingPanel({
     setListingRail(refreshed);
     const updated = refreshed.find((item) => item.id === targetDraftId);
     if (updated && activeDraftIdRef.current === targetDraftId) onDraftChange(updated);
+  }
+
+  // 【2026-09-18 迭代】回查美客多发布状态：并发回查最近发布任务，
+  // 写回 item_status（已暂停/审核中/已下架）后刷新待上架库列表。
+  async function refreshMeliStatus() {
+    if (syncingMeli) return;
+    setSyncingMeli(true);
+    try {
+      const result = await syncPublishJobStatus();
+      const checked = typeof result?.checked === "number" ? result.checked : 0;
+      const refreshed = uniqueDrafts(await listDrafts());
+      setListingRail(refreshed);
+      const updated = refreshed.find((item) => item.id === draftId);
+      if (updated) onDraftChange(updated);
+      setStatus(checked > 0 ? `已回查 ${checked} 个发布任务的真实状态` : "暂无待回查的发布任务");
+    } catch (syncError) {
+      setStatus(syncError instanceof Error ? `回查失败：${syncError.message}` : "回查美客多状态失败");
+    } finally {
+      setSyncingMeli(false);
+    }
   }
 
   useEffect(() => {
@@ -1893,9 +1925,15 @@ export function CbtGlobalPublishingPanel({
     finally { setBusy(""); }
   }
 
+  // 【2026-09-18 迭代】当前编辑草稿的发布反馈（美客多弹回/暂停/失败原因），
+  // 从列表数据取，右侧编辑区顶部展示，修正后可直接重新发布。
+  const activeDraftMeta = listingRail.find((item) => item.id === draftId);
+  const activePublishState = activeDraftMeta?.publication_status ?? "";
+  const needsPublishFeedback = ["failed", "blocked", "paused", "under_review", "closed"].includes(activePublishState)
+    || (activePublishState === "published" && Boolean(activeDraftMeta?.publication_error));
+
   return <section className="workspace wf-listing-editor">
-    <header className="wf-header">
-      <div><p className="eyebrow">GLOBAL SELLING · CBT</p><h2>编辑产品 / 跨境上架</h2><p>按“店铺和类目 → 商品资料 → 图片 → 描述 → SKU → 销售配置”一次完成，不再分散到多个页面。</p></div>
+    <header className="wf-header">      <div><p className="eyebrow">GLOBAL SELLING · CBT</p><h2>编辑产品 / 跨境上架</h2><p>按“店铺和类目 → 商品资料 → 图片 → 描述 → SKU → 销售配置”一次完成，不再分散到多个页面。</p></div>
       <button className="secondary-button" onClick={onBackToEditing}><ArrowLeft size={16} /> 返回上架库</button>
     </header>
 
@@ -1903,14 +1941,26 @@ export function CbtGlobalPublishingPanel({
 
     <div className="wf-listing-layout">
       <aside className="drafts-sidebar surface wf-listing-rail">
-        <div className="drafts-sidebar-heading"><h3>待上架库</h3><span>{pendingListingRail.length} 个</span></div>
+        <div className="drafts-sidebar-heading">
+          <h3>待上架库</h3>
+          <span>{pendingListingRail.length} 个</span>
+          <button
+            type="button"
+            className="secondary-button meli-status-sync"
+            title="回查美客多商品真实状态（已暂停/审核中/已下架）"
+            disabled={syncingMeli}
+            onClick={() => void refreshMeliStatus()}
+          >
+            <RefreshCw className={syncingMeli ? "spin" : ""} size={13} /> 刷新美客多状态
+          </button>
+        </div>
         <p className="section-note">选择商品后，在右侧完成分类、素材、售价和站点配置。</p>
-        <label className="listing-search"><Search size={14} /><input value={listingSearch} placeholder="定位商品编号或标题" onChange={(event) => setListingSearch(event.target.value)} /></label><label className="listing-status-filter">状态<select value={listingStatusFilter} onChange={(event) => { setListingStatusFilter(event.target.value); setListingPage(1); setListingPageInput("1"); }}><option value="">全部</option><option value="draft">未发布</option><option value="pending">发布中</option><option value="failed">发布失败</option></select></label>
+        <label className="listing-search"><Search size={14} /><input value={listingSearch} placeholder="定位商品编号或标题" onChange={(event) => setListingSearch(event.target.value)} /></label><label className="listing-status-filter">状态<select value={listingStatusFilter} onChange={(event) => { setListingStatusFilter(event.target.value); setListingPage(1); setListingPageInput("1"); }}><option value="">全部</option><option value="draft">未发布</option><option value="pending">发布中</option><option value="failed">发布失败</option><option value="meli_paused">美客多已暂停</option><option value="meli_review">美客多审核中</option><option value="meli_closed">美客多已下架</option></select></label>
         {listingSearch.trim() && <p className="listing-search-result">{pendingListingRail.some((item) => String(item.id) === listingSearch.trim()) || pendingListingRail.some((item) => String(item.title ?? "").toLowerCase().includes(listingSearch.trim().toLowerCase())) ? "已定位，保留前后商品" : "未找到，当前显示原列表"}</p>}
         {status && <p className="draft-rail-status" role="status">{status}</p>}
         <div className="draft-rail-list" ref={draftRailListRef}>{listingPageItems.map((item) => <button className={`draft-rail-item ${item.id === draftId ? "selected" : ""} ${["failed", "blocked"].includes(item.publication_status || "") ? "draft-rail-failed" : ""}`} key={item.id} onClick={() => onSelectDraft?.(item)}>
           {!['published', 'pending', 'validating'].includes(item.publication_status || '') && <><span className="draft-delete-wrap"><span className="draft-delete-icon" aria-hidden="true">×</span><span className="draft-delete-tooltip">删除商品</span><span role="button" tabIndex={0} className="draft-delete-hit" aria-label={`删除 ${item.title || "未命名商品"}`} onClick={(event) => void removeListingDraft(event, item)} /></span>{item.source_product_id && <span className="draft-recollect-wrap"><span className="draft-recollect-icon" aria-hidden="true">采</span><span className="draft-recollect-tooltip">重新采集素材</span><span role="button" tabIndex={0} className="draft-recollect-hit" aria-label={`重新采集 ${item.title || "未命名商品"}`} onClick={(event) => void recollectListingDraft(event, item)} />{recollectBusy === item.id && <span className="draft-recollect-spinner" aria-label="正在重新采集" />}</span>}</>}
-          <img className="product-image" src={item.image_urls[0] || ""} alt="" /><span><strong>{item.title || "未命名商品"}</strong><small>#{item.id} · {item.target_site_id}{item.source_price ? ` · Amazon 参考价 ${formatSourcePrice(item.source_price, item.source_currency)}` : ""}</small><small>{item.publication_status === "published" ? `已发布：${item.published_sites.join("、") || "CBT"}${item.publication_error?.startsWith("部分站点") ? `；${item.publication_error}` : ""}` : item.publication_status === "pending" || item.publication_status === "validating" ? "发布中" : item.publication_status === "failed" || item.publication_status === "blocked" ? `发布失败：${item.publication_error || "可修改后重试"}` : "未发布"}</small>{item.publication_status === "failed" || item.publication_status === "blocked" ? (<span role="button" tabIndex={0} aria-label={`自动校正分类 ${item.title || ""}`} onClick={(event) => void autoFixListingCategory(event, item)} style={{ display: "inline-block", marginLeft: 6, padding: "0 8px", border: "1px solid #d97706", borderRadius: 4, color: "#b45309", fontSize: 11, cursor: "pointer", lineHeight: "18px", whiteSpace: "nowrap" }}>重配分类{autoFixBusy === item.id ? "…" : ""}</span>) : null}</span></button>)}</div>
+          <img className="product-image" src={item.image_urls[0] || ""} alt="" /><span><strong>{item.title || "未命名商品"}</strong><small>#{item.id} · {item.target_site_id}{item.source_price ? ` · Amazon 参考价 ${formatSourcePrice(item.source_price, item.source_currency)}` : ""}</small><small className={["failed", "blocked", "paused", "under_review", "closed"].includes(item.publication_status || "") ? "publish-state-error" : ""}>{item.publication_status === "published" ? `已发布：${item.published_sites.join("、") || "CBT"}${item.publication_error?.startsWith("部分站点") ? `；${item.publication_error}` : ""}` : item.publication_status === "pending" || item.publication_status === "validating" ? "发布中" : item.publication_status === "failed" || item.publication_status === "blocked" ? `发布失败：${item.publication_error || "可修改后重试"}` : item.publication_status === "paused" ? "美客多已暂停" : item.publication_status === "under_review" ? "美客多审核中" : item.publication_status === "closed" ? "美客多已下架" : "未发布"}</small>{["paused", "under_review", "closed"].includes(item.publication_status || "") && item.publication_error && <small className="publish-error" title={item.publication_error}>{item.publication_error.length > 36 ? `${item.publication_error.slice(0, 36)}…` : item.publication_error}</small>}{item.publication_status === "failed" || item.publication_status === "blocked" ? (<span role="button" tabIndex={0} aria-label={`自动校正分类 ${item.title || ""}`} onClick={(event) => void autoFixListingCategory(event, item)} style={{ display: "inline-block", marginLeft: 6, padding: "0 8px", border: "1px solid #d97706", borderRadius: 4, color: "#b45309", fontSize: 11, cursor: "pointer", lineHeight: "18px", whiteSpace: "nowrap" }}>重配分类{autoFixBusy === item.id ? "…" : ""}</span>) : null}</span></button>)}</div>
         <div className="listing-pagination" aria-label="上架库分页">
           <button type="button" className="tiny-button" disabled={listingPage <= 1} onClick={() => goToListingPage(listingPage - 1)}>上一页</button>
           <span className="listing-page-position">第 {listingPageEditing ? <input autoFocus inputMode="numeric" aria-label="跳转到页码" value={listingPageInput} onChange={(event) => setListingPageInput(event.target.value.replace(/\D/g, ""))} onBlur={commitListingPageInput} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { setListingPageInput(String(listingPage)); setListingPageEditing(false); } }} /> : <button type="button" title="点击输入页码" onClick={() => { setListingPageInput(String(listingPage)); setListingPageEditing(true); }}>{listingPage}</button>}/{listingPageCount} 页</span>
@@ -1918,6 +1968,14 @@ export function CbtGlobalPublishingPanel({
         </div>
       </aside>
       <main className="wf-editor-main">
+      {needsPublishFeedback && (
+        <section className="surface wf-section publish-feedback-section">
+          <div className="wf-section-title"><span>!</span><div><h3>发布反馈</h3><p>发布后美客多返回的真实状态；修正下方资料后可直接重新发布。</p></div><button type="button" className="tiny-button" onClick={() => void refreshMeliStatus()} disabled={syncingMeli}>重新回查</button></div>
+          <p className="publish-feedback-status">{activePublishState === "failed" || activePublishState === "blocked" ? "发布失败，可修改后重试" : activePublishState === "paused" ? "美客多已暂停该商品" : activePublishState === "under_review" ? "美客多审核中" : activePublishState === "closed" ? "美客多已下架" : "已发布，但部分站点未成功"}</p>
+          {activeDraftMeta?.publication_error && <p className="publish-feedback-error">{activeDraftMeta.publication_error}</p>}
+          <p className="section-note">按上方提示修正（类目/属性/价格/图片等）后重新发布。若美客多已创建商品（已暂停/审核中），建议按提示修正后重试，避免重复创建。</p>
+        </section>
+      )}
       <section id="store-category" className="surface wf-section">
         <div className="wf-section-title"><span>1</span><div><h3>店铺和类目</h3><p>先确认跨境店和最底层 CBT 分类，确认后才加载官方属性。</p></div><button className="icon-button" title="刷新店铺能力" disabled={!storeId || busy === "profile"} onClick={() => setProfileReloadKey((value) => value + 1)}><RefreshCw size={17} /></button></div>
         <div className="wf-form-row"><label>上架店铺 *<select value={storeId} onChange={(event) => { setStoreId(event.target.value); setOffers([]); setHasSavedConfig(false); offersInitializedRef.current = false; setPreview(null); }}><option value="">选择已启用的 CBT 店铺</option>{cbtStores.map((store) => <option key={store.id} value={store.id}>{store.display_name} · 卖家 {store.seller_id}</option>)}</select><small>商品、授权令牌、发布记录和限流将按此店铺独立执行。</small></label>
