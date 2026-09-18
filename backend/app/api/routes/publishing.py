@@ -1840,28 +1840,35 @@ def cancel_pending_publish_job(
 
 @router.get("/jobs/sync-status")
 async def sync_publish_job_status(
+    limit: int = Query(default=30, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> dict:
-    """回查所有已发布 job 的美客多 item 状态并写回 response_summary_json。
+    """回查已发布 job 的美客多 item 状态并写回 response_summary_json。
 
     美客多可能随时暂停 listing（标题/图片不匹配、违规等），ERP 不会自动收到
-    通知；此接口让前端可以一键回查真实状态（active/paused/closed + 当前标题），
-    避免"发布后啥都不知道"。
+    通知；此接口让前端可以一键回查真实状态（active/paused/under_review +
+    审核子状态 + 当前标题）。【2026-09-18 迭代】默认只回查最近 limit 个
+    （按 job id 倒序），并发限 5，避免几十个 job 串行调用美客多 API 导致
+    网关 504 超时。
     """
     jobs = db.scalars(
         select(PublishJob)
         .where(
-            PublishJob.status == PublishJobStatus.PUBLISHED,
+            # 已发布 + 被阻断但确实创建出了美客多商品（如发布后状态未知/后台审核弹回）
+            PublishJob.status.in_(
+                [PublishJobStatus.PUBLISHED, PublishJobStatus.BLOCKED]
+            ),
             PublishJob.meli_item_id != "",
         )
-        .order_by(PublishJob.id)
+        .order_by(PublishJob.id.desc())
+        .limit(limit)
     ).all()
     if not jobs:
         return {"checked": 0, "results": []}
     oauth_client = create_oauth_client(db)
     encryption_key = os.environ.get("TOKEN_ENCRYPTION_KEY", "")
-    results: list[dict] = []
-    for job in jobs:
+
+    async def _sync_one(job: PublishJob) -> dict:
         entry: dict = {
             "job_id": job.id,
             "draft_id": job.product_draft_id,
@@ -1871,16 +1878,14 @@ async def sync_publish_job_status(
         store = db.get(Store, job.store_id)
         if store is None:
             entry["error"] = "store_missing"
-            results.append(entry)
-            continue
+            return entry
         try:
             token = await resolve_fresh_store_access_token(
                 db, store, encryption_key, oauth_client
             )
             if not token:
                 entry["error"] = "access_token_missing"
-                results.append(entry)
-                continue
+                return entry
             client = MercadoLibreClient(access_token=token)
             item = await client.get(f"/items/{job.meli_item_id}")
             sub = item.get("sub_status") or []
@@ -1908,7 +1913,15 @@ async def sync_publish_job_status(
             )
         except Exception as exc:  # noqa: BLE001 - 单个 job 失败不阻断整体回查
             entry["error"] = f"{type(exc).__name__}: {str(exc)[:200]}"
-        results.append(entry)
+        return entry
+
+    sem = asyncio.Semaphore(5)
+
+    async def _limited(job: PublishJob) -> dict:
+        async with sem:
+            return await _sync_one(job)
+
+    results = await asyncio.gather(*(_limited(job) for job in jobs))
     db.commit()
     return {"checked": len(jobs), "results": results}
 

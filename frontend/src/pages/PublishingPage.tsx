@@ -116,12 +116,82 @@ function readablePublishError(value: string) {
   }
   if (value.startsWith("meli_global_publish_failed")) {
     const detail = value.includes("|") ? value.split("|").slice(1).join("|").trim() : "";
-    return detail ? `美客多发布被拒：${detail}` : "美客多发布被拒，请查看任务卡片中的原始报错。";
+    if (!detail) return "美客多发布被拒，请查看任务卡片中的原始报错。";
+    const d = detail.toLowerCase();
+    // 类目错误：官方 item.category_id.invalid（非叶子分类 / 该分类禁止发布）
+    if (d.includes("category_id.invalid") || d.includes("not allowed to post in category") || d.includes("leaf category")) {
+      return "类目无效：所选分类不可发布（可能不是最子级分类，或该分类禁止发布）。请参考邮件建议类目，在草稿中更换分类后重新发布。";
+    }
+    // UP 模式每商品仅 1 listing
+    if (d.includes("user products currently only support 1 item") || d.includes("listing.conflict") || d.includes("this listing already exists")) {
+      return "商品已存在：该账号为 UP 模式（每商品仅 1 个 listing），此商品可能已上架。请勿重复发布；改价/编辑请用商品管理。";
+    }
+    if (d.includes("item.attributes.missing_required")) {
+      return "美客多发布被拒：必填属性缺失或不符合要求，请检查分类属性后重试。";
+    }
+    if (d.includes("item.price.invalid")) {
+      return "美客多发布被拒：价格无效（可能低于该分类最低价或超过上限），请调整价格后重试。";
+    }
+    if (d.includes("item.pictures")) {
+      return "美客多发布被拒：图片不符合要求（需至少 500×500px，数量在分类允许范围内），请检查图片后重试。";
+    }
+    if (d.includes("timeout") || d.includes("request timeout") || value.includes("408")) {
+      return "美客多发布请求超时：任务状态未知，请稍后点“回查美客多状态”确认是否已上架。";
+    }
+    return `美客多发布被拒：${detail}`;
+  }
+  if (value.startsWith("oss_image_mirror_failed")) {
+    return "图片不符合美客多要求（需至少 500×500px）：请更换或补传清晰主图后重试。";
+  }
+  if (value === "meli_publish_failed:400" || value.startsWith("meli_publish_failed:400")) {
+    return "美客多发布被拒（400）：参数校验未通过，请按上面的提示修正后重试。";
+  }
+  if (value.includes("request timeout") || value.includes("meli_publish_failed:408")) {
+    return "美客多发布请求超时：任务状态未知，请稍后手动回查确认。";
   }
   if (value.startsWith("cbt_user_product_payload_unavailable")) {
     return "UP 模式发布数据构建失败，请重新保存草稿后重试。";
   }
   return value;
+}
+
+/** 发布任务状态 → 中文 */
+function publishJobStatusText(status: string): string {
+  const map: Record<string, string> = {
+    pending: "排队中",
+    validating: "校验中",
+    published: "已发布",
+    failed: "失败",
+    blocked: "被阻断",
+    cancelled: "已取消",
+  };
+  return map[status] ?? status;
+}
+
+/** 美客多 item 状态 + 审核子状态 → 中文 */
+function meliItemStatusText(status: string, subStatus: unknown): string {
+  const statusMap: Record<string, string> = {
+    active: "在售",
+    paused: "已暂停",
+    under_review: "审核中",
+    closed: "已关闭",
+    inactive: "已下架",
+    payment_required: "待付款",
+  };
+  const subMap: Record<string, string> = {
+    warning: "有警告",
+    waiting_for_patch: "需修改后重新激活",
+    held: "平台审核中",
+    pending_documentation: "需补充资料",
+    forbidden: "已被美客多禁用",
+    picture_downloading_pending: "图片处理中",
+  };
+  const main = statusMap[status] ?? (status || "未知");
+  const subs: string[] = Array.isArray(subStatus) ? subStatus : [];
+  const subTexts = subs
+    .map((s) => subMap[s] ?? s)
+    .filter(Boolean);
+  return subTexts.length > 0 ? `${main}（${subTexts.join("、")}）` : main;
 }
 
 export function PublishingPage({
@@ -1527,16 +1597,14 @@ function PublishJobHistory({
                   {job.item_id && <small>商品：{job.item_id}</small>}
                   {job.item_status && job.item_status.status && (
                     <small className={job.item_status.status === "paused" ? "error" : ""}>
-                      美客多状态：{job.item_status.status}
-                      {Array.isArray(job.item_status.sub_status) && job.item_status.sub_status.length > 0
-                        ? `（${job.item_status.sub_status.join(", ")}）`
-                        : ""}
+                      美客多状态：{meliItemStatusText(job.item_status.status, job.item_status.sub_status)}
                       {job.item_status.title ? ` · 标题：${job.item_status.title}` : ""}
+                      {job.item_status.checked_at ? ` · 检查于 ${formatJobTime(job.item_status.checked_at)}` : ""}
                     </small>
                   )}
                   {job.errors.length > 0 && <small className="error">{job.errors.map(readablePublishError).join(", ")}</small>}
                 </span>
-                <span className={`state-pill ${stateClass}`}>{job.status}</span>
+                <span className={`state-pill ${stateClass}`}>{publishJobStatusText(job.status)}</span>
                 <span className="job-actions">
                   {job.permalink && <a className="icon-text-button" href={job.permalink} target="_blank" rel="noreferrer"><ExternalLink size={15} /> 打开商品页面</a>}
                   {canReconcile && (
