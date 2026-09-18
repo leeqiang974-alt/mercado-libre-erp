@@ -6,9 +6,15 @@ from pydantic import BaseModel, Field, field_validator
 
 
 UNBRANDED = "Unbranded"
+# 【2026-09-18 迭代】与 services/ai_content_generation.py 的 PROHIBITED_TERMS 同步精确化：
+# 原按独立词拦截 top/hot/limited 误伤正常语境（Hot Pot、top rack、limited warranty），
+# 导致合法标题（如 Silicone Hot Pot Mats）无法保存。强词独立拦截 + 弱词按词组拦截。
 MARKETING_TERMS = (
-    "best", "top", "hot", "sale", "discount", "free shipping", "limited",
-    "premium", "buy now", "deal", "clearance", "guaranteed",
+    "best", "premium", "sale", "discount", "free shipping", "buy now",
+    "clearance", "guaranteed", "deal",
+    "top rated", "top quality", "top seller", "top selling",
+    "hot deal", "hot sale", "hot offer",
+    "limited time", "limited offer", "limited stock", "limited quantity", "limited edition",
 )
 
 
