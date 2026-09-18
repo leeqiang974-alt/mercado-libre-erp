@@ -850,6 +850,8 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 
 .drafts-sidebar-heading h3 { margin: 0; }
 .drafts-sidebar-heading span { color: #697586; font-size: 12px; }
+/* 【2026-09-18 迭代】上架库"刷新美客多状态"按钮 */
+.drafts-sidebar-heading .meli-status-sync { margin-left: auto; font-size: 11px; padding: 3px 7px; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
 .draft-rail-status { margin: 8px 0 6px; padding: 6px 8px; border-radius: 5px; background: #eff6ff; color: #1d4ed8; font-size: 11px; line-height: 1.35; }
 .draft-rail-list { display: grid; gap: 6px; max-height: calc(100vh - 160px); overflow-y: auto; }
 .draft-rail-item {
@@ -889,6 +891,9 @@ input[readonly] { background: #eef1f4; color: #52606d; }
 .draft-rail-item > span { display: grid; gap: 2px; min-width: 0; }
 .draft-rail-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .draft-rail-item small { color: #697586; font-size: 11px; }
+/* 【2026-09-18 迭代】上架库发布反馈：失败/暂停/审核状态标红 + 错误原因 */
+.draft-rail-item .publish-state-error { color: #b91c1c; font-weight: 600; }
+.draft-rail-item .publish-error { color: #b42318; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .drafts-library-footer { margin-top: 20px; }
 .media-normalization-note { margin: 0 0 12px; }
 

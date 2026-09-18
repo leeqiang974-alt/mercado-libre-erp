@@ -42,6 +42,37 @@ def apply_draft_publication_state(
             partial = _partial_site_error(effective)
             if partial:
                 draft.publication_error = partial
+            # 【2026-09-18 迭代】发布后美客多后台反馈：item 可能被暂停/审核/关闭
+            # （选错类目被弹回、图片/标题违规等）。回查接口会把 item_status
+            # 写进 response_summary_json，这里把它反映到草稿列表，让用户看到
+            # “已暂停/审核中”而不只是“已发布”。
+            item_status = (effective.response_summary_json or {}).get("item_status") or {}
+            if isinstance(item_status, dict):
+                meli_status = str(item_status.get("status") or "").strip().lower()
+                sub = item_status.get("sub_status") or []
+                sub_text = ""
+                if isinstance(sub, list):
+                    sub_text = "、".join(str(s) for s in sub[:3] if s)
+                elif isinstance(sub, str) and sub:
+                    sub_text = sub
+                if meli_status == "paused":
+                    draft.publication_status = "paused"
+                    draft.publication_error = (
+                        "美客多已暂停该商品" + (f"（{sub_text}）" if sub_text else "")
+                    )
+                elif meli_status == "under_review":
+                    draft.publication_status = "under_review"
+                    draft.publication_error = (
+                        "美客多审核中" + (f"（{sub_text}）" if sub_text else "")
+                    )
+                elif meli_status == "closed":
+                    draft.publication_status = "closed"
+                    draft.publication_error = (
+                        "美客多已关闭该商品" + (f"（{sub_text}）" if sub_text else "")
+                    )
+                elif meli_status and meli_status != "active" and not draft.publication_error:
+                    draft.publication_status = meli_status
+                    draft.publication_error = f"美客多状态：{meli_status}"
     return rows
 
 

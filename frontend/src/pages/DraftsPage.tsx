@@ -36,6 +36,7 @@ import {
   listReviewHistory,
   saveDraftContent,
   saveDraftPricing,
+  syncPublishJobStatus,
   type DraftContentUpdate,
   type DraftPricing,
   type DraftPricingInput,
@@ -69,6 +70,11 @@ function publicationStatusLabel(draft: ProductDraftRead) {
   if (draft.publication_status === "published") return `已发布：${draft.published_sites.join("、") || "CBT"}`;
   if (draft.publication_status === "pending" || draft.publication_status === "validating") return "发布中";
   if (draft.publication_status === "failed" || draft.publication_status === "blocked") return "发布失败，可修改后重试";
+  // 【2026-09-18 迭代】发布后美客多后台反馈（回查后）：
+  // 商品可能被暂停/审核/关闭，直接在上架库显示，避免"发布后啥都不知道"
+  if (draft.publication_status === "paused") return "美客多已暂停";
+  if (draft.publication_status === "under_review") return "美客多审核中";
+  if (draft.publication_status === "closed") return "美客多已下架";
   return "未发布";
 }
 
@@ -223,6 +229,7 @@ export function DraftsPage({
   const [categoryPath, setCategoryPath] = useState<string[]>([]);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [syncingMeli, setSyncingMeli] = useState(false);
   const [draggingImageIndex, setDraggingImageIndex] = useState<number | null>(null);
   const draftEpochRef = useRef(0);
   const historyEpochRef = useRef(0);
@@ -241,6 +248,25 @@ export function DraftsPage({
         setError(loadError instanceof Error ? loadError.message : "加载草稿失败"),
       );
   }, []);
+
+  // 【2026-09-18 迭代】上架库直接回查美客多发布状态：并发回查最近发布任务，
+  // 写回 item_status（已暂停/审核中/已下架）后刷新草稿列表展示。
+  async function refreshMeliStatus() {
+    if (syncingMeli) return;
+    setSyncingMeli(true);
+    setError("");
+    try {
+      const result = await syncPublishJobStatus();
+      const checked = typeof result?.checked === "number" ? result.checked : 0;
+      const drafts = await listDrafts();
+      setSavedDrafts(drafts);
+      setError(checked > 0 ? `已回查 ${checked} 个发布任务的真实状态` : "暂无待回查的发布任务");
+    } catch (syncError) {
+      setError(syncError instanceof Error ? syncError.message : "回查美客多状态失败");
+    } finally {
+      setSyncingMeli(false);
+    }
+  }
 
   useEffect(() => {
     if (!reviewJobs.some((job) => job.status === "pending" || job.status === "running")) return;
@@ -738,7 +764,18 @@ export function DraftsPage({
     return (
       <section className="wf-listing-layout">
         <aside className="drafts-sidebar surface wf-listing-rail">
-          <div className="drafts-sidebar-heading"><h3>上架库</h3><span>{savedDrafts.length} 个</span></div>
+          <div className="drafts-sidebar-heading">
+            <h3>上架库</h3>
+            <span>{savedDrafts.length} 个</span>
+            <button
+              className="secondary-button meli-status-sync"
+              title="回查美客多商品真实状态（已暂停/审核中/已下架）"
+              disabled={syncingMeli}
+              onClick={() => void refreshMeliStatus()}
+            >
+              <RefreshCw className={syncingMeli ? "spin" : ""} size={13} /> 刷新美客多状态
+            </button>
+          </div>
           <p className="section-note">选择商品后，在右侧完成分类、素材、售价和站点配置。</p>
           <div className="draft-rail-list">
             {savedDrafts.map((item) => (
@@ -748,7 +785,12 @@ export function DraftsPage({
                 <span>
                   <strong>{item.title || "未命名商品"}</strong>
                   <small>#{item.id} · {item.target_site_id}</small>
-                  <small>{publicationStatusLabel(item)}</small>
+                  <small className={item.publication_error ? "publish-state-error" : ""}>{publicationStatusLabel(item)}</small>
+                  {item.publication_error && (
+                    <small className="publish-error" title={item.publication_error}>
+                      {item.publication_error.length > 42 ? `${item.publication_error.slice(0, 42)}…` : item.publication_error}
+                    </small>
+                  )}
                 </span>
               </button>
             ))}
