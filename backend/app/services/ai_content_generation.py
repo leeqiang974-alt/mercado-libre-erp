@@ -61,9 +61,17 @@ def _normalize_ascii(value: str) -> str:
 
 
 WARRANTY_SENTENCE = "The store provides a 7-day warranty for this product."
+# 【2026-09-18 迭代】营销词表精确化：原来按独立词拦截 top/hot/limited，
+# 误伤正常语境（top rack 洗碗机顶层、hot water 热水、limited warranty 质保），
+# 导致描述生成反复失败。现改为强营销词独立拦截 + 弱词按固定词组拦截。
 PROHIBITED_TERMS = (
-    "best", "hot", "sale", "discount", "free shipping", "limited",
-    "premium", "buy now", "clearance", "guaranteed",
+    # 强营销词：独立出现即违规
+    "best", "premium", "sale", "discount", "free shipping", "buy now",
+    "clearance", "guaranteed", "deal",
+    # 弱词按精确词组拦截（避免误伤正常语境）
+    "top rated", "top quality", "top seller", "top selling",
+    "hot deal", "hot sale", "hot offer",
+    "limited time", "limited offer", "limited stock", "limited quantity", "limited edition",
 )
 MIN_DESCRIPTION_WORDS = 40
 MAX_DESCRIPTION_WORDS = 260
@@ -468,11 +476,15 @@ def _validate_title(raw_title: str, source_brand: str = "") -> str:
         raise ValueError("title must be 1-60 characters")
     if re.search(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0e00-\u0e7f]", title):
         raise ValueError("title must be English")
-    if any(
-        re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", title.lower())
-        for term in PROHIBITED_TERMS
-    ):
-        raise ValueError("title contains a prohibited marketing term")
+    forbidden_title = [
+        term for term in PROHIBITED_TERMS
+        if re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", title.lower())
+    ]
+    if forbidden_title:
+        raise ValueError(
+            "title contains a prohibited marketing term: "
+            + ", ".join(forbidden_title)
+        )
     if source_brand.strip() and source_brand.casefold() in title.casefold():
         raise ValueError("title contains the source brand")
     return title
@@ -484,11 +496,15 @@ def _validate_description(raw_description: str, source_brand: str = "") -> str:
         raise ValueError("description must be English")
     if source_brand.strip() and source_brand.casefold() in description.casefold():
         raise ValueError("description contains the source brand")
-    if any(
-        re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", description.lower())
-        for term in PROHIBITED_TERMS
-    ):
-        raise ValueError("description contains a prohibited marketing term")
+    forbidden_desc = [
+        term for term in PROHIBITED_TERMS
+        if re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", description.lower())
+    ]
+    if forbidden_desc:
+        raise ValueError(
+            "description contains a prohibited marketing term: "
+            + ", ".join(forbidden_desc)
+        )
     if re.search(r"<[^>]+>|https?://|www\.", description, flags=re.IGNORECASE):
         raise ValueError("description must not contain HTML or URLs")
     # 【2026-09-16 迭代】格式类要求自动修复而不是拒绝：
